@@ -1,0 +1,1128 @@
+
+<div class="{{rootCls}}" style="width: 390px; height: 844px">
+<div class="wall">
+<div class="orb" style="width: 220px; height: 220px; background: var(--o1); top: -40px; left: -60px"></div>
+<div class="orb" style="width: 200px; height: 200px; background: var(--o2); top: 260px; right: -80px; animation-delay: -6s"></div>
+<div class="orb" style="width: 180px; height: 180px; background: var(--o3); bottom: 60px; left: -50px; animation-delay: -11s"></div>
+</div>
+
+<!-- ============ LOGIN ============ -->
+<sc-if value="{{is.login}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="login">
+<div class="lmark"><svg class="i xl" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.rupeeC}}"></path></svg></div>
+<div class="brand big"><b>Tally</b><span>Connect</span></div>
+<h1 class="h1 c">Welcome back</h1>
+<div class="sub c">Log in to see your business</div>
+<div class="glass pad">
+<div class="fld"><label class="lab" for="lg-user">Username or email</label>
+<div class="iw"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.person}}"></path></svg><input id="lg-user" class="inp" value="{{fv.user}}" sc-camel-on-change="{{fc.user}}" placeholder="e.g. workk72002" autocomplete="username"></div></div>
+<div class="fld"><label class="lab" for="lg-pass">Password</label>
+<div class="iw"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.lock}}"></path></svg><input id="lg-pass" class="inp" type="{{passType}}" value="{{fv.pass}}" sc-camel-on-change="{{fc.pass}}" placeholder="Enter your password" autocomplete="current-password"><button class="eye" sc-camel-on-click="{{togglePass}}" aria-label="Show or hide password"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{passIcon}}"></path></svg></button></div></div>
+<div style="display: flex; justify-content: flex-end; margin: -8px 0 8px"><button class="link" sc-camel-on-click="{{nav.forgot}}">Forgot password?</button></div>
+<button class="btn btn-p w tap" sc-camel-on-click="{{doLogin}}">Log In <svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.arrow}}"></path></svg></button>
+<div class="or">or</div>
+<button class="glass row tap" sc-camel-on-click="{{nav.help}}"><span class="ico xs" style="color: var(--navy)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.help}}"></path></svg></span><span class="rtx"><span class="rt">Need help logging in?</span><span class="rs">Questions, call or email us</span></span><svg class="i s chev" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevR}}"></path></svg></button>
+</div>
+<div class="fnote">Version 19.6.2</div>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ FORGOT ============ -->
+<sc-if value="{{is.forgot}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>Log in</button></div>
+<div style="display: flex; flex-direction: column; align-items: center; margin-top: 26px">
+<span class="ico" style="color: var(--acc); width: 72px; height: 72px; border-radius: 24px"><svg class="i l" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.key}}"></path></svg></span>
+<h1 class="h1 c">Forgot password?</h1>
+<div class="sub c">Type the email you use for TallyConnect. We will send you a link to make a new password.</div>
+</div>
+<sc-if value="{{notSent}}" hint-placeholder-val="{{ true }}">
+<div class="glass pad">
+<div class="fld"><label class="lab" for="fg-mail">Email address</label>
+<div class="iw"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.mail}}"></path></svg><input id="fg-mail" class="inp" type="email" value="{{fv.fEmail}}" sc-camel-on-change="{{fc.fEmail}}" placeholder="name@example.com"></div></div>
+<button class="btn btn-p w tap" sc-camel-on-click="{{sendReset}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.send}}"></path></svg>Send link</button>
+</div>
+</sc-if>
+<sc-if value="{{forgotSent}}" hint-placeholder-val="{{ false }}">
+<div class="glass pad c" style="animation: rise .4s both">
+<span class="tk" style="width: 56px; height: 56px; margin: 0 auto 10px"><svg class="i l" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg></span>
+<div class="rt" style="font-size: 19px">Check your email</div>
+<div class="rs" style="font-size: 15px; margin: 6px 0 16px">We sent a link. Open it to set a new password.</div>
+<button class="btn btn-p w tap" sc-camel-on-click="{{back}}">Back to Log in</button>
+</div>
+</sc-if>
+</div>
+</sc-if>
+
+<!-- ============ HOME ============ -->
+<sc-if value="{{is.home}}" hint-placeholder-val="{{ false }}">
+<div class="{{homeCls}}">
+<div class="htop">
+<div class="nav">
+<button class="glass cbtn tap" sc-camel-on-click="{{openMenu}}" aria-label="Open menu"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.menu}}"></path></svg></button>
+<div class="brand grow"><b>Tally</b><span>Connect</span></div>
+<button class="glass cbtn tap" sc-camel-on-click="{{openSearch}}" aria-label="Search"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.search}}"></path></svg></button>
+<button class="glass cbtn tap" sc-camel-on-click="{{nav.notifs}}" aria-label="Alerts"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.bell}}"></path></svg><sc-if value="{{hasUnread}}" hint-placeholder-val="{{ true }}"><i class="rdot"></i></sc-if></button>
+</div>
+<button class="glass cobox tap" sc-camel-on-click="{{openCompany}}" aria-label="Change company">
+<span class="coic"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.building}}"></path></svg></span>
+<span class="rtx"><span class="coname ell">{{companyName}}</span><span class="costat"><span class="cs1"><i class="live"></i><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.laptop}}"></path></svg>Tally Connected</span><span class="cs2">· Synced 2 min ago</span></span></span>
+<span class="codd"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevD}}"></path></svg></span>
+</button>
+</div>
+
+<div class="pager" sc-camel-on-scroll="{{onPagerScroll}}">
+<sc-for list="{{pages}}" as="pg" hint-placeholder-count="1">
+<div class="page">
+<div class="ptitle">{{pg.title}}</div>
+<div class="wgrid">
+<sc-for list="{{pg.widgets}}" as="w" hint-placeholder-count="7">
+<div class="{{w.cls}}" data-wid="{{w.id}}" sc-camel-on-pointer-down="{{w.down}}">
+<sc-if value="{{w.isEntry}}" hint-placeholder-val="{{ false }}">
+<div class="hero">
+<button class="herotop tap" sc-camel-on-click="{{w.go}}" style="border-radius: 18px">
+<span class="plus"><svg class="i l" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.plus}}"></path></svg></span>
+<span class="rtx"><span class="ht">New Entry</span><span class="hs">Record a sale, purchase, money in or out</span></span>
+<svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevR}}"></path></svg>
+</button>
+<div class="quick">
+<sc-for list="{{quick}}" as="q" hint-placeholder-count="4">
+<button class="qb tap" sc-camel-on-click="{{q.go}}"><span class="qi"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{q.d}}"></path></svg></span>{{q.t}}</button>
+</sc-for>
+</div>
+</div>
+</sc-if>
+<sc-if value="{{w.isMoney}}" hint-placeholder-val="{{ false }}">
+<div class="glass pad">
+<div class="lt" style="align-items: center; margin-bottom: 12px"><span class="rt" style="font-size: 18px">Money summary</span><span class="badge b-acc">Sample data</span></div>
+<div class="grid2">
+<sc-for list="{{sums}}" as="m" hint-placeholder-count="4">
+<button class="mcard tap" sc-camel-on-click="{{m.go}}" style="background: {{m.bg}}">
+<span class="ico xs" style="color: {{m.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{m.d}}"></path></svg></span>
+<span class="rt" style="margin-top: 8px; font-size: 15px">{{m.t}}</span><span class="rs" style="margin: 0; font-size: 12.5px">{{m.s}}</span>
+<span class="{{m.cls}}" style="font-size: 19px; margin-top: 6px">{{m.v}}</span>
+</button>
+</sc-for>
+</div>
+</div>
+</sc-if>
+<sc-if value="{{w.isTile}}" hint-placeholder-val="{{ false }}">
+<button class="glass tile tap" sc-camel-on-click="{{w.go}}">
+<span class="ico" style="color: {{w.c}}"><svg class="i l" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{w.d}}"></path></svg></span>
+<span class="tl">{{w.t}}</span><span class="ts">{{w.s}}</span>
+</button>
+</sc-if>
+<sc-if value="{{w.pinned}}" hint-placeholder-val="{{ false }}"><span class="pinb" aria-label="Pinned"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.pin}}"></path></svg></span></sc-if>
+<sc-if value="{{w.armed}}" hint-placeholder-val="{{ false }}"><span class="wgcover" aria-hidden="true"></span><span class="movb"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.move}}"></path></svg></span></sc-if>
+</div>
+</sc-for>
+</div>
+<div class="dropend" data-endpage="{{pg.i}}"><sc-if value="{{drag.on}}" hint-placeholder-val="{{ false }}">Drop here</sc-if></div>
+<sc-if value="{{pg.hasHidden}}" hint-placeholder-val="{{ false }}"><button class="glass hidrow tap mt" sc-camel-on-click="{{pg.showHidden}}" style="border: 0; border-radius: 18px"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.eye}}"></path></svg>{{pg.hidTxt}}</button></sc-if>
+</div>
+</sc-for>
+</div>
+
+<div class="dots"><div class="glass dotsin">
+<sc-for list="{{dots}}" as="d" hint-placeholder-count="2"><button class="{{d.cls}}" sc-camel-on-click="{{d.go}}" aria-label="{{d.label}}"><i class="pdot"></i></button></sc-for>
+</div></div>
+
+<sc-if value="{{drag.on}}" hint-placeholder-val="{{ false }}">
+<div class="{{drag.edgeL}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg></div>
+<div class="{{drag.edgeR}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevR}}"></path></svg></div>
+<div class="glass ghost" style="left: {{drag.x}}px; top: {{drag.y}}px"><span class="ico sm" style="color: {{drag.c}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{drag.d}}"></path></svg></span>{{drag.label}}</div>
+</sc-if>
+
+</div>
+</sc-if>
+
+<!-- ============ NOTIFICATIONS ============ -->
+<sc-if value="{{is.notifs}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button><span class="grow"></span><button class="glass cbtn tap" sc-camel-on-click="{{refreshNow}}" aria-label="Refresh"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.sync}}"></path></svg></button></div>
+<h1 class="h1">Alerts</h1>
+<div class="sub">{{unreadTxt}}</div>
+<div style="display: flex; gap: 10px; align-items: center">
+<div class="glass seg grow" style="margin: 0"><button class="{{nseg.all}}" sc-camel-on-click="{{nseg.setAll}}">All</button><button class="{{nseg.unread}}" sc-camel-on-click="{{nseg.setUnread}}">Unread</button></div>
+<button class="glass chip tap" sc-camel-on-click="{{markAll}}" style="color: var(--navy); height: 50px"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg>Mark all read</button>
+</div>
+<div class="glass list mt2">
+<sc-for list="{{notifs}}" as="n" hint-placeholder-count="5">
+<button class="{{n.rcls}}" sc-camel-on-click="{{n.open}}" sc-camel-on-pointer-down="{{n.down}}" data-lk="{{n.lk}}" data-list="notifs" style="align-items: flex-start"><sc-if value="{{n.pinned}}" hint-placeholder-val="{{ false }}"><span class="pinmini" aria-label="Pinned"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.pin}}"></path></svg></span></sc-if>
+<span class="ico xs" style="color: {{n.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{n.d}}"></path></svg></span>
+<span class="rtx"><span class="lt"><span class="rt">{{n.t}}</span><span class="rs" style="margin: 0; flex: none">{{n.time}}</span></span><span class="rs" style="font-size: 14.5px; color: var(--ink2)">{{n.b}}</span></span>
+<sc-if value="{{n.unread}}" hint-placeholder-val="{{ false }}"><i style="width: 10px; height: 10px; border-radius: 50%; background: var(--neg); flex: none; margin-top: 6px"></i></sc-if>
+</button>
+</sc-for>
+<sc-if value="{{hl.notifs.any}}" hint-placeholder-val="{{ false }}"><button class="hidrow tap" sc-camel-on-click="{{hl.notifs.show}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.eye}}"></path></svg>{{hl.notifs.txt}}</button></sc-if>
+<sc-if value="{{noNotifs}}" hint-placeholder-val="{{ false }}"><div class="pad c rs" style="font-size: 15px">You have read everything.</div></sc-if>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ CREATE WORKSPACE ============ -->
+<sc-if value="{{is.createWs}}" hint-placeholder-val="{{ false }}">
+<div class="{{flowCls}}"><div class="fbody">
+<div class="nav"><button class="glass cbtn tap" sc-camel-on-click="{{back}}" aria-label="Back"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg></button><span class="rt grow" style="font-size: 19px">Make a workspace</span><button class="glass chip tap" sc-camel-on-click="{{cw.reset}}" style="color: var(--acc)">Reset</button></div>
+<div class="sub" style="margin-top: 8px">A workspace is your own Home screen. Pick the shortcuts and money cards you want.</div>
+<div class="fld"><label class="lab" for="ws-name">Workspace name</label>
+<div class="iw"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.grid}}"></path></svg><input id="ws-name" class="inp" value="{{fv.wsName}}" sc-camel-on-change="{{fc.wsName}}" placeholder="e.g. Sales Desk"></div></div>
+<div class="glass seg"><button class="{{cw.fCls}}" sc-camel-on-click="{{cw.setF}}">Shortcuts ({{cw.fCount}})</button><button class="{{cw.mCls}}" sc-camel-on-click="{{cw.setM}}">Money cards ({{cw.mCount}})</button></div>
+<div class="sec" style="margin-top: 4px">Chosen</div>
+<sc-if value="{{cw.empty}}" hint-placeholder-val="{{ true }}"><div class="empty">Nothing yet. Tap below to add.</div></sc-if>
+<div class="grid4">
+<sc-for list="{{cw.chosen}}" as="x" hint-placeholder-count="0">
+<button class="glass wsfeat sel tap" sc-camel-on-click="{{x.toggle}}"><span class="add"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.minus}}"></path></svg></span><span class="ico xs" style="color: {{x.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{x.d}}"></path></svg></span>{{x.t}}</button>
+</sc-for>
+</div>
+<div class="sec">Tap to add</div>
+<div class="grid4">
+<sc-for list="{{cw.avail}}" as="x" hint-placeholder-count="8">
+<button class="glass wsfeat tap" sc-camel-on-click="{{x.toggle}}"><span class="add"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.plus}}"></path></svg></span><span class="ico xs" style="color: {{x.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{x.d}}"></path></svg></span>{{x.t}}</button>
+</sc-for>
+</div>
+</div>
+<div class="foot"><button class="btn glass btn-g tap" sc-camel-on-click="{{back}}">Cancel</button><button class="btn btn-p w2 tap" sc-camel-on-click="{{cw.save}}" disabled="{{cw.cannot}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg>Save workspace</button></div>
+</div>
+</sc-if>
+
+<!-- ============ MANAGE WORKSPACES ============ -->
+<sc-if value="{{is.manageWs}}" hint-placeholder-val="{{ false }}">
+<div class="{{flowCls}}"><div class="fbody">
+<div class="nav"><button class="glass cbtn tap" sc-camel-on-click="{{back}}" aria-label="Back"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg></button><span class="rt grow" style="font-size: 19px">Workspaces</span></div>
+<div class="sub" style="margin-top: 8px">Workspaces are your own Home screens. Switching one never changes your accounts data.</div>
+<sc-for list="{{wsm}}" as="w" hint-placeholder-count="3">
+<div class="glass pad" style="margin-bottom: 12px">
+<div style="display: flex; gap: 12px; align-items: center">
+<span class="ico sm" style="color: var(--navy)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.grid}}"></path></svg></span>
+<span class="rtx"><span class="rt">{{w.name}}</span><span class="rs">{{w.meta}}</span></span>
+<sc-if value="{{w.active}}" hint-placeholder-val="{{ false }}"><span class="badge b-ok b-dot">In use</span></sc-if>
+<sc-if value="{{w.notActive}}" hint-placeholder-val="{{ true }}"><button class="glass chip tap" sc-camel-on-click="{{w.use}}" style="color: var(--navy); height: 40px">Use</button></sc-if>
+</div>
+<div class="rs" style="margin-top: 10px; font-size: 14px"><b>Shortcuts:</b> {{w.feats}}</div>
+<div class="rs" style="font-size: 14px"><b>Money cards:</b> {{w.sums}}</div>
+<sc-if value="{{w.custom}}" hint-placeholder-val="{{ false }}">
+<div class="two" style="margin-top: 12px"><button class="btn glass btn-g tap" sc-camel-on-click="{{w.edit}}" style="height: 46px; font-size: 15px"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.edit}}"></path></svg>Edit</button><button class="btn tap" sc-camel-on-click="{{w.del}}" style="height: 46px; font-size: 15px; background: color-mix(in srgb,var(--neg) 10%,transparent); color: var(--neg)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.trash}}"></path></svg>Delete</button></div>
+</sc-if>
+</div>
+</sc-for>
+</div>
+<div class="foot"><button class="btn btn-p w tap" sc-camel-on-click="{{nav.createWs}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.plus}}"></path></svg>Make a new workspace</button></div>
+</div>
+</sc-if>
+
+<!-- ============ NEW ENTRY ============ -->
+<sc-if value="{{is.newEntry}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button></div>
+<h1 class="h1">New Entry</h1>
+<div class="sub">What do you want to write down?</div>
+<div class="two">
+<sc-for list="{{entryTiles}}" as="e" hint-placeholder-count="4">
+<button class="glass etile tap" sc-camel-on-click="{{e.go}}"><span class="ico" style="color: {{e.c}}; width: 66px; height: 66px; border-radius: 22px"><svg class="i xl" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{e.d}}"></path></svg></span><span class="tl">{{e.t}}</span><span class="ts" style="font-size: 14px">{{e.s}}</span></button>
+</sc-for>
+</div>
+<button class="glass row tap mt" sc-camel-on-click="{{start.journal}}"><span class="ico sm" style="color: var(--c-journal)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.book}}"></path></svg></span><span class="rtx"><span class="rt">Adjustment</span><span class="rs">Journal entry · move money between accounts</span></span><svg class="i s chev" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevR}}"></path></svg></button>
+<div class="info mt2"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.help}}"></path></svg><span>Tap a picture to start. You can go back at any step — nothing is sent until you tap Save.</span></div>
+</div>
+</sc-if>
+
+<!-- ============ ENTRY FLOW ============ -->
+<sc-if value="{{is.flow}}" hint-placeholder-val="{{ false }}">
+<div class="{{flowCls}}"><div class="fbody">
+<div class="fhead">
+<button class="glass cbtn tap" sc-camel-on-click="{{fl.prev}}" aria-label="Back"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg></button>
+<span class="ico xs" style="color: {{fl.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{fl.d}}"></path></svg></span>
+<span class="rtx"><span class="rt" style="font-size: 18px">{{fl.title}}</span><span class="rs" style="margin: 0">{{fl.sub}}</span></span>
+<button class="glass cbtn tap" sc-camel-on-click="{{nav.help}}" aria-label="Help"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.help}}"></path></svg></button>
+</div>
+<div class="glass steps">
+<sc-for list="{{fl.steps}}" as="s" hint-placeholder-count="4">
+<div class="{{s.cls}}"><span class="dot"><sc-if value="{{s.done}}" hint-placeholder-val="{{ false }}"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg></sc-if><sc-if value="{{s.todo}}" hint-placeholder-val="{{ true }}">{{s.n}}</sc-if></span>{{s.t}}</div>
+</sc-for>
+</div>
+
+<!-- step: details -->
+<sc-if value="{{fl.isDetails}}" hint-placeholder-val="{{ true }}">
+<div class="glass pad mt" style="animation: rise .35s both">
+<div class="two">
+<div class="fld"><label class="lab" for="f-no"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.hash}}"></path></svg>{{fl.noLabel}}</label><input id="f-no" class="inp" value="{{fl.v.no}}" sc-camel-on-change="{{fl.h.no}}"></div>
+<div class="fld"><label class="lab" for="f-date"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.calendar}}"></path></svg>Date <span class="req">*</span></label><input id="f-date" class="inp" type="date" value="{{fl.v.date}}" sc-camel-on-change="{{fl.h.date}}" style="font-size: 15px; padding: 0 10px"></div>
+</div>
+<div class="fld"><span class="lab">{{fl.partyLabel}} <span class="req">*</span></span>
+<div style="display: flex; gap: 10px"><button class="selbtn tap" sc-camel-on-click="{{fl.openParty}}"><span class="av sm">{{fl.partyInit}}</span><span class="grow ell" style="text-align: left">{{fl.v.party}}</span><svg class="i s chev" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevD}}"></path></svg></button>
+<sc-if value="{{fl.notJournal}}" hint-placeholder-val="{{ true }}"><button class="glass cbtn tap" sc-camel-on-click="{{fl.newParty}}" aria-label="Add new party" style="width: 56px; height: 56px; border-radius: 16px; color: var(--navy)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.plus}}"></path></svg></button></sc-if></div></div>
+<sc-if value="{{fl.showSupInv}}" hint-placeholder-val="{{ false }}"><div class="fld"><label class="lab" for="f-sup"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.hash}}"></path></svg>Seller's bill no.</label><input id="f-sup" class="inp" value="{{fv.pSupInv}}" sc-camel-on-change="{{fc.pSupInv}}"></div></sc-if>
+<sc-if value="{{fl.showAmt}}" hint-placeholder-val="{{ false }}"><div class="fld"><label class="lab" for="f-amt">{{fl.amtLabel}} <span class="req">*</span></label><div class="iw"><span style="position: absolute; left: 18px; top: 15px; font-weight: 800; font-size: 19px">₹</span><input id="f-amt" class="inp" inputmode="numeric" value="{{fl.v.amt}}" sc-camel-on-change="{{fl.h.amt}}" style="font-size: 20px; font-weight: 800"></div></div></sc-if>
+<sc-if value="{{fl.showRef}}" hint-placeholder-val="{{ false }}"><div class="fld"><label class="lab" for="f-ref"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.hash}}"></path></svg>Against which bill? (optional)</label><input id="f-ref" class="inp" value="{{fl.v.ref}}" sc-camel-on-change="{{fl.h.ref}}"></div></sc-if>
+<sc-if value="{{fl.showDue}}" hint-placeholder-val="{{ false }}"><div class="fld"><label class="lab" for="f-due"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.calendar}}"></path></svg>Pay by date</label><input id="f-due" class="inp" type="date" value="{{fl.v.due}}" sc-camel-on-change="{{fl.h.due}}"></div></sc-if>
+<div class="fld" style="margin-bottom: 0"><label class="lab" for="f-note"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.note}}"></path></svg>Note (optional)</label><textarea id="f-note" class="inp" value="{{fl.v.note}}" sc-camel-on-change="{{fl.h.note}}"></textarea></div>
+</div>
+</sc-if>
+
+<!-- step: items -->
+<sc-if value="{{fl.isItems}}" hint-placeholder-val="{{ false }}">
+<div style="animation: rise .35s both">
+<button class="glass row tap mt" sc-camel-on-click="{{fl.openPicker}}" style="min-height: 56px"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true" style="color: var(--ink3)"><path d="{{ic.search}}"></path></svg><span class="rs grow" style="font-size: 16px; margin: 0">Search item name</span></button>
+<div class="glass list mt">
+<div class="lt" style="padding: 14px 14px 4px"><span class="rt" style="font-size: 17px">Items ({{fl.lineCount}})</span><span class="rs">Rate × quantity</span></div>
+<sc-for list="{{fl.lines}}" as="l" hint-placeholder-count="3">
+<div class="line">
+<div class="lt"><span class="rtx"><span class="rt">{{l.name}}</span><span class="rs">{{l.rateTxt}}</span></span><span class="amt">{{l.amtTxt}}</span></div>
+<div class="lt" style="margin-top: 10px; align-items: center">
+<div class="stepper"><button sc-camel-on-click="{{l.dec}}" aria-label="Less"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.minus}}"></path></svg></button><span>{{l.qtyTxt}}</span><button sc-camel-on-click="{{l.inc}}" aria-label="More"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.plus}}"></path></svg></button></div>
+<button class="del tap" sc-camel-on-click="{{l.del}}" aria-label="Remove item"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.trash}}"></path></svg></button>
+</div>
+</div>
+</sc-for>
+<sc-if value="{{fl.noLines}}" hint-placeholder-val="{{ false }}"><div class="pad c rs" style="font-size: 15px">No items yet. Tap “Add item”.</div></sc-if>
+<div style="padding: 6px 14px 14px"><button class="dash tap" sc-camel-on-click="{{fl.openPicker}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.plus}}"></path></svg>Add item</button></div>
+</div>
+<div class="glass list mt">
+<div class="kv"><span class="k">Before GST</span><span class="v">{{fl.subTxt}}</span></div>
+<div class="kv"><span class="k">GST</span><span class="v">{{fl.gstTxt}}</span></div>
+<div class="kv strong"><span class="k">Bill total</span><span class="v">{{fl.totalTxt}}</span></div>
+</div>
+</div>
+</sc-if>
+
+<!-- step: payment (sales/purchase) -->
+<sc-if value="{{fl.isPay}}" hint-placeholder-val="{{ false }}">
+<div class="glass pad mt" style="animation: rise .35s both">
+<div class="lab" style="margin-bottom: 10px">How was it paid? <span class="req">*</span></div>
+<div class="modes">
+<sc-for list="{{fl.modes}}" as="m" hint-placeholder-count="5">
+<button class="{{m.cls}}" sc-camel-on-click="{{m.pick}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{m.d}}"></path></svg>{{m.t}}</button>
+</sc-for>
+</div>
+<div class="fld"><label class="lab" for="f-pamt">{{fl.amtLabel}}</label><div class="iw"><span style="position: absolute; left: 18px; top: 15px; font-weight: 800; font-size: 19px">₹</span><input id="f-pamt" class="inp" inputmode="numeric" value="{{fl.v.amt}}" sc-camel-on-change="{{fl.h.amt}}" style="font-size: 20px; font-weight: 800"></div></div>
+<div class="tot a"><span>Bill total</span><span class="amt">{{fl.totalTxt}}</span></div>
+<div class="{{fl.balCls}}"><span>{{fl.balLabel}}</span><span class="amt">{{fl.balTxt}}</span></div>
+<div class="fld" style="margin: 6px 0 0"><label class="lab" for="f-pn"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.note}}"></path></svg>Payment note (optional)</label><textarea id="f-pn" class="inp" value="{{fl.v.payNote}}" sc-camel-on-change="{{fl.h.payNote}}"></textarea></div>
+</div>
+</sc-if>
+
+<!-- step: mode (receipt/payment) -->
+<sc-if value="{{fl.isMode}}" hint-placeholder-val="{{ false }}">
+<div class="glass pad mt" style="animation: rise .35s both">
+<div class="lab" style="margin-bottom: 10px">How was it paid? <span class="req">*</span></div>
+<div class="modes">
+<sc-for list="{{fl.modes}}" as="m" hint-placeholder-count="5">
+<button class="{{m.cls}}" sc-camel-on-click="{{m.pick}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{m.d}}"></path></svg>{{m.t}}</button>
+</sc-for>
+</div>
+<sc-if value="{{fl.bankShow}}" hint-placeholder-val="{{ true }}">
+<div class="fld"><label class="lab" for="f-bank"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.bank}}"></path></svg>Bank name</label><input id="f-bank" class="inp" value="{{fl.v.bank}}" sc-camel-on-change="{{fl.h.bank}}"></div>
+<div class="fld"><label class="lab" for="f-utr"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.hash}}"></path></svg>Reference / UTR no.</label><input id="f-utr" class="inp" value="{{fl.v.utr}}" sc-camel-on-change="{{fl.h.utr}}"></div>
+</sc-if>
+<div class="fld"><span class="lab">{{fl.accLabel}}</span><button class="selbtn tap" sc-camel-on-click="{{fl.openAcc}}"><span class="ico xs" style="color: var(--navy)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{fl.accIcon}}"></path></svg></span><span class="grow ell" style="text-align: left">{{fl.v.acc}}</span><svg class="i s chev" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevD}}"></path></svg></button></div>
+<div class="tot a" style="margin: 0"><span>{{fl.amtLabel}}</span><span class="amt">{{fl.amtTxt}}</span></div>
+</div>
+</sc-if>
+
+<!-- step: journal accounts -->
+<sc-if value="{{fl.isLedgers}}" hint-placeholder-val="{{ false }}">
+<div class="glass pad mt" style="animation: rise .35s both">
+<div class="rt" style="font-size: 17px">Which accounts?</div>
+<div class="rs" style="margin-bottom: 12px">Money goes <b>to</b> one account and comes <b>from</b> another. Both sides must match.</div>
+<div class="two">
+<div class="tot c" style="flex-direction: column; align-items: flex-start; margin: 0"><span class="rs" style="margin: 0; color: var(--pos); font-weight: 700">Goes to (Dr)</span><span class="amt" style="font-size: 19px">{{fl.drTxt}}</span></div>
+<div class="tot a" style="flex-direction: column; align-items: flex-start; margin: 0"><span class="rs" style="margin: 0; color: var(--navy); font-weight: 700">Comes from (Cr)</span><span class="amt" style="font-size: 19px">{{fl.crTxt}}</span></div>
+</div>
+<sc-if value="{{fl.balanced}}" hint-placeholder-val="{{ true }}"><div class="okb"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg>Matched — both sides are equal</div></sc-if>
+<sc-if value="{{fl.unbalanced}}" hint-placeholder-val="{{ false }}"><div class="warn"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.info}}"></path></svg>Not matching yet · difference {{fl.diffTxt}}</div></sc-if>
+<div class="list">
+<sc-for list="{{fl.jl}}" as="j" hint-placeholder-count="2">
+<div class="row" style="padding: 10px 0; min-height: 60px">
+<button class="{{j.sideCls}}" sc-camel-on-click="{{j.flip}}" aria-label="Switch side">{{j.sideTxt}}</button>
+<span class="rtx"><span class="rt ell" style="font-size: 15px">{{j.name}}</span><span class="rs">{{j.grp}}</span></span>
+<input class="jinp" inputmode="numeric" value="{{j.amt}}" sc-camel-on-change="{{j.onAmt}}" aria-label="Amount">
+<button class="del tap" sc-camel-on-click="{{j.del}}" aria-label="Remove account" style="width: 38px; height: 38px"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.trash}}"></path></svg></button>
+</div>
+</sc-for>
+</div>
+<button class="dash tap mt" sc-camel-on-click="{{fl.addJl}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.plus}}"></path></svg>Add account</button>
+</div>
+</sc-if>
+
+<!-- step: summary -->
+<sc-if value="{{fl.isSummary}}" hint-placeholder-val="{{ false }}">
+<div style="animation: rise .35s both">
+<div class="glass shero mt">
+<div style="display: flex; gap: 12px; align-items: center">
+<span class="ico sm" style="color: {{fl.c}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{fl.d}}"></path></svg></span>
+<span class="rtx"><span class="rs" style="margin: 0; font-weight: 700">{{fl.sub}} · check before saving</span><span class="rt" style="font-size: 20px">{{fl.heroNo}}</span></span>
+<span class="ra"><span class="rs" style="margin: 0">Total</span><span class="amt" style="font-size: 22px">{{fl.heroAmt}}</span></span>
+</div>
+<div class="rs">{{fl.heroDate}}</div>
+<div class="okb" style="margin: 2px 0 0"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg>Ready to send to Tally</div>
+</div>
+<sc-for list="{{fl.sections}}" as="sec" hint-placeholder-count="2">
+<div class="glass list mt">
+<div class="lt" style="padding: 14px 16px 6px; align-items: center"><span class="rt" style="font-size: 17px">{{sec.title}}</span><button class="glass chip tap" sc-camel-on-click="{{sec.edit}}" style="height: 36px; font-size: 14px; color: var(--navy)"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.edit}}"></path></svg>Change</button></div>
+<sc-for list="{{sec.rows}}" as="r" hint-placeholder-count="3">
+<div class="{{r.cls}}"><span class="k">{{r.k}}</span><span class="v">{{r.v}}</span></div>
+</sc-for>
+</div>
+</sc-for>
+<sc-if value="{{fl.canDraft}}" hint-placeholder-val="{{ false }}"><div class="c mt"><button class="link" sc-camel-on-click="{{fl.draft}}">Save as draft on this phone</button></div></sc-if>
+</div>
+</sc-if>
+
+</div>
+<div class="foot">
+<button class="btn glass btn-g tap" sc-camel-on-click="{{fl.prev}}">{{fl.prevLabel}}</button>
+<sc-if value="{{fl.notLast}}" hint-placeholder-val="{{ true }}"><button class="btn btn-p w2 tap" sc-camel-on-click="{{fl.next}}" disabled="{{fl.nextOff}}">Next<svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevR}}"></path></svg></button></sc-if>
+<sc-if value="{{fl.isSummary}}" hint-placeholder-val="{{ false }}"><button class="btn btn-a w2 tap" sc-camel-on-click="{{fl.save}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg>Save</button></sc-if>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ VOUCHERS HUB ============ -->
+<sc-if value="{{is.vHub}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button></div>
+<h1 class="h1">Vouchers</h1>
+<div class="sub">Entries you have already saved</div>
+<div class="glass pad">
+<div class="lt" style="align-items: center; margin-bottom: 12px"><span class="rs" style="margin: 0; font-weight: 700">September 2026 · {{companyName}}</span><span class="badge b-acc">Sample data</span></div>
+<div class="two">
+<sc-for list="{{vh.sums}}" as="m" hint-placeholder-count="4">
+<button class="tot tap" sc-camel-on-click="{{m.go}}" style="flex-direction: column; align-items: flex-start; margin: 0; background: {{m.bg}}"><span class="rs" style="margin: 0">{{m.t}}</span><span class="{{m.cls}}" style="font-size: 18px">{{m.v}}</span></button>
+</sc-for>
+</div>
+</div>
+<div class="grid3 mt2">
+<sc-for list="{{vh.tiles}}" as="t" hint-placeholder-count="7">
+<button class="glass tile tap" sc-camel-on-click="{{t.go}}"><span class="ico" style="color: {{t.c}}"><svg class="i l" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{t.d}}"></path></svg></span><span class="tl" style="font-size: 15px">{{t.t}}</span><span class="ts">{{t.s}}</span></button>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ VOUCHER LIST ============ -->
+<sc-if value="{{is.vList}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button><span class="grow"></span>
+<button class="glass cbtn tap" sc-camel-on-click="{{openSearch}}" aria-label="Search"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.search}}"></path></svg></button>
+<button class="glass cbtn tap" sc-camel-on-click="{{refreshNow}}" aria-label="Refresh"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.sync}}"></path></svg></button>
+<button class="glass cbtn tap" sc-camel-on-click="{{nav.newEntry}}" aria-label="New entry"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.plus}}"></path></svg></button></div>
+<h1 class="h1">{{vl.title}}</h1>
+<div class="sub">{{companyName}} · September 2026</div>
+<div class="glass row" style="min-height: 72px">
+<span class="ico sm" style="color: {{vl.c}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{vl.d}}"></path></svg></span>
+<span class="rtx"><span class="rs" style="margin: 0">Entries</span><span class="rt" style="font-size: 22px">{{vl.count}}</span></span>
+<span class="ra"><span class="rs" style="margin: 0">Total value</span><span class="amt" style="font-size: 22px">{{vl.total}}</span></span>
+</div>
+<div class="chips mt">
+<sc-for list="{{vl.chips}}" as="ch" hint-placeholder-count="7">
+<button class="{{ch.cls}}" sc-camel-on-click="{{ch.pick}}">{{ch.t}}</button>
+</sc-for>
+</div>
+<div class="glass seg">
+<sc-for list="{{vl.periods}}" as="p" hint-placeholder-count="3"><button class="{{p.cls}}" sc-camel-on-click="{{p.pick}}">{{p.t}}</button></sc-for>
+</div>
+<div class="glass list">
+<sc-for list="{{vl.rows}}" as="v" hint-placeholder-count="5">
+<button class="{{v.rcls}}" sc-camel-on-click="{{v.open}}" sc-camel-on-pointer-down="{{v.down}}" data-lk="{{v.lk}}" data-list="vouchers"><sc-if value="{{v.pinned}}" hint-placeholder-val="{{ false }}"><span class="pinmini" aria-label="Pinned"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.pin}}"></path></svg></span></sc-if>
+<span class="ico xs" style="color: {{v.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{v.d}}"></path></svg></span>
+<span class="rtx"><span class="rt ell">{{v.party}}</span><span class="rs">{{v.meta}}</span></span>
+<span class="ra"><span class="{{v.cls}}">{{v.amt}}</span><span class="badge b-ok" style="padding: 2px 8px; font-size: 11px">Synced</span></span>
+</button>
+</sc-for>
+<sc-if value="{{hl.vouchers.any}}" hint-placeholder-val="{{ false }}"><button class="hidrow tap" sc-camel-on-click="{{hl.vouchers.show}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.eye}}"></path></svg>{{hl.vouchers.txt}}</button></sc-if>
+<sc-if value="{{vl.empty}}" hint-placeholder-val="{{ false }}"><div class="pad c rs" style="font-size: 15px">No entries in this time.</div></sc-if>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ ENTRY DETAIL ============ -->
+<sc-if value="{{is.entryDetail}}" hint-placeholder-val="{{ false }}">
+<div class="{{flowCls}}"><div class="fbody">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button><span class="grow"></span><button class="glass cbtn tap" sc-camel-on-click="{{ed.share}}" aria-label="Share"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.share}}"></path></svg></button></div>
+<div class="glass shero mt" style="align-items: center; text-align: center">
+<span class="ico" style="color: {{ed.c}}"><svg class="i l" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ed.d}}"></path></svg></span>
+<span class="rs" style="font-weight: 700">{{ed.kind}} · {{ed.no}}</span>
+<span class="{{ed.cls}}">{{ed.amt}}</span>
+<span class="rt">{{ed.party}}</span>
+<span class="badge b-ok b-dot">Synced with Tally</span>
+</div>
+<div class="glass list mt">
+<sc-for list="{{ed.rows}}" as="r" hint-placeholder-count="4"><div class="kv"><span class="k">{{r.k}}</span><span class="v">{{r.v}}</span></div></sc-for>
+</div>
+</div>
+<div class="foot"><button class="btn glass btn-g tap" sc-camel-on-click="{{ed.share}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.share}}"></path></svg>Share</button><button class="btn btn-p w2 tap" sc-camel-on-click="{{ed.pdf}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.file}}"></path></svg>See bill PDF</button></div>
+</div>
+</sc-if>
+
+<!-- ============ OUTSTANDING HUB ============ -->
+<sc-if value="{{is.outHub}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass cbtn tap" sc-camel-on-click="{{openMenu}}" aria-label="Open menu"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.menu}}"></path></svg></button><span class="grow"></span><span class="badge b-acc">Sample data</span></div>
+<h1 class="h1">Money due</h1>
+<div class="sub">Money still to be settled (Outstanding)</div>
+<sc-for list="{{oh.cards}}" as="o" hint-placeholder-count="2">
+<button class="glass pad tap" sc-camel-on-click="{{o.go}}" style="display: block; width: 100%; text-align: left; margin-bottom: 12px">
+<div style="display: flex; gap: 12px; align-items: center"><span class="ico" style="color: {{o.c}}"><svg class="i l" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{o.d}}"></path></svg></span><span class="rtx"><span class="rt" style="font-size: 20px">{{o.t}}</span><span class="rs">{{o.s}}</span></span><svg class="i chev" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevR}}"></path></svg></div>
+<div class="lt" style="margin-top: 14px; align-items: flex-end"><span class="rtx"><span class="rs" style="margin: 0">Total</span><span class="{{o.cls}}">{{o.v}}</span></span><span class="ra"><span class="badge b-info">{{o.parties}}</span><span class="badge b-bad">{{o.late}}</span></span></div>
+</button>
+</sc-for>
+<div class="hrow"><h2 class="h2">Due in the next 7 days</h2></div>
+<div class="glass list">
+<sc-for list="{{oh.soon}}" as="b" hint-placeholder-count="4">
+<button class="row tap" sc-camel-on-click="{{b.open}}"><span class="ico xs" style="color: {{b.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{b.d}}"></path></svg></span><span class="rtx"><span class="rt ell">{{b.party}}</span><span class="rs">{{b.no}} · {{b.txt}}</span></span><span class="{{b.cls}}">{{b.amt}}</span></button>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ OUTSTANDING LIST (to get / to give) ============ -->
+<sc-if value="{{is.outList}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button><span class="grow"></span><button class="glass cbtn tap" sc-camel-on-click="{{refreshNow}}" aria-label="Refresh"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.sync}}"></path></svg></button></div>
+<h1 class="h1">{{ol.title}}</h1>
+<div class="sub">{{ol.sub}}</div>
+<div class="glass pad">
+<div style="display: flex; gap: 12px; align-items: center"><span class="ico sm" style="color: {{ol.c}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ol.d}}"></path></svg></span><span class="rtx"><span class="rs" style="margin: 0">{{ol.s}}</span><span class="{{ol.cls}}">{{ol.total}}</span></span></div>
+<div class="chips" style="margin: 12px 0"><span class="badge b-info">{{ol.parties}}</span><span class="badge b-bad">{{ol.late}}</span><span class="badge b-info">As on 26 Sep 2026</span></div>
+<button class="btn glass btn-g w tap" sc-camel-on-click="{{ol.bulk}}" style="color: var(--acc)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ol.bulkIc}}"></path></svg>{{ol.bulkTxt}}</button>
+</div>
+<button class="glass row tap mt" sc-camel-on-click="{{ol.toggleAuto}}"><span class="ico xs" style="color: var(--navy)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.bell}}"></path></svg></span><span class="rtx"><span class="rt">{{ol.autoT}}</span><span class="rs">{{ol.autoS}}</span></span><span class="{{ol.autoCls}}" role="presentation"><i></i></span></button>
+<div class="glass pad mt">
+<div class="rt" style="font-size: 17px; margin-bottom: 8px">How late?</div>
+<sc-for list="{{ol.ageing}}" as="a" hint-placeholder-count="4">
+<div class="lt"><span class="rs" style="margin: 0; font-size: 14.5px; color: var(--ink2)">{{a.t}}</span><span class="amt" style="font-size: 14.5px">{{a.v}}</span></div>
+<div class="bar"><i style="width: {{a.w}}%; background: {{a.c}}"></i></div>
+</sc-for>
+</div>
+<div class="chips mt2">
+<sc-for list="{{ol.chips}}" as="ch" hint-placeholder-count="4"><button class="{{ch.cls}}" sc-camel-on-click="{{ch.pick}}">{{ch.t}}</button></sc-for>
+</div>
+<div class="glass list">
+<sc-for list="{{ol.rows}}" as="b" hint-placeholder-count="5">
+<button class="{{b.rcls}}" sc-camel-on-click="{{b.open}}" sc-camel-on-pointer-down="{{b.down}}" data-lk="{{b.lk}}" data-list="bills"><sc-if value="{{b.pinned}}" hint-placeholder-val="{{ false }}"><span class="pinmini" aria-label="Pinned"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.pin}}"></path></svg></span></sc-if><span class="av sm">{{b.init}}</span><span class="rtx"><span class="rt ell">{{b.party}}</span><span class="rs">{{b.no}} · {{b.city}}</span></span><span class="ra"><span class="{{b.cls}}">{{b.amt}}</span><span class="{{b.stCls}}">{{b.txt}}</span></span></button>
+</sc-for>
+<sc-if value="{{hl.bills.any}}" hint-placeholder-val="{{ false }}"><button class="hidrow tap" sc-camel-on-click="{{hl.bills.show}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.eye}}"></path></svg>{{hl.bills.txt}}</button></sc-if>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ BILL DETAIL ============ -->
+<sc-if value="{{is.billDetail}}" hint-placeholder-val="{{ false }}">
+<div class="{{flowCls}}"><div class="fbody">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button><span class="grow"></span><button class="glass cbtn tap" sc-camel-on-click="{{bd.share}}" aria-label="Share bill"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.share}}"></path></svg></button></div>
+<h1 class="h1">Bill details</h1>
+<div class="sub">{{bd.no}} · {{bd.kind}}</div>
+<div class="glass pad">
+<div style="display: flex; gap: 12px; align-items: center"><span class="av">{{bd.init}}</span><span class="rtx"><span class="rt" style="font-size: 18px">{{bd.party}}</span><span class="rs"><span class="badge b-acc" style="padding: 2px 8px">{{bd.role}}</span> {{bd.city}}</span></span></div>
+<div style="height: 1px; background: rgba(27,45,91,.08); margin: 14px 0"></div>
+<div class="lt" style="align-items: flex-end"><span class="rtx"><span class="rs" style="margin: 0">{{bd.balLabel}}</span><span class="{{bd.cls}}">{{bd.amt}}</span></span><span class="{{bd.stCls}}">{{bd.txt}}</span></div>
+</div>
+<div class="sec">Bill PDF · {{bd.file}}</div>
+<div class="big3">
+<button class="glass tile tap" sc-camel-on-click="{{bd.pdf}}" style="min-height: 100px"><span class="ico xs" style="color: var(--navy)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.file}}"></path></svg></span><span class="rt" style="font-size: 13.5px">See PDF</span></button>
+<button class="glass tile tap" sc-camel-on-click="{{bd.share}}" style="min-height: 100px"><span class="ico xs" style="color: var(--c-sales)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.share}}"></path></svg></span><span class="rt" style="font-size: 13.5px">Share PDF</span></button>
+<button class="glass tile tap" sc-camel-on-click="{{bd.download}}" style="min-height: 100px"><span class="ico xs" style="color: var(--c-purchase)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.download}}"></path></svg></span><span class="rt" style="font-size: 13.5px">Download</span></button>
+</div>
+<div class="sec">Bill information</div>
+<div class="glass list">
+<sc-for list="{{bd.rows}}" as="r" hint-placeholder-count="5"><div class="kv"><span class="k">{{r.k}}</span><span class="v">{{r.v}}</span></div></sc-for>
+</div>
+</div>
+<div class="foot">
+<sc-if value="{{bd.isRecv}}" hint-placeholder-val="{{ true }}"><button class="btn glass btn-g tap" sc-camel-on-click="{{bd.remind}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chat}}"></path></svg>Remind</button></sc-if>
+<button class="btn btn-a w2 tap" sc-camel-on-click="{{bd.record}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{bd.recIc}}"></path></svg>{{bd.recTxt}}</button>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ ITEMS ============ -->
+<sc-if value="{{is.items}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button><span class="grow"></span><button class="glass cbtn tap" sc-camel-on-click="{{it.share}}" aria-label="Share list"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.share}}"></path></svg></button><button class="glass cbtn tap" sc-camel-on-click="{{refreshNow}}" aria-label="Refresh"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.sync}}"></path></svg></button></div>
+<div class="lt" style="align-items: flex-end"><h1 class="h1">Items</h1><span class="badge b-acc" style="margin-bottom: 10px">Sample data</span></div>
+<div class="sub">Your stock from Tally</div>
+<div class="glass pad">
+<div style="display: flex; gap: 12px; align-items: center"><span class="ico sm" style="color: var(--c-items)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.box}}"></path></svg></span><span class="rtx"><span class="rs" style="margin: 0">Total stock value</span><span class="amt" style="font-size: 26px; text-align: left">{{it.value}}</span></span></div>
+<div class="big3 mt"><div class="tot a stat" style="margin: 0"><b>{{it.count}}</b><span>Items</span></div><div class="tot b stat" style="margin: 0"><b>{{it.low}}</b><span>Running low</span></div><div class="tot stat" style="margin: 0; background: color-mix(in srgb,var(--neg) 8%,transparent)"><b>{{it.out}}</b><span>Finished</span></div></div>
+</div>
+<div class="glass seg mt2">
+<sc-for list="{{it.segs}}" as="s" hint-placeholder-count="3"><button class="{{s.cls}}" sc-camel-on-click="{{s.pick}}">{{s.t}}</button></sc-for>
+</div>
+<div style="display: flex; gap: 10px; margin-bottom: 12px">
+<div class="iw grow"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.search}}"></path></svg><input class="inp" value="{{fv.itemQ}}" sc-camel-on-change="{{fc.itemQ}}" placeholder="Search item name" aria-label="Search items"></div>
+<button class="glass cbtn tap" sc-camel-on-click="{{it.scan}}" aria-label="Scan barcode" style="width: 56px; height: 56px; border-radius: 16px; color: var(--navy)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.scan}}"></path></svg></button>
+</div>
+<div class="glass list">
+<sc-for list="{{it.rows}}" as="x" hint-placeholder-count="5">
+<div class="{{x.rcls}}" sc-camel-on-pointer-down="{{x.down}}" data-lk="{{x.lk}}" data-list="items"><sc-if value="{{x.pinned}}" hint-placeholder-val="{{ false }}"><span class="pinmini" aria-label="Pinned"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.pin}}"></path></svg></span></sc-if><span class="ico xs" style="color: var(--c-items)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.box}}"></path></svg></span><span class="rtx"><span class="rt ell">{{x.name}}</span><span class="rs"><span class="{{x.stCls}}" style="padding: 2px 8px">{{x.stock}}</span> {{x.rate}}</span></span><span class="amt">{{x.value}}</span></div>
+</sc-for>
+<sc-if value="{{hl.items.any}}" hint-placeholder-val="{{ false }}"><button class="hidrow tap" sc-camel-on-click="{{hl.items.show}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.eye}}"></path></svg>{{hl.items.txt}}</button></sc-if>
+<sc-if value="{{it.empty}}" hint-placeholder-val="{{ false }}"><div class="pad c rs" style="font-size: 15px">No item found.</div></sc-if>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ PARTY ============ -->
+<sc-if value="{{is.party}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button><span class="grow"></span><button class="glass cbtn tap" sc-camel-on-click="{{refreshNow}}" aria-label="Refresh"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.sync}}"></path></svg></button><button class="glass cbtn tap" sc-camel-on-click="{{pv.addParty}}" aria-label="Add party"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.userPlus}}"></path></svg></button></div>
+<div class="lt" style="align-items: flex-end"><h1 class="h1">Party</h1><span class="badge b-acc" style="margin-bottom: 10px">Sample data</span></div>
+<div class="sub">Customers and suppliers</div>
+<div class="big3">
+<div class="glass stat"><b>{{pv.total}}</b><span>All</span></div>
+<div class="glass stat"><b class="in">{{pv.cust}}</b><span>Customers</span></div>
+<div class="glass stat"><b style="color: var(--c-purchase)">{{pv.supp}}</b><span>Suppliers</span></div>
+</div>
+<div class="glass seg mt2">
+<sc-for list="{{pv.segs}}" as="s" hint-placeholder-count="3"><button class="{{s.cls}}" sc-camel-on-click="{{s.pick}}">{{s.t}}</button></sc-for>
+</div>
+<div style="display: flex; gap: 10px; margin-bottom: 12px">
+<div class="iw grow"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.search}}"></path></svg><input class="inp" value="{{fv.partyQ}}" sc-camel-on-change="{{fc.partyQ}}" placeholder="Search party name" aria-label="Search party"></div>
+<button class="glass cbtn tap" sc-camel-on-click="{{pv.toggleSort}}" aria-label="{{pv.sortLabel}}" style="width: 56px; height: 56px; border-radius: 16px; color: var(--navy)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.sort}}"></path></svg></button>
+</div>
+<div class="rs" style="margin: 0 6px 8px">{{pv.sortLabel}}</div>
+<div class="glass list">
+<sc-for list="{{pv.rows}}" as="p" hint-placeholder-count="6">
+<button class="{{p.rcls}}" sc-camel-on-click="{{p.open}}" sc-camel-on-pointer-down="{{p.down}}" data-lk="{{p.lk}}" data-list="party"><sc-if value="{{p.pinned}}" hint-placeholder-val="{{ false }}"><span class="pinmini" aria-label="Pinned"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.pin}}"></path></svg></span></sc-if><span class="av">{{p.init}}</span><span class="rtx"><span class="rt ell">{{p.name}}</span><span class="rs">{{p.role}} · {{p.city}}</span></span><span class="ra"><span class="{{p.cls}}">{{p.bal}}</span><span class="rs" style="margin: 0; font-size: 12px">{{p.owe}}</span></span></button>
+</sc-for>
+<sc-if value="{{hl.party.any}}" hint-placeholder-val="{{ false }}"><button class="hidrow tap" sc-camel-on-click="{{hl.party.show}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.eye}}"></path></svg>{{hl.party.txt}}</button></sc-if>
+<sc-if value="{{pv.empty}}" hint-placeholder-val="{{ false }}"><div class="pad c rs" style="font-size: 15px">No party found.</div></sc-if>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ PARTY DETAIL ============ -->
+<sc-if value="{{is.partyDetail}}" hint-placeholder-val="{{ false }}">
+<div class="{{flowCls}}"><div class="fbody">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button><span class="grow"></span><button class="glass cbtn tap" sc-camel-on-click="{{refreshNow}}" aria-label="Refresh"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.sync}}"></path></svg></button><button class="glass cbtn tap" sc-camel-on-click="{{pd.share}}" aria-label="Share"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.share}}"></path></svg></button></div>
+<div class="glass seg mt">
+<sc-for list="{{pd.tabs}}" as="s" hint-placeholder-count="3"><button class="{{s.cls}}" sc-camel-on-click="{{s.pick}}">{{s.t}}</button></sc-for>
+</div>
+<div class="glass pad">
+<div style="display: flex; gap: 12px; align-items: center"><span class="av lg">{{pd.init}}</span><span class="rtx"><span class="rt" style="font-size: 19px">{{pd.name}}</span><span class="rs">{{pd.role}} · {{pd.city}}</span></span><span class="badge b-ok b-dot">Active</span></div>
+<div class="tot c mt" style="flex-direction: column; align-items: flex-start; background: {{pd.bg}}"><span class="rs" style="margin: 0">Balance · as on 26 Sep 2026</span><span class="{{pd.cls}}">{{pd.bal}}</span><span class="rs" style="margin: 0; font-weight: 700">{{pd.owe}}</span></div>
+</div>
+<sc-if value="{{pd.isSummary}}" hint-placeholder-val="{{ true }}">
+<div class="glass list mt"><sc-for list="{{pd.rows}}" as="r" hint-placeholder-count="6"><div class="kv"><span class="k">{{r.k}}</span><span class="v">{{r.v}}</span></div></sc-for></div>
+</sc-if>
+<sc-if value="{{pd.isItems}}" hint-placeholder-val="{{ false }}">
+<div class="glass list mt"><sc-for list="{{pd.items}}" as="x" hint-placeholder-count="3"><div class="row"><span class="ico xs" style="color: var(--c-items)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.box}}"></path></svg></span><span class="rtx"><span class="rt">{{x.name}}</span><span class="rs">{{x.sub}}</span></span><span class="amt">{{x.amt}}</span></div></sc-for>
+<sc-if value="{{pd.noItems}}" hint-placeholder-val="{{ false }}"><div class="pad c rs" style="font-size: 15px">No item details in sample data.</div></sc-if></div>
+</sc-if>
+<sc-if value="{{pd.isVouchers}}" hint-placeholder-val="{{ false }}">
+<div class="glass list mt"><sc-for list="{{pd.vouchers}}" as="v" hint-placeholder-count="2"><button class="row tap" sc-camel-on-click="{{v.open}}"><span class="ico xs" style="color: {{v.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{v.d}}"></path></svg></span><span class="rtx"><span class="rt">{{v.kind}} · {{v.no}}</span><span class="rs">{{v.date}}</span></span><span class="{{v.cls}}">{{v.amt}}</span></button></sc-for>
+<sc-if value="{{pd.noVouchers}}" hint-placeholder-val="{{ false }}"><div class="pad c rs" style="font-size: 15px">No entries this month.</div></sc-if></div>
+</sc-if>
+</div>
+<div class="foot"><button class="btn glass btn-g tap" sc-camel-on-click="{{pd.remind}}" style="color: var(--acc)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.bell}}"></path></svg>Remind</button><button class="btn btn-a w2 tap" sc-camel-on-click="{{pd.newEntry}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.plus}}"></path></svg>{{pd.newTxt}}</button></div>
+</div>
+</sc-if>
+
+<!-- ============ REPORTS ============ -->
+<sc-if value="{{is.reports}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass cbtn tap" sc-camel-on-click="{{openMenu}}" aria-label="Open menu"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.menu}}"></path></svg></button><span class="grow"></span><button class="glass cbtn tap" sc-camel-on-click="{{openSearch}}" aria-label="Search"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.search}}"></path></svg></button><button class="glass cbtn tap" sc-camel-on-click="{{refreshNow}}" aria-label="Refresh"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.sync}}"></path></svg></button></div>
+<h1 class="h1">Reports</h1>
+<div class="sub">Easy views of your Tally data · {{companyName}}</div>
+<div class="glass pad">
+<div class="lt" style="align-items: center; margin-bottom: 12px"><span class="rt">September 2026</span><span class="badge b-acc">Sample data</span></div>
+<div class="two">
+<sc-for list="{{vh.sums}}" as="m" hint-placeholder-count="4"><button class="tot tap" sc-camel-on-click="{{m.go}}" style="flex-direction: column; align-items: flex-start; margin: 0; background: {{m.bg}}"><span class="rs" style="margin: 0">{{m.t}}</span><span class="{{m.cls}}" style="font-size: 18px">{{m.v}}</span></button></sc-for>
+</div>
+</div>
+<div class="chips mt2">
+<sc-for list="{{rp.chips}}" as="ch" hint-placeholder-count="5"><button class="{{ch.cls}}" sc-camel-on-click="{{ch.pick}}">{{ch.t}}</button></sc-for>
+</div>
+<div class="grid2">
+<sc-for list="{{rp.cards}}" as="r" hint-placeholder-count="4">
+<button class="{{r.rcls}}" sc-camel-on-click="{{r.open}}" sc-camel-on-pointer-down="{{r.down}}" data-lk="{{r.lk}}" data-list="reports" style="min-height: 150px"><sc-if value="{{r.pinned}}" hint-placeholder-val="{{ false }}"><span class="pinmini" aria-label="Pinned"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.pin}}"></path></svg></span></sc-if>
+<span class="ico sm" style="color: {{r.c}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{r.d}}"></path></svg></span>
+<span class="rt" style="margin-top: 10px">{{r.t}}</span>
+<span class="rt" style="color: {{r.c}}; font-size: 15px">{{r.v}}</span>
+<span class="rs">{{r.s}}</span>
+</button>
+</sc-for>
+<sc-if value="{{hl.reports.any}}" hint-placeholder-val="{{ false }}"><button class="hidrow tap" sc-camel-on-click="{{hl.reports.show}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.eye}}"></path></svg>{{hl.reports.txt}}</button></sc-if>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ REPORT DETAIL ============ -->
+<sc-if value="{{is.report}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button><span class="grow"></span><button class="glass cbtn tap" sc-camel-on-click="{{rd.share}}" aria-label="Share report"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.share}}"></path></svg></button></div>
+<div style="display: flex; gap: 12px; align-items: center; margin-top: 8px"><span class="ico" style="color: {{rd.c}}"><svg class="i l" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{rd.d}}"></path></svg></span><span class="rtx"><span class="h1" style="margin: 0; font-size: 28px">{{rd.t}}</span><span class="rs">{{rd.s}}</span></span></div>
+<div class="glass row mt2" style="min-height: 64px"><span class="rtx"><span class="rs" style="margin: 0">{{rd.totLabel}}</span></span><span class="amt" style="font-size: 22px">{{rd.tot}}</span></div>
+<div class="glass list mt">
+<sc-for list="{{rd.rows}}" as="r" hint-placeholder-count="5">
+<div class="row"><span class="av sm" style="background: {{r.bg}}">{{r.n}}</span><span class="rtx"><span class="rt ell">{{r.t}}</span><span class="rs">{{r.s}}</span></span><span class="{{r.cls}}">{{r.v}}</span></div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ ACTIVITY ============ -->
+<sc-if value="{{is.activity}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass cbtn tap" sc-camel-on-click="{{openMenu}}" aria-label="Open menu"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.menu}}"></path></svg></button><span class="grow"></span><button class="glass cbtn tap" sc-camel-on-click="{{nav.notifs}}" aria-label="Alerts"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.bell}}"></path></svg></button><button class="glass cbtn tap" sc-camel-on-click="{{av.syncAll}}" aria-label="Sync now"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.sync}}"></path></svg></button></div>
+<div class="lt" style="align-items: flex-end"><h1 class="h1">Activity</h1><span class="badge b-acc" style="margin-bottom: 10px">Sample data</span></div>
+<div class="sub">Entries on their way to Tally</div>
+<div class="glass pad">
+<div style="display: flex; gap: 12px; align-items: center"><span class="ico sm" style="color: var(--c-receipt)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.laptop}}"></path></svg></span><span class="rtx"><span class="rt"><i class="live"></i>Tally connected</span><span class="rs">RAJESH-PC · {{companyName}} · checks every 5 min</span></span></div>
+<div class="big3 mt">
+<div class="tot c stat" style="margin: 0"><b class="in">{{av.ok}}</b><span>Sent</span></div>
+<div class="tot b stat" style="margin: 0"><b style="color: var(--warn)">{{av.wait}}</b><span>Waiting</span></div>
+<div class="tot stat" style="margin: 0; background: color-mix(in srgb,var(--neg) 8%,transparent)"><b style="color: var(--neg)">{{av.fail}}</b><span>Not sent</span></div>
+</div>
+</div>
+<div class="chips mt2">
+<sc-for list="{{av.chips}}" as="ch" hint-placeholder-count="6"><button class="{{ch.cls}}" sc-camel-on-click="{{ch.pick}}">{{ch.t}}</button></sc-for>
+</div>
+<div class="glass list">
+<sc-for list="{{av.rows}}" as="a" hint-placeholder-count="6">
+<div class="{{a.rcls}}" sc-camel-on-pointer-down="{{a.down}}" data-lk="{{a.lk}}" data-list="acts" style="align-items: flex-start"><sc-if value="{{a.pinned}}" hint-placeholder-val="{{ false }}"><span class="pinmini" aria-label="Pinned"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.pin}}"></path></svg></span></sc-if>
+<span class="ico xs" style="color: {{a.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{a.d}}"></path></svg></span>
+<button class="rtx tap" sc-camel-on-click="{{a.open}}" style="text-align: left"><span class="lt"><span class="rt ell">{{a.title}}</span><span class="rs" style="margin: 0; flex: none">{{a.time}}</span></span><span class="rs">{{a.party}} · {{a.amt}}</span><span style="display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap"><span class="{{a.stCls}}">{{a.stTxt}}</span><span class="rs" style="margin: 0; font-size: 12.5px">{{a.note}}</span></span></button>
+<sc-if value="{{a.canRetry}}" hint-placeholder-val="{{ false }}"><button class="glass chip tap" sc-camel-on-click="{{a.retry}}" style="height: 38px; font-size: 13.5px; color: var(--navy); flex: none">Try again</button></sc-if>
+</div>
+</sc-for>
+<sc-if value="{{hl.acts.any}}" hint-placeholder-val="{{ false }}"><button class="hidrow tap" sc-camel-on-click="{{hl.acts.show}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.eye}}"></path></svg>{{hl.acts.txt}}</button></sc-if>
+<sc-if value="{{av.empty}}" hint-placeholder-val="{{ false }}"><div class="pad c rs" style="font-size: 15px">Nothing here.</div></sc-if>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ ACTIVITY DETAIL ============ -->
+<sc-if value="{{is.actDetail}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="acth">
+<div style="display: flex; gap: 10px; align-items: center"><button class="glass cbtn tap" sc-camel-on-click="{{back}}" aria-label="Back"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg></button><span class="rtx"><span class="rt" style="font-size: 18px">{{ad.kind}}</span><span style="font-size: 13px; opacity: .85">{{ad.no}}</span></span><span class="badge" style="background: #fff; color: {{ad.stColor}}">{{ad.stTxt}}</span></div>
+<div style="display: flex; gap: 12px; align-items: center; margin-top: 16px"><span class="plus" style="width: 46px; height: 46px; border-radius: 15px"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ad.d}}"></path></svg></span><span class="rtx"><span style="font-size: 30px; font-weight: 800; letter-spacing: -.02em">{{ad.amt}}</span><span style="font-size: 15px; opacity: .9; font-weight: 600">{{ad.party}}</span></span></div>
+</div>
+<div class="{{ad.bannerCls}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ad.bannerIc}}"></path></svg>{{ad.banner}}</div>
+<div class="sec" style="margin-top: 4px">Entry details</div>
+<div class="glass list"><sc-for list="{{ad.rows}}" as="r" hint-placeholder-count="5"><div class="kv"><span class="k">{{r.k}}</span><span class="v">{{r.v}}</span></div></sc-for></div>
+<sc-if value="{{ad.hasItems}}" hint-placeholder-val="{{ false }}">
+<div class="sec">Items</div>
+<div class="glass list"><sc-for list="{{ad.items}}" as="x" hint-placeholder-count="3"><div class="row"><span class="rtx"><span class="rt">{{x.name}}</span><span class="rs">{{x.sub}}</span></span><span class="amt">{{x.amt}}</span></div></sc-for></div>
+</sc-if>
+<sc-if value="{{ad.canRetry}}" hint-placeholder-val="{{ false }}"><button class="btn btn-p w tap mt2" sc-camel-on-click="{{ad.retry}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.sync}}"></path></svg>Try sending again</button></sc-if>
+</div>
+</sc-if>
+
+<!-- ============ SALES TEAM ============ -->
+<sc-if value="{{is.team}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass cbtn tap" sc-camel-on-click="{{openMenu}}" aria-label="Open menu"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.menu}}"></path></svg></button><span class="grow"></span><button class="glass cbtn tap" sc-camel-on-click="{{tm.invite}}" aria-label="Invite by email"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.mail}}"></path></svg></button><button class="glass cbtn tap" sc-camel-on-click="{{tm.create}}" aria-label="Add team member"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.userPlus}}"></path></svg></button></div>
+<div class="lt" style="align-items: flex-end"><h1 class="h1">Sales Team</h1><span class="badge b-acc" style="margin-bottom: 10px">Sample data</span></div>
+<div class="sub">Add people and send invites</div>
+<div class="grid4">
+<sc-for list="{{tm.stats}}" as="s" hint-placeholder-count="4"><div class="glass stat"><span class="ico xs" style="color: {{s.c}}; width: 32px; height: 32px; border-radius: 10px"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{s.d}}"></path></svg></span><b>{{s.v}}</b><span>{{s.t}}</span></div></sc-for>
+</div>
+<div class="two mt">
+<button class="hero tap" sc-camel-on-click="{{tm.create}}" style="margin: 0; text-align: left; display: flex; flex-direction: column; gap: 10px"><span class="plus" style="width: 44px; height: 44px; border-radius: 14px"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.userPlus}}"></path></svg></span><span class="ht" style="font-size: 17px">Add person</span><span class="hs">Make their login now</span></button>
+<button class="glass pad tap" sc-camel-on-click="{{tm.invite}}" style="text-align: left; display: flex; flex-direction: column; gap: 10px"><span class="ico xs" style="color: var(--navy)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.mail}}"></path></svg></span><span class="rt" style="font-size: 17px">Invite by email</span><span class="rs" style="margin: 0">They join with a link</span></button>
+</div>
+<div class="iw mt2"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.search}}"></path></svg><input class="inp" value="{{fv.teamQ}}" sc-camel-on-change="{{fc.teamQ}}" placeholder="Search by name or email" aria-label="Search team"></div>
+<div class="glass seg mt"><sc-for list="{{tm.segs}}" as="s" hint-placeholder-count="4"><button class="{{s.cls}}" sc-camel-on-click="{{s.pick}}" style="font-size: 14px">{{s.t}}</button></sc-for></div>
+<div class="lt" style="margin: 4px 6px 10px"><span class="rt" style="font-size: 18px">Team members</span><span class="rs">{{tm.countTxt}}</span></div>
+<div class="glass list">
+<sc-for list="{{tm.rows}}" as="m" hint-placeholder-count="4">
+<button class="{{m.rcls}}" sc-camel-on-click="{{m.open}}" sc-camel-on-pointer-down="{{m.down}}" data-lk="{{m.lk}}" data-list="team"><sc-if value="{{m.pinned}}" hint-placeholder-val="{{ false }}"><span class="pinmini" aria-label="Pinned"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.pin}}"></path></svg></span></sc-if><span class="av">{{m.init}}</span><span class="rtx"><span class="rt ell">{{m.name}}</span><span class="rs ell">{{m.email}}</span><span style="display: flex; gap: 6px; align-items: center; margin-top: 4px"><span class="{{m.stCls}}">{{m.stTxt}}</span><span class="rs" style="margin: 0; font-size: 12.5px">{{m.role}}</span></span></span><svg class="i chev" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.dots}}"></path></svg></button>
+</sc-for>
+<sc-if value="{{hl.team.any}}" hint-placeholder-val="{{ false }}"><button class="hidrow tap" sc-camel-on-click="{{hl.team.show}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.eye}}"></path></svg>{{hl.team.txt}}</button></sc-if>
+<sc-if value="{{tm.empty}}" hint-placeholder-val="{{ false }}"><div class="pad c rs" style="font-size: 15px">No one here.</div></sc-if>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ SETTINGS ============ -->
+<sc-if value="{{is.settings}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button></div>
+<h1 class="h1">Settings</h1>
+<div class="sub">Your profile, alerts, plan and look</div>
+<div class="glass seg"><sc-for list="{{sg.tabs}}" as="s" hint-placeholder-count="4"><button class="{{s.cls}}" sc-camel-on-click="{{s.pick}}" style="font-size: 14px">{{s.t}}</button></sc-for></div>
+<sc-if value="{{sg.isProfile}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 8px 0 16px; animation: rise .35s both"><span class="av" style="width: 86px; height: 86px; font-size: 34px; background: linear-gradient(160deg,var(--acc2),var(--acc3))">W</span><span class="rt" style="font-size: 21px; margin-top: 8px">workk72002</span><span class="rs">Admin · {{companyName}}</span></div>
+<div class="glass list">
+<sc-for list="{{sg.profile}}" as="r" hint-placeholder-count="6"><div class="row" style="min-height: 60px"><span class="ico xs" style="color: var(--navy)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{r.d}}"></path></svg></span><span class="rtx"><span class="rs" style="margin: 0">{{r.k}}</span><span class="rt">{{r.v}}</span></span></div></sc-for>
+</div>
+<button class="btn glass btn-g w tap mt2" sc-camel-on-click="{{nav.logout}}" style="color: var(--neg)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.logout}}"></path></svg>Log out</button>
+</sc-if>
+<sc-if value="{{sg.isAlerts}}" hint-placeholder-val="{{ false }}">
+<div class="glass list" style="animation: rise .35s both">
+<sc-for list="{{sg.prefs}}" as="p" hint-placeholder-count="5"><button class="row tap" sc-camel-on-click="{{p.toggle}}" aria-pressed="{{p.on}}"><span class="ico xs" style="color: {{p.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{p.d}}"></path></svg></span><span class="rtx"><span class="rt">{{p.t}}</span><span class="rs">{{p.s}}</span></span><span class="{{p.cls}}"><i></i></span></button></sc-for>
+</div>
+</sc-if>
+<sc-if value="{{sg.isPlan}}" hint-placeholder-val="{{ false }}">
+<div class="glass pad" style="animation: rise .35s both">
+<div style="display: flex; gap: 12px; align-items: center"><span class="ico sm" style="color: var(--acc)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.star}}"></path></svg></span><span class="rtx"><span class="rs" style="margin: 0">Your plan</span><span class="rt" style="font-size: 20px">Enterprise</span></span><span class="badge b-ok b-dot">Active</span></div>
+<div class="kv" style="padding: 14px 0 4px"><span class="k">Renews on</span><span class="v">31 Mar 2027</span></div>
+<button class="btn btn-p w tap mt" sc-camel-on-click="{{nav.billing}}">See all plans</button>
+</div>
+</sc-if>
+<sc-if value="{{sg.isLook}}" hint-placeholder-val="{{ false }}">
+<div style="animation: rise .35s both">
+<div class="rt" style="font-size: 17px; margin: 4px 4px 4px">Look</div>
+<div class="rs" style="margin: 0 4px 12px">Each look sets the wallpaper, glass, colours and text together.</div>
+<div class="grid2">
+<sc-for list="{{sg.looks}}" as="l" hint-placeholder-count="8">
+<button class="{{l.cls}}" sc-camel-on-click="{{l.pick}}" aria-pressed="{{l.on}}"><span class="{{l.thumb}}"><span class="pvcard"><span class="pvdot"></span><span class="pvtxt">Aa ₹</span><span class="pvbtn"></span></span><sc-if value="{{l.on}}" hint-placeholder-val="{{ false }}"><span class="thck"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg></span></sc-if></span><span class="rtx"><span class="rt" style="font-size: 15px">{{l.t}}</span><span class="rs" style="margin: 0">{{l.s}}</span></span></button>
+</sc-for>
+</div>
+<sc-if value="{{sg.lookMode}}" hint-placeholder-val="{{ true }}">
+<div class="rt" style="font-size: 17px; margin: 22px 4px 4px">Colour palette</div>
+<div class="rs" style="margin: 0 4px 12px">Colours picked to suit this look. Used for buttons, tabs, icons and highlights on every screen.</div>
+<div class="pal">
+<sc-for list="{{sg.accents}}" as="a" hint-placeholder-count="12">
+<button class="{{a.cls}}" sc-camel-on-click="{{a.pick}}" aria-pressed="{{a.on}}"><span class="{{a.swc}}" style="{{a.sws}}"></span><sc-if value="{{a.on}}" hint-placeholder-val="{{ false }}"><span class="thck"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg></span></sc-if><span>{{a.t}}</span></button>
+</sc-for>
+</div>
+</sc-if>
+<sc-if value="{{sg.customMode}}" hint-placeholder-val="{{ false }}"><div class="info mt2"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.drop}}"></path></svg><span>Using your own colour. Pick a ready-made look above to switch back.</span></div></sc-if>
+<div class="rt" style="font-size: 17px; margin: 22px 4px 4px">Your own colour</div>
+<div class="rs" style="margin: 0 4px 12px">Pick any colour. We make matching looks for you.</div>
+<div class="glass pad">
+<div class="svpad" style="background: {{cp.padBg}}" sc-camel-on-pointer-down="{{cp.padDown}}" role="slider" aria-label="Colour shade" aria-valuetext="{{cp.hex}}"><span class="svknob" style="left: {{cp.sx}}%; top: {{cp.vy}}%; background: {{cp.hex}}"></span></div>
+<input class="huer" type="range" min="0" max="359" step="1" value="{{cp.h}}" sc-camel-on-change="{{cp.onHue}}" aria-label="Colour">
+<div class="cprow"><span class="cpsw" style="background: {{cp.hex}}"></span><div class="iw grow"><span class="hashp">#</span><input class="inp" value="{{cp.hexIn}}" sc-camel-on-change="{{cp.onHex}}" maxlength="7" aria-label="Colour code"></div><label class="glass cbtn tap" aria-label="More colours" style="width: 56px; height: 56px; border-radius: 16px; color: var(--acc)"><input class="natcol" type="color" value="{{cp.hex}}" sc-camel-on-change="{{cp.onNative}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.drop}}"></path></svg></label></div>
+<div class="quicksw"><sc-for list="{{cp.quick}}" as="q" hint-placeholder-count="16"><button class="{{q.cls}}" sc-camel-on-click="{{q.pick}}" style="background: {{q.hex}}" aria-label="{{q.hex}}"></button></sc-for></div>
+</div>
+<div class="rt" style="font-size: 17px; margin: 22px 4px 4px">Matching combinations</div>
+<div class="rs" style="margin: 0 4px 12px">Tap one to use it on every screen.</div>
+<div class="grid2">
+<sc-for list="{{cp.combos}}" as="c" hint-placeholder-count="5">
+<button class="{{c.cls}}" sc-camel-on-click="{{c.pick}}" aria-pressed="{{c.on}}"><span class="cthumb" style="{{c.wallSt}}"><span class="pvcard" style="{{c.cardSt}}"><span class="pvdot" style="{{c.dotSt}}"></span><span class="pvtxt" style="{{c.txtSt}}">Aa ₹</span><span class="pvbtn" style="{{c.btnSt}}"></span></span><sc-if value="{{c.on}}" hint-placeholder-val="{{ false }}"><span class="thck"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg></span></sc-if></span><span class="rtx"><span class="rt" style="font-size: 15px">{{c.t}}</span><span class="rs" style="margin: 0">{{c.s}}</span></span></button>
+</sc-for>
+</div>
+<div class="rt" style="font-size: 17px; margin: 22px 4px 4px">Wallpaper</div>
+<div class="rs" style="margin: 0 4px 12px">Choose a background or use your own photo. You will see a preview first.</div>
+<div class="grid3">
+<sc-for list="{{wp.items}}" as="w" hint-placeholder-count="10">
+<button class="{{w.cls}}" sc-camel-on-click="{{w.pick}}" aria-pressed="{{w.on}}"><span class="{{w.thumbCls}}" style="{{w.thumbSt}}"><sc-if value="{{w.on}}" hint-placeholder-val="{{ false }}"><span class="thck"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg></span></sc-if></span><span class="rt" style="font-size: 13px">{{w.t}}</span></button>
+</sc-for>
+<label class="glass wbtn tap"><input class="natcol" type="file" accept="image/*" sc-camel-on-change="{{wp.onFile}}"><span class="wthumb upl"><svg class="i l" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.upload}}"></path></svg></span><span class="rt" style="font-size: 13px">Upload photo</span></label>
+</div>
+<sc-if value="{{wp.hasPend}}" hint-placeholder-val="{{ false }}">
+<div class="glass pad mt" style="animation: rise .35s both">
+<div class="lt" style="align-items: center; margin-bottom: 10px"><span class="rt" style="font-size: 16px">Preview · {{wp.pendName}}</span></div>
+<div class="{{wp.prevCls}}" style="{{wp.prevSt}}">
+<div class="glass" style="padding: 12px 14px; border-radius: 18px; display: flex; gap: 10px; align-items: center"><span class="coic" style="width: 38px; height: 38px; border-radius: 12px"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.building}}"></path></svg></span><span class="rtx"><span class="rt" style="font-size: 15px">{{companyName}}</span><span class="rs" style="margin: 0; font-size: 12px">Tally Connected</span></span></div>
+<div class="glass" style="height: 50px; border-radius: 25px; display: flex; align-items: center; justify-content: space-around; font-size: 11px; font-weight: 700; background: rgba(255,255,255,.2)"><span style="color: var(--acc)">Home</span><span>Dues</span><span>Team</span><span>Activity</span><span>Reports</span></div>
+</div>
+<div class="two mt"><button class="btn glass btn-g tap" sc-camel-on-click="{{wp.cancel}}">Cancel</button><button class="btn btn-p tap" sc-camel-on-click="{{wp.apply}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg>Apply</button></div>
+</div>
+</sc-if>
+<div class="glass pad mt2">
+<div class="lt" style="align-items: center"><span class="rtx"><span class="rt" style="font-size: 17px">Glass see-through</span><span class="rs">How clear the glass looks</span></span><span class="amt" style="font-size: 20px">{{sg.glassTxt}}</span></div>
+<input class="range" type="range" min="20" max="100" step="10" value="{{sg.glass}}" sc-camel-on-change="{{sg.onGlass}}" aria-label="Glass level">
+<div class="opac"><sc-for list="{{sg.presets}}" as="o" hint-placeholder-count="5"><button class="{{o.cls}}" sc-camel-on-click="{{o.pick}}">{{o.t}}</button></sc-for></div>
+<div class="rt" style="font-size: 15px; margin-bottom: 8px">Live preview</div>
+<div class="prev"><div class="blob"></div><div class="blob2"></div>
+<div class="glass" style="padding: 12px 14px; border-radius: 16px; font-weight: 700; font-size: 14px">Glass card · {{sg.glassTxt}}</div>
+<div class="glass" style="margin-top: 10px; height: 52px; border-radius: 26px; display: flex; align-items: center; justify-content: space-around; font-size: 11px; font-weight: 700"><span style="color: var(--acc)">Home</span><span>Dues</span><span>Team</span><span>Activity</span><span>Reports</span></div>
+</div>
+<div class="rs" style="margin-top: 10px">Changes cards, top bars, sheets and the bottom bar on every screen. Text and icons always stay clear.</div>
+<button class="btn glass btn-g w tap mt" sc-camel-on-click="{{sg.reset}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.sync}}"></path></svg>Reset to default</button>
+</div>
+</div>
+</sc-if>
+</div>
+</sc-if>
+
+<!-- ============ COMPANIES ============ -->
+<sc-if value="{{is.companies}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button><span class="grow"></span><button class="glass cbtn tap" sc-camel-on-click="{{refreshTally}}" aria-label="Refresh from Tally"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.sync}}"></path></svg></button></div>
+<h1 class="h1">Companies</h1>
+<div class="sub">Your companies in Tally</div>
+<div class="info"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.info}}"></path></svg><span>Pick a company. Reports, bills and stock will show for that company.</span></div>
+<sc-for list="{{companies}}" as="c" hint-placeholder-count="3">
+<button class="{{c.cls}}" sc-camel-on-click="{{c.pick}}" style="margin-bottom: 10px"><span class="ico sm" style="color: var(--navy)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.building}}"></path></svg></span><span class="rtx"><span class="rt">{{c.name}}</span><span class="rs">{{c.sub}}</span></span><span class="{{c.radio}}"><sc-if value="{{c.sel}}" hint-placeholder-val="{{ false }}"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg></sc-if></span></button>
+</sc-for>
+<div class="rs" style="margin: 8px 6px">New companies show here once they are opened in Tally.</div>
+</div>
+</sc-if>
+
+<!-- ============ BILLING ============ -->
+<sc-if value="{{is.billing}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button></div>
+<div class="lt" style="align-items: flex-end"><h1 class="h1">Plans</h1><span class="badge b-acc" style="margin-bottom: 10px">Sample data</span></div>
+<div class="sub">Choose what fits your business</div>
+<div class="glass seg"><button class="{{bl.yCls}}" sc-camel-on-click="{{bl.setY}}">Yearly</button><button class="{{bl.mCls}}" sc-camel-on-click="{{bl.setM}}">Monthly</button></div>
+<sc-for list="{{bl.plans}}" as="p" hint-placeholder-count="3">
+<div class="glass plan">
+<div style="display: flex; gap: 12px; align-items: center"><span class="ico sm" style="color: {{p.c}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{p.d}}"></path></svg></span><span class="rtx"><span class="rt" style="font-size: 19px">{{p.t}}</span><span class="rs">{{p.s}}</span></span><sc-if value="{{p.current}}" hint-placeholder-val="{{ false }}"><span class="badge b-ok b-dot">Your plan</span></sc-if></div>
+<div class="price">{{p.price}} <small>{{p.per}}</small></div>
+<sc-for list="{{p.feats}}" as="f" hint-placeholder-count="3"><div class="pf"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true" style="color: var(--c-receipt)"><path d="{{ic.check}}"></path></svg>{{f}}</div></sc-for>
+<sc-if value="{{p.notCurrent}}" hint-placeholder-val="{{ true }}"><button class="btn glass btn-g w tap mt" sc-camel-on-click="{{p.pick}}" style="color: var(--navy)">Switch to {{p.t}}</button></sc-if>
+</div>
+</sc-for>
+</div>
+</sc-if>
+
+<!-- ============ REFER ============ -->
+<sc-if value="{{is.refer}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button></div>
+<h1 class="h1">Refer a friend</h1>
+<div class="sub">Invite other businesses that use Tally</div>
+<div class="glass pad c">
+<span class="ico" style="color: var(--acc); margin: 0 auto 10px; width: 66px; height: 66px; border-radius: 22px"><svg class="i xl" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.gift}}"></path></svg></span>
+<div class="rt" style="font-size: 19px">Share your code</div>
+<div class="rs" style="font-size: 15px">When they sign up with it, they show in your list below.</div>
+<div class="code"><span class="rtx" style="text-align: left"><span class="rs" style="margin: 0; font-size: 11px; font-weight: 800; letter-spacing: .08em">YOUR CODE</span><b>TC-WORKK72</b></span><button class="glass chip tap" sc-camel-on-click="{{rf.copy}}" style="color: var(--acc)">Copy</button></div>
+<button class="btn btn-a w tap" sc-camel-on-click="{{rf.share}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.send}}"></path></svg>Share invite</button>
+</div>
+<div class="hrow"><h2 class="h2">How it works</h2></div>
+<div class="glass list">
+<div class="row"><span class="ico xs" style="color: var(--c-sales)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chat}}"></path></svg></span><span class="rtx"><span class="rt">1. Share your code</span><span class="rs">Send it on WhatsApp, SMS or email</span></span></div>
+<div class="row"><span class="ico xs" style="color: var(--c-party)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.userPlus}}"></path></svg></span><span class="rtx"><span class="rt">2. Your friend signs up</span><span class="rs">They type your code when they join</span></span></div>
+<div class="row"><span class="ico xs" style="color: var(--c-receipt)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg></span><span class="rtx"><span class="rt">3. See them here</span><span class="rs">Track who has joined below</span></span></div>
+</div>
+<div class="hrow"><h2 class="h2">Your referrals</h2></div>
+<div class="empty">No one has joined yet. Share your code to start.</div>
+</div>
+</sc-if>
+
+<!-- ============ HELP ============ -->
+<sc-if value="{{is.help}}" hint-placeholder-val="{{ false }}">
+<div class="{{scrCls}}">
+<div class="nav"><button class="glass pbtn tap" sc-camel-on-click="{{back}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevL}}"></path></svg>{{backLabel}}</button></div>
+<h1 class="h1">Help</h1>
+<div class="sub">Answers and support</div>
+<div class="glass list">
+<div style="display: flex; gap: 10px; align-items: center; padding: 14px 16px 6px"><span class="ico xs" style="color: var(--navy)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.help}}"></path></svg></span><span class="rt" style="font-size: 17px">Common questions</span></div>
+<sc-for list="{{faqs}}" as="q" hint-placeholder-count="4">
+<div class="faq"><button class="faqq tap" sc-camel-on-click="{{q.toggle}}" aria-expanded="{{q.open}}"><span class="grow" style="color: {{q.color}}">{{q.q}}</span><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true" style="color: var(--ink3)"><path d="{{q.chev}}"></path></svg></button><sc-if value="{{q.open}}" hint-placeholder-val="{{ false }}"><div class="faqa">{{q.a}}</div></sc-if></div>
+</sc-for>
+</div>
+<div class="sec">Talk to us</div>
+<div class="glass list">
+<button class="row tap" sc-camel-on-click="{{nav.call}}"><span class="ico xs" style="color: var(--c-receipt)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.phone}}"></path></svg></span><span class="rtx"><span class="rt">Call support</span><span class="rs">[YOUR SUPPORT NUMBER]</span></span><svg class="i s chev" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevR}}"></path></svg></button>
+<button class="row tap" sc-camel-on-click="{{nav.chat}}"><span class="ico xs" style="color: var(--c-sales)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chat}}"></path></svg></span><span class="rtx"><span class="rt">WhatsApp chat</span><span class="rs">[YOUR WHATSAPP NUMBER]</span></span><svg class="i s chev" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevR}}"></path></svg></button>
+<button class="row tap" sc-camel-on-click="{{nav.mail}}"><span class="ico xs" style="color: var(--c-party)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.mail}}"></path></svg></span><span class="rtx"><span class="rt">Email support</span><span class="rs">[YOUR SUPPORT EMAIL]</span></span><svg class="i s chev" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevR}}"></path></svg></button>
+</div>
+<div class="fnote">Version 19.6.2</div>
+</div>
+</sc-if>
+
+<!-- ============ TAB BAR ============ -->
+<sc-if value="{{showTabs}}" hint-placeholder-val="{{ false }}">
+<nav class="glass tabbar" aria-label="Main" sc-camel-on-pointer-move="{{hb.move}}" sc-camel-on-pointer-leave="{{hb.leave}}" sc-camel-on-pointer-down="{{hb.down}}" sc-camel-on-pointer-up="{{hb.up}}">
+<span class="pill" style="left: {{pillL}}px; width: {{pillW}}px; transform: {{pillS}}; transition: {{pillT}}"></span>
+<span class="{{hb.cls}}" style="left: {{hb.x}}px" aria-hidden="true"></span>
+<sc-for list="{{tabs}}" as="t" hint-placeholder-count="5">
+<button class="{{t.cls}}" sc-camel-on-click="{{t.go}}" sc-camel-on-pointer-down="{{t.down}}" aria-current="{{t.cur}}" style="left: {{t.left}}px; transition: {{t.tr}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{t.d}}"></path></svg>{{t.t}}</button>
+</sc-for>
+</nav>
+</sc-if>
+
+<!-- ============ SIDE MENU ============ -->
+<sc-if value="{{ov.menu}}" hint-placeholder-val="{{ false }}">
+<div class="scrim" sc-camel-on-click="{{closeOv}}"></div>
+<div class="glass drawer" role="dialog" aria-label="Menu">
+<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px"><span class="lmark" style="width: 38px; height: 38px; border-radius: 12px; margin: 0"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.rupeeC}}"></path></svg></span><span class="brand grow" style="text-align: left; font-size: 19px"><b>Tally</b><span>Connect</span></span><button class="glass cbtn sm tap" sc-camel-on-click="{{closeOv}}" aria-label="Close menu"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.close}}"></path></svg></button></div>
+<button class="glass row tap" sc-camel-on-click="{{nav.profile}}" style="border-radius: 20px"><span class="av" style="width: 50px; height: 50px; background: linear-gradient(160deg,var(--acc2),var(--acc3))">W</span><span class="rtx"><span class="rt" style="font-size: 17px">workk72002</span><span class="rs ell">workk72002@gmail.com</span><span class="link" style="padding: 2px 0 0; font-size: 14px">See profile ›</span></span></button>
+<div class="sec">My account</div>
+<div class="glass list" style="border-radius: 20px">
+<sc-for list="{{menu.acct}}" as="m" hint-placeholder-count="6"><button class="mrow tap" sc-camel-on-click="{{m.go}}"><span class="ico xs" style="color: {{m.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{m.d}}"></path></svg></span><span class="grow">{{m.t}}</span><sc-if value="{{m.hasCount}}" hint-placeholder-val="{{ false }}"><span class="cnt">{{m.count}}</span></sc-if><svg class="i xs chev" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevR}}"></path></svg></button></sc-for>
+</div>
+<div class="sec">Plan</div>
+<div class="glass list" style="border-radius: 20px">
+<button class="mrow tap" sc-camel-on-click="{{nav.billing}}"><span class="ico xs" style="color: var(--acc)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.card}}"></path></svg></span><span class="grow">Plans &amp; billing</span><span class="badge b-acc">Enterprise</span></button>
+<button class="mrow tap" sc-camel-on-click="{{nav.forgot}}"><span class="ico xs" style="color: var(--c-settings)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.lock}}"></path></svg></span><span class="grow">Change password</span><svg class="i xs chev" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevR}}"></path></svg></button>
+</div>
+<div class="sec">Support</div>
+<div class="glass list" style="border-radius: 20px">
+<button class="mrow tap" sc-camel-on-click="{{nav.help}}"><span class="ico xs" style="color: var(--c-sales)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.help}}"></path></svg></span><span class="grow">Help</span><svg class="i xs chev" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevR}}"></path></svg></button>
+<div class="mrow"><span class="ico xs" style="color: var(--c-settings)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.info}}"></path></svg></span><span class="grow">Version</span><span class="rs" style="margin: 0">19.6.2</span></div>
+<button class="mrow tap" sc-camel-on-click="{{nav.logout}}" style="color: var(--neg)"><span class="ico xs" style="color: var(--neg)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.logout}}"></path></svg></span><span class="grow">Log out</span></button>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ SEARCH SHEET ============ -->
+<sc-if value="{{ov.search}}" hint-placeholder-val="{{ false }}">
+<div class="scrim" sc-camel-on-click="{{closeOv}}"></div>
+<div class="glass sheet" role="dialog" aria-label="Search" style="top: 60px; max-height: none">
+<div class="grab"></div>
+<div class="shd"><span class="rt grow" style="font-size: 22px">Search</span><button class="glass cbtn sm tap" sc-camel-on-click="{{closeOv}}" aria-label="Close"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.close}}"></path></svg></button></div>
+<div class="iw"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.search}}"></path></svg><input class="inp" value="{{fv.q}}" sc-camel-on-change="{{fc.q}}" placeholder="Type a screen, e.g. Party or Sales" aria-label="Search screens"></div>
+<div class="glass list mt">
+<sc-for list="{{results}}" as="r" hint-placeholder-count="6"><button class="row tap" sc-camel-on-click="{{r.go}}"><span class="ico xs" style="color: {{r.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{r.d}}"></path></svg></span><span class="rtx"><span class="rt">{{r.t}}</span><span class="rs">{{r.s}}</span></span><svg class="i s chev" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.chevR}}"></path></svg></button></sc-for>
+<sc-if value="{{noResults}}" hint-placeholder-val="{{ false }}"><div class="pad c rs" style="font-size: 15px">Nothing found. Try “sale” or “party”.</div></sc-if>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ COMPANY SHEET ============ -->
+<sc-if value="{{ov.company}}" hint-placeholder-val="{{ false }}">
+<div class="scrim" sc-camel-on-click="{{closeOv}}"></div>
+<div class="glass sheet" role="dialog" aria-label="Choose company">
+<div class="grab"></div>
+<div class="shd"><span class="rtx"><span class="rt" style="font-size: 22px">Choose company</span><span class="rs">Reports, bills and stock switch to the company you pick.</span></span><button class="glass cbtn sm tap" sc-camel-on-click="{{closeOv}}" aria-label="Close"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.close}}"></path></svg></button></div>
+<sc-for list="{{companies}}" as="c" hint-placeholder-count="3">
+<button class="{{c.cls}}" sc-camel-on-click="{{c.pick}}" style="margin-bottom: 10px"><span class="ico sm" style="color: var(--navy)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.building}}"></path></svg></span><span class="rtx"><span class="rt">{{c.name}}</span><span class="rs">Tally company</span></span><span class="{{c.radio}}"><sc-if value="{{c.sel}}" hint-placeholder-val="{{ false }}"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg></sc-if></span></button>
+</sc-for>
+<div class="two mt"><button class="btn glass btn-g tap" sc-camel-on-click="{{refreshTally}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.sync}}"></path></svg>Refresh</button><button class="btn btn-p tap" sc-camel-on-click="{{nav.companies}}">Manage</button></div>
+</div>
+</sc-if>
+
+<!-- ============ PICK LIST SHEET (party / account / ledger) ============ -->
+<sc-if value="{{ov.pick}}" hint-placeholder-val="{{ false }}">
+<div class="scrim" sc-camel-on-click="{{closeOv}}"></div>
+<div class="glass sheet" role="dialog" aria-label="{{pk.title}}">
+<div class="grab"></div>
+<div class="shd"><span class="rt grow" style="font-size: 22px">{{pk.title}}</span><button class="glass cbtn sm tap" sc-camel-on-click="{{closeOv}}" aria-label="Close"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.close}}"></path></svg></button></div>
+<div class="iw"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.search}}"></path></svg><input class="inp" value="{{fv.pq}}" sc-camel-on-change="{{fc.pq}}" placeholder="Search" aria-label="Search list"></div>
+<div class="glass list mt">
+<sc-for list="{{pk.rows}}" as="o" hint-placeholder-count="5"><button class="row tap" sc-camel-on-click="{{o.choose}}"><span class="av sm">{{o.init}}</span><span class="rtx"><span class="rt">{{o.t}}</span><span class="rs">{{o.s}}</span></span><sc-if value="{{o.sel}}" hint-placeholder-val="{{ false }}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true" style="color: var(--c-receipt)"><path d="{{ic.check}}"></path></svg></sc-if></button></sc-for>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ NEW PARTY SHEET ============ -->
+<sc-if value="{{ov.newParty}}" hint-placeholder-val="{{ false }}">
+<div class="scrim" sc-camel-on-click="{{closeOv}}"></div>
+<div class="glass sheet" role="dialog" aria-label="Add new party">
+<div class="grab"></div>
+<div class="shd"><span class="rtx"><span class="rt" style="font-size: 22px">Add new party</span><span class="rs">{{npHint}}</span></span><button class="glass cbtn sm tap" sc-camel-on-click="{{closeOv}}" aria-label="Close"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.close}}"></path></svg></button></div>
+<div class="fld"><label class="lab" for="np-n">Name <span class="req">*</span></label><input id="np-n" class="inp" value="{{fv.npName}}" sc-camel-on-change="{{fc.npName}}" placeholder="e.g. Shree Ganesh Traders"></div>
+<div class="fld"><label class="lab" for="np-p">Mobile number</label><input id="np-p" class="inp" type="tel" value="{{fv.npPhone}}" sc-camel-on-change="{{fc.npPhone}}" placeholder="+91"></div>
+<div class="fld"><label class="lab" for="np-c">City</label><input id="np-c" class="inp" value="{{fv.npCity}}" sc-camel-on-change="{{fc.npCity}}" placeholder="e.g. Mumbai"></div>
+<button class="btn btn-p w tap" sc-camel-on-click="{{saveParty}}" disabled="{{npOff}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg>Save party</button>
+</div>
+</sc-if>
+
+<!-- ============ ITEM PICKER SHEET ============ -->
+<sc-if value="{{ov.picker}}" hint-placeholder-val="{{ false }}">
+<div class="scrim" sc-camel-on-click="{{closeOv}}"></div>
+<div class="glass sheet sheetf" role="dialog" aria-label="Add items" style="top: 40px; max-height: none">
+<div class="grab"></div>
+<div class="shd"><button class="glass cbtn sm tap" sc-camel-on-click="{{closeOv}}" aria-label="Close"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.close}}"></path></svg></button><span class="rtx"><span class="rt" style="font-size: 20px">Add items</span><span class="rs">Tap to pick · use − and + for quantity</span></span></div>
+<div class="iw"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.search}}"></path></svg><input class="inp" value="{{fv.pickQ}}" sc-camel-on-change="{{fc.pickQ}}" placeholder="Search item name" aria-label="Search items"></div>
+<button class="dash tap mt" sc-camel-on-click="{{pkr.addNew}}" style="justify-content: flex-start; padding: 0 14px; color: var(--acc); border-color: color-mix(in srgb,var(--acc) 35%,transparent)"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.plus}}"></path></svg><span class="rtx" style="text-align: left"><span style="font-size: 15px">Add new item</span><span class="rs" style="margin: 0; font-weight: 600; font-size: 12.5px">Item not in Tally? Make it here</span></span></button>
+<div class="sbody">
+<div class="sec">Items from Tally</div>
+<div>
+<sc-for list="{{pkr.rows}}" as="x" hint-placeholder-count="5">
+<div class="{{x.cls}}" style="margin-bottom: 10px">
+<button class="row tap" sc-camel-on-click="{{x.toggle}}" style="padding: 12px 14px"><span class="av sm" style="background: {{x.avBg}}">{{x.init}}</span><span class="rtx"><span class="rt">{{x.name}}</span><span class="rs">{{x.stock}} · <b>{{x.rate}}</b></span></span><span class="{{x.radio}}"><sc-if value="{{x.sel}}" hint-placeholder-val="{{ false }}"><svg class="i xs" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg></sc-if></span></button>
+<sc-if value="{{x.sel}}" hint-placeholder-val="{{ false }}"><div class="lt" style="padding: 0 14px 12px; align-items: center"><span class="rs" style="margin: 0; font-weight: 700">Quantity</span><div class="stepper"><button sc-camel-on-click="{{x.dec}}" aria-label="Less"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.minus}}"></path></svg></button><span>{{x.qty}}</span><button sc-camel-on-click="{{x.inc}}" aria-label="More"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.plus}}"></path></svg></button></div></div></sc-if>
+</div>
+</sc-for>
+</div>
+</div>
+<div class="foot"><span class="rtx"><span class="rs" style="margin: 0">{{pkr.countTxt}}</span><span class="rt" style="font-size: 20px">{{pkr.totalTxt}}</span></span><button class="btn btn-p tap" sc-camel-on-click="{{closeOv}}" style="flex: none; min-width: 140px"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg>Done</button></div>
+</div>
+</sc-if>
+
+<!-- ============ ADD NEW ITEM SHEET ============ -->
+<sc-if value="{{ov.addItem}}" hint-placeholder-val="{{ false }}">
+<div class="scrim" sc-camel-on-click="{{closeOv}}"></div>
+<div class="glass sheet sheetf" role="dialog" aria-label="Add new item" style="top: 40px; max-height: none">
+<div class="grab"></div>
+<div class="shd"><span class="rtx"><span class="rt" style="font-size: 22px">Add new item</span><span class="rs">Makes the item and adds it to this bill</span></span><button class="glass cbtn sm tap" sc-camel-on-click="{{ni.back}}" aria-label="Close"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.close}}"></path></svg></button></div>
+<div class="sbody">
+<div class="fld"><span class="lab">Item type <span class="req">*</span></span><div class="cat"><sc-for list="{{ni.cats}}" as="o" hint-placeholder-count="6"><button class="{{o.cls}}" sc-camel-on-click="{{o.pick}}">{{o.t}}</button></sc-for></div></div>
+<div class="fld"><label class="lab" for="ni-n">Item name <span class="req">*</span></label><input id="ni-n" class="inp" value="{{fv.niName}}" sc-camel-on-change="{{fc.niName}}" placeholder="e.g. Supreme PVC Pipe 1 inch"></div>
+<div class="fld"><span class="lab">Unit <span class="req">*</span></span><div class="cat"><sc-for list="{{ni.units}}" as="o" hint-placeholder-count="5"><button class="{{o.cls}}" sc-camel-on-click="{{o.pick}}">{{o.t}}</button></sc-for></div></div>
+<div class="two"><div class="fld"><label class="lab" for="ni-q">Quantity <span class="req">*</span></label><input id="ni-q" class="inp" inputmode="numeric" value="{{fv.niQty}}" sc-camel-on-change="{{fc.niQty}}"></div><div class="fld"><label class="lab" for="ni-r">Rate (₹) <span class="req">*</span></label><input id="ni-r" class="inp" inputmode="decimal" value="{{fv.niRate}}" sc-camel-on-change="{{fc.niRate}}" placeholder="0.00"></div></div>
+<div class="two"><div class="fld"><label class="lab" for="ni-h">HSN / SAC</label><input id="ni-h" class="inp" value="{{fv.niHsn}}" sc-camel-on-change="{{fc.niHsn}}" placeholder="e.g. 9405"></div><div class="fld"><label class="lab" for="ni-d">Discount (%)</label><input id="ni-d" class="inp" inputmode="numeric" value="{{fv.niDisc}}" sc-camel-on-change="{{fc.niDisc}}"></div></div>
+<div class="fld"><span class="lab">GST rate</span><div class="cat"><sc-for list="{{ni.gsts}}" as="o" hint-placeholder-count="5"><button class="{{o.cls}}" sc-camel-on-click="{{o.pick}}">{{o.t}}</button></sc-for></div></div>
+<div class="tot a"><span class="rtx"><span>Amount</span><span class="rs" style="margin: 0; font-weight: 600">{{ni.calcSub}}</span></span><span class="amt" style="font-size: 22px">{{ni.calcTot}}</span></div>
+</div>
+<div class="foot"><button class="btn glass btn-g tap" sc-camel-on-click="{{ni.back}}">Cancel</button><button class="btn btn-p w2 tap" sc-camel-on-click="{{ni.add}}" disabled="{{ni.off}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.plus}}"></path></svg>Add item</button></div>
+</div>
+</sc-if>
+
+<!-- ============ TEAM SHEETS ============ -->
+<sc-if value="{{ov.invite}}" hint-placeholder-val="{{ false }}">
+<div class="scrim" sc-camel-on-click="{{closeOv}}"></div>
+<div class="glass sheet" role="dialog" aria-label="Invite by email">
+<div class="grab"></div>
+<div class="shd"><span class="rtx"><span class="rt" style="font-size: 22px">Invite by email</span><span class="rs">They get a link to join your team as Sales Rep.</span></span><button class="glass cbtn sm tap" sc-camel-on-click="{{closeOv}}" aria-label="Close"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.close}}"></path></svg></button></div>
+<div class="fld"><label class="lab" for="iv-e">Email address</label><div class="iw"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.mail}}"></path></svg><input id="iv-e" class="inp" type="email" value="{{fv.iEmail}}" sc-camel-on-change="{{fc.iEmail}}" placeholder="name@example.com"></div></div>
+<button class="btn btn-p w tap" sc-camel-on-click="{{tm.sendInvite}}" disabled="{{tm.inviteOff}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.send}}"></path></svg>Send invite</button>
+</div>
+</sc-if>
+<sc-if value="{{ov.newUser}}" hint-placeholder-val="{{ false }}">
+<div class="scrim" sc-camel-on-click="{{closeOv}}"></div>
+<div class="glass sheet" role="dialog" aria-label="Add person">
+<div class="grab"></div>
+<div class="shd"><span class="rtx"><span class="rt" style="font-size: 22px">Add person</span><span class="rs">Make a login for someone in your team.</span></span><button class="glass cbtn sm tap" sc-camel-on-click="{{closeOv}}" aria-label="Close"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.close}}"></path></svg></button></div>
+<div class="fld"><label class="lab" for="nu-n">Full name <span class="req">*</span></label><div class="iw"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.person}}"></path></svg><input id="nu-n" class="inp" value="{{fv.nuName}}" sc-camel-on-change="{{fc.nuName}}" placeholder="e.g. Rohit Kumar"></div></div>
+<div class="fld"><label class="lab" for="nu-p">Mobile number</label><div class="iw"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.phone}}"></path></svg><input id="nu-p" class="inp" type="tel" value="{{fv.nuPhone}}" sc-camel-on-change="{{fc.nuPhone}}" placeholder="+91"></div></div>
+<button class="btn btn-p w tap" sc-camel-on-click="{{tm.saveUser}}" disabled="{{tm.userOff}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg>Add to team</button>
+</div>
+</sc-if>
+<sc-if value="{{ov.member}}" hint-placeholder-val="{{ false }}">
+<div class="scrim" sc-camel-on-click="{{closeOv}}"></div>
+<div class="glass sheet" role="dialog" aria-label="Team member">
+<div class="grab"></div>
+<div style="display: flex; gap: 12px; align-items: center; margin-bottom: 16px"><span class="av lg">{{mb.init}}</span><span class="rtx"><span class="rt" style="font-size: 20px">{{mb.name}}</span><span class="rs">{{mb.email}}</span></span><span class="{{mb.stCls}}">{{mb.stTxt}}</span></div>
+<div class="glass list">
+<sc-for list="{{mb.actions}}" as="a" hint-placeholder-count="2"><button class="mrow tap" sc-camel-on-click="{{a.go}}" style="color: {{a.color}}"><span class="ico xs" style="color: {{a.color}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{a.d}}"></path></svg></span><span class="grow">{{a.t}}</span></button></sc-for>
+</div>
+<button class="btn glass btn-g w tap mt" sc-camel-on-click="{{closeOv}}">Close</button>
+</div>
+</sc-if>
+
+<!-- ============ PDF VIEWER ============ -->
+<sc-if value="{{ov.pdf}}" hint-placeholder-val="{{ false }}">
+<div class="pdfv" role="dialog" aria-label="Bill PDF">
+<div class="pdfbar"><button class="cbtn tap" sc-camel-on-click="{{closeOv}}" aria-label="Close PDF"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.close}}"></path></svg></button><span class="rtx"><span class="rt">{{pdf.file}}</span><span style="font-size: 13px; opacity: .7">1 page · A4 · {{pdf.kind}}</span></span><button class="cbtn tap" sc-camel-on-click="{{pdf.share}}" aria-label="Share PDF"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.share}}"></path></svg></button></div>
+<div style="flex: 1 1 auto; overflow: auto; padding-top: 10px">
+<div class="paper" style="transform: scale({{pdf.scale}})">
+<div class="lt"><div><div style="font-weight: 800; font-size: 12px; color: var(--acc)">{{companyName}}</div><div>Unit 4, Laxmi Industrial Estate, Andheri (E), Mumbai – 400093</div><div>GSTIN: 27AAGFG4417K1Z5</div></div><div style="text-align: right"><div style="font-weight: 800; font-size: 11px">{{pdf.heading}}</div><div>No: <b>{{pdf.no}}</b></div><div>Date: <b>{{pdf.date}}</b></div></div></div>
+<div style="height: 1px; background: var(--acc); margin: 8px 0"></div>
+<div class="lt"><div><div style="color: #6B7690; font-size: 7.5px">{{pdf.toLabel}}</div><div style="font-weight: 800">{{pdf.party}}</div><div>{{pdf.city}}</div></div><div style="text-align: right"><div style="color: #6B7690; font-size: 7.5px">DUE DATE</div><div style="font-weight: 800">{{pdf.due}}</div></div></div>
+<sc-raw-table><sc-raw-thead><sc-raw-tr><sc-raw-th>#</sc-raw-th><sc-raw-th>Item</sc-raw-th><sc-raw-th>HSN</sc-raw-th><sc-raw-th class="r">Qty</sc-raw-th><sc-raw-th class="r">Rate</sc-raw-th><sc-raw-th class="r">Amount</sc-raw-th></sc-raw-tr></sc-raw-thead><sc-raw-tbody>
+<sc-for list="{{pdf.lines}}" as="l" hint-placeholder-count="3"><sc-raw-tr><sc-raw-td>{{l.n}}</sc-raw-td><sc-raw-td>{{l.name}}</sc-raw-td><sc-raw-td>{{l.hsn}}</sc-raw-td><sc-raw-td class="r">{{l.qty}}</sc-raw-td><sc-raw-td class="r">{{l.rate}}</sc-raw-td><sc-raw-td class="r">{{l.amt}}</sc-raw-td></sc-raw-tr></sc-for>
+</sc-raw-tbody></sc-raw-table>
+<div style="margin-left: 45%"><div class="lt"><span>Subtotal</span><span>{{pdf.sub}}</span></div><div class="lt"><span>CGST @ 9%</span><span>{{pdf.cgst}}</span></div><div class="lt"><span>SGST @ 9%</span><span>{{pdf.cgst}}</span></div><div class="lt" style="border-top: 1px solid #16203A; margin-top: 3px; padding-top: 3px; font-weight: 800"><span>Total</span><span>{{pdf.total}}</span></div></div>
+<div style="background: #EEF1F8; padding: 5px; margin-top: 10px">Amount: <b>{{pdf.total}}</b></div>
+<div style="display: flex; justify-content: space-between; margin-top: 22px; color: #6B7690; font-size: 7.5px"><span>Made with TallyConnect · prototype preview</span><span style="border-top: 1px solid #16203A; padding-top: 2px; color: #16203A">Authorised signatory</span></div>
+</div>
+</div>
+<div class="pdfctl"><button sc-camel-on-click="{{pdf.zoomOut}}" aria-label="Zoom out"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.minus}}"></path></svg></button><span class="grow c" style="font-weight: 800">{{pdf.zoomTxt}}</span><button sc-camel-on-click="{{pdf.zoomIn}}" aria-label="Zoom in"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.plus}}"></path></svg></button><button sc-camel-on-click="{{pdf.download}}" aria-label="Download PDF"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.download}}"></path></svg></button></div>
+</div>
+</sc-if>
+
+<sc-if value="{{cm.on}}" hint-placeholder-val="{{ false }}">
+<div class="cmscrim" sc-camel-on-click="{{cm.close}}"></div>
+<div class="glass cmenu" role="menu" aria-label="{{cm.label}}" style="left: {{cm.x}}px; top: {{cm.y}}px">
+<div class="cmh"><span class="ico xs" style="color: {{cm.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{cm.d}}"></path></svg></span><span class="rt ell" style="font-size: 16px">{{cm.label}}</span></div>
+<sc-for list="{{cm.items}}" as="a" hint-placeholder-count="3"><button class="cmi tap" role="menuitem" sc-camel-on-click="{{a.go}}"><svg class="i" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{a.d}}"></path></svg><span>{{a.t}}</span></button></sc-for>
+</div>
+</sc-if>
+<sc-if value="{{lgh.on}}" hint-placeholder-val="{{ false }}">
+<div class="glass ghost lghost" style="left: {{lgh.x}}px; top: {{lgh.y}}px"><span class="ico xs" style="color: {{lgh.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{lgh.d}}"></path></svg></span><span class="ell">{{lgh.label}}</span></div>
+</sc-if>
+<sc-if value="{{ov.hiddenPanel}}" hint-placeholder-val="{{ false }}">
+<div class="cmscrim" sc-camel-on-click="{{closeOv}}"></div>
+<div class="glass sheet hpanel" role="dialog" aria-label="{{hp.title}}">
+<div class="grab"></div>
+<div class="shd"><span class="rtx"><span class="rt" style="font-size: 20px">{{hp.title}}</span><span class="rs">Tap Unhide to put a card back exactly where it was.</span></span><button class="glass cbtn sm tap" sc-camel-on-click="{{closeOv}}" aria-label="Close"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.close}}"></path></svg></button></div>
+<sc-for list="{{hp.rows}}" as="h" hint-placeholder-count="2">
+<div class="hprow"><span class="ico xs" style="color: {{h.c}}"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{h.d}}"></path></svg></span><span class="rt grow ell" style="font-size: 16px">{{h.label}}</span><button class="glass chip tap" sc-camel-on-click="{{h.restore}}" style="height: 40px; color: var(--navy)"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.eye}}"></path></svg>Unhide</button></div>
+</sc-for>
+<sc-if value="{{hp.many}}" hint-placeholder-val="{{ false }}"><button class="btn btn-p w tap mt" sc-camel-on-click="{{hp.all}}">Unhide all</button></sc-if>
+</div>
+</sc-if>
+<!-- ============ TOAST ============ -->
+<sc-if value="{{hasToast}}" hint-placeholder-val="{{ false }}">
+<div class="glass toast" role="status"><span class="tk"><svg class="i s" sc-camel-view-box="0 0 24 24" aria-hidden="true"><path d="{{ic.check}}"></path></svg></span>{{toast}}</div>
+</sc-if>
+</div>
+</x-dc>
+[SCRIPT]
+
+
+</body></html>

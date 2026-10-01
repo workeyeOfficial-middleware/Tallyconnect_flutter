@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -)",
+      "Bash(dart format *)",
+      "Bash(dart analyze *)"
+    ]
+  }
+}
