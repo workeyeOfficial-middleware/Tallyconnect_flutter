@@ -470,6 +470,7 @@ class _Items extends ConsumerWidget {
                     child: DashBtn(
                       onTap: openPicker,
                       child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: <Widget>[
                           Ic('plus', color: p.navy),
                           const SizedBox(width: 8),
@@ -610,7 +611,7 @@ class _Pay extends ConsumerWidget {
               Fld(
                 label: 'Payment note (optional)',
                 icon: 'note',
-                margin: const EdgeInsets.only(top: 6),
+                margin: EdgeInsets.zero,
                 child: Inp(
                   value: c.f('${pf}PayNote'),
                   onChanged: (String v) => c.setF('${pf}PayNote', v),
@@ -849,6 +850,7 @@ class _Ledgers extends ConsumerWidget {
                   onTap: () =>
                       c.openPick('Add account', '__jl', c.repo.ledgers()),
                   child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
                       Ic('plus', color: p.navy),
                       const SizedBox(width: 8),

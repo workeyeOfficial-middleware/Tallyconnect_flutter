@@ -56,7 +56,7 @@ class CompaniesScreen extends ConsumerWidget {
             ),
           ],
         ),
-        const H1('Companies'),
+        const H1('Companies', afterNav: true),
         const Sub('Your companies in Tally'),
         const InfoBox(
           'Pick a company. Reports, bills and stock will show for that company.',
@@ -64,7 +64,7 @@ class CompaniesScreen extends ConsumerWidget {
         ),
         for (final Company co in c.repo.companies()) CompanyRow(co),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+          padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
           child: Text(
             'New companies show here once they are opened in Tally.',
             style: rsStyle(context),
@@ -170,7 +170,7 @@ class ReferScreen extends ConsumerWidget {
     return Scr(
       children: <Widget>[
         const BackNav(),
-        const H1('Refer a friend'),
+        const H1('Refer a friend', afterNav: true),
         const Sub('Invite other businesses that use Tally'),
         Glass(
           padding: const EdgeInsets.all(18),
@@ -310,7 +310,7 @@ class HelpScreen extends ConsumerWidget {
     return Scr(
       children: <Widget>[
         const BackNav(),
-        const H1('Help'),
+        const H1('Help', afterNav: true),
         const Sub('Answers and support'),
         Glass(
           padding: const EdgeInsets.symmetric(vertical: 2),

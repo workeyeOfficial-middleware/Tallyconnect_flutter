@@ -195,50 +195,54 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         ),
         // ---- page dots
-        if (pages.length >= 2)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: barBottom(context) + 76,
-            height: 24,
-            child: Center(
-              child: Glass(
-                radius: 12,
-                blur: true,
-                height: 24,
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    for (int i = 0; i < pages.length; i++) ...<Widget>[
-                      if (i > 0) const SizedBox(width: 2),
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => c.scrollToPage(i),
+        // `.dots`: the glass capsule is always there; dots only with 2+ pages.
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: barBottom(context) + 76,
+          height: 24,
+          child: Center(
+            child: Glass(
+              radius: 12,
+              blur: true,
+              height: 24,
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  for (
+                    int i = 0;
+                    i < (pages.length < 2 ? 0 : pages.length);
+                    i++
+                  ) ...<Widget>[
+                    if (i > 0) const SizedBox(width: 2),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => c.scrollToPage(i),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 450),
+                        curve: const Cubic(.3, 1.5, .5, 1),
+                        width: i == c.page ? 32 : 22,
+                        height: 24,
+                        alignment: Alignment.center,
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 450),
                           curve: const Cubic(.3, 1.5, .5, 1),
-                          width: i == c.page ? 32 : 22,
-                          height: 24,
-                          alignment: Alignment.center,
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 450),
-                            curve: const Cubic(.3, 1.5, .5, 1),
-                            width: i == c.page ? 20 : 7,
-                            height: 7,
-                            decoration: BoxDecoration(
-                              color: i == c.page ? p.acc : navyA(.25),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
+                          width: i == c.page ? 20 : 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: i == c.page ? p.acc : navyA(.25),
+                            borderRadius: BorderRadius.circular(4),
                           ),
                         ),
                       ),
-                    ],
+                    ),
                   ],
-                ),
+                ],
               ),
             ),
           ),
+        ),
         // ---- drag: edges + ghost
         if (drag != null) ...<Widget>[
           _Edge(left: true, on: c.edge == 'l'),
@@ -538,6 +542,7 @@ class _Card extends ConsumerWidget {
     }
 
     Widget w = Stack(
+      fit: StackFit.passthrough,
       clipBehavior: Clip.none,
       children: <Widget>[
         body,

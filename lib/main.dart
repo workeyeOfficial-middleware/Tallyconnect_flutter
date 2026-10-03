@@ -54,6 +54,12 @@ class TallyConnectApp extends StatelessWidget {
       splashColor: const Color(0x00000000),
       colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF8C1D3F)),
     ),
+    // The prototype is designed in fixed CSS pixels; the system font-size
+    // setting must not re-flow its cards.
+    builder: (BuildContext context, Widget? child) => MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+      child: child!,
+    ),
     home: const Shell(),
   );
 }

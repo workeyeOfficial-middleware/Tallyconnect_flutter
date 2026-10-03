@@ -35,7 +35,7 @@ class SettingsScreen extends ConsumerWidget {
     return Scr(
       children: <Widget>[
         const BackNav(),
-        const H1('Settings'),
+        const H1('Settings', afterNav: true),
         const Sub('Your profile, alerts, plan and look'),
         Seg(
           fontSize: 14,
@@ -77,7 +77,7 @@ class _Profile extends ConsumerWidget {
       children: <Widget>[
         Rise(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(0, 8, 0, 16),
+            padding: const EdgeInsets.only(bottom: 16),
             child: Column(
               children: <Widget>[
                 const Av('W', size: 86, fontSize: 34, accent: true),
@@ -399,7 +399,7 @@ class _Look extends ConsumerWidget {
           const _Hd(
             'Look',
             'Each look sets the wallpaper, glass, colours and text together.',
-            top: 4,
+            top: 0,
           ),
           Grid(
             cols: 2,
@@ -442,6 +442,7 @@ class _Look extends ConsumerWidget {
                     onTap: () => c.pickAccent(a.$1),
                     padding: const EdgeInsets.fromLTRB(2, 12, 2, 10),
                     child: Stack(
+                      fit: StackFit.passthrough,
                       clipBehavior: Clip.none,
                       children: <Widget>[
                         Column(
@@ -580,6 +581,7 @@ class _Look extends ConsumerWidget {
                           enabledThumbRadius: 9,
                         ),
                         showValueIndicator: ShowValueIndicator.never,
+                        tickMarkShape: SliderTickMarkShape.noTickMark,
                       ),
                       child: Slider(
                         value: c.glass.clamp(20, 100),

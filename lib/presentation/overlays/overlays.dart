@@ -20,6 +20,7 @@ import '../../data/models/models.dart';
 import '../screens/account_screens.dart' show CompanyRow;
 import '../screens/insight_screens.dart' show kTS;
 import '../widgets/common.dart';
+import 'doc_viewer.dart';
 
 /// Builds the active overlay (`state.overlay`).
 class OverlayLayer extends ConsumerWidget {
@@ -40,6 +41,7 @@ class OverlayLayer extends ConsumerWidget {
       'newUser' => const NewUserSheet(),
       'member' => const MemberSheet(),
       'pdf' => const PdfViewer(),
+      'doc' => const DocViewer(),
       _ => const SizedBox.shrink(),
     };
   }
@@ -1432,7 +1434,7 @@ class PdfViewer extends ConsumerWidget {
                     glass: false,
                     bg: whiteA(.12),
                     color: Colors.white,
-                    onTap: () => c.say('Share sheet opened'),
+                    onTap: () => c.shareDoc(c.pdfDoc),
                   ),
                 ],
               ),
@@ -1482,7 +1484,7 @@ class PdfViewer extends ConsumerWidget {
                   const SizedBox(width: 10),
                   ctl('plus', () => c.zoomBy(20)),
                   const SizedBox(width: 10),
-                  ctl('download', () => c.say('Saved to Downloads')),
+                  ctl('download', () => c.downloadDoc(c.pdfDoc)),
                 ],
               ),
             ),
@@ -1569,6 +1571,7 @@ class CardMenu extends ConsumerWidget {
           ('Open', 'open', c.cmOpen),
           ('Drag', 'move', c.cmDrag),
           ('Hide', 'eyeOff', c.cmHide),
+          ('Share', 'share', c.cmShare),
         ];
     return Stack(
       children: <Widget>[

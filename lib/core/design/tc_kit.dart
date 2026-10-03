@@ -367,6 +367,7 @@ class _TapState extends State<Tap> {
           curve: _down ? Curves.ease : const Cubic(.3, 1.45, .5, 1),
           child: widget.highlight
               ? Stack(
+                  fit: StackFit.passthrough,
                   children: <Widget>[
                     widget.child,
                     Positioned.fill(
@@ -1136,7 +1137,12 @@ class H1 extends StatelessWidget {
     this.center = false,
     this.margin = const EdgeInsets.fromLTRB(4, 10, 4, 4),
     this.size = 34,
+    this.afterNav = false,
   });
+
+  /// Directly under the `.nav` row in a block `.scr`: CSS collapses the
+  /// nav's 10 px bottom margin with the title's 10 px top margin.
+  final bool afterNav;
   final String text;
   final bool center;
   final EdgeInsets margin;
@@ -1144,7 +1150,7 @@ class H1 extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: margin,
+    padding: afterNav ? margin.copyWith(top: 0) : margin,
     child: Text(
       text,
       textAlign: center ? TextAlign.center : TextAlign.start,
@@ -1203,12 +1209,13 @@ class Sec extends StatelessWidget {
 
 /// `.h2` inside `.hrow`.
 class H2Row extends StatelessWidget {
-  const H2Row(this.text, {super.key});
+  const H2Row(this.text, {super.key, this.top = 22});
   final String text;
+  final double top;
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(4, 22, 4, 12),
+    padding: EdgeInsets.fromLTRB(4, top, 4, 12),
     child: Text(
       text,
       style: ts(20, w: w800, ls: -.2, c: Tc.of(context).ink),
@@ -1315,24 +1322,62 @@ class Kv extends StatelessWidget {
       decoration: BoxDecoration(
         border: divider ? Border(top: BorderSide(color: navyA(.06))) : null,
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Flexible(
-            child: Text(
-              k,
-              style: strong ? ts(17, w: w800, c: p.ink) : ts(15, c: p.ink3),
-            ),
-          ),
-          const SizedBox(width: 14),
-          Flexible(
-            child: Text(
-              v,
-              textAlign: TextAlign.right,
-              style: ts(strong ? 17 : 15, w: strong ? w800 : w700, c: p.ink),
-            ),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints box) {
+          final TextStyle ks = strong
+              ? ts(17, w: w800, c: p.ink)
+              : ts(15, c: p.ink3);
+          final TextStyle vs = ts(
+            strong ? 17 : 15,
+            w: strong ? w800 : w700,
+            c: p.ink,
+          );
+          final TextScaler sc = MediaQuery.textScalerOf(context);
+          double natural(String t, TextStyle st) =>
+              (TextPainter(
+                text: TextSpan(text: t, style: st),
+                textDirection: TextDirection.ltr,
+                textScaler: sc,
+              )..layout()).width +
+              1;
+          // CSS flex: both items shrink in proportion to their natural width
+          // (`justify-content: space-between`, value right-aligned).
+          // min-width:auto — an item never shrinks below its longest word.
+          double minContent(String t, TextStyle st) => t
+              .split(RegExp(r'\s+'))
+              .map((String w) => natural(w, st))
+              .fold<double>(0, (double a, double b) => a > b ? a : b);
+          final double nk = natural(k, ks), nv = natural(v, vs);
+          final double room = box.maxWidth - 14;
+          double kw = nk, vw = nv;
+          if (nk + nv > room) {
+            final double over = nk + nv - room;
+            kw = nk - over * nk / (nk + nv);
+            vw = nv - over * nv / (nk + nv);
+            final double mk = minContent(k, ks), mv = minContent(v, vs);
+            if (kw < mk) {
+              kw = mk;
+              vw = room - kw;
+            } else if (vw < mv) {
+              vw = mv;
+              kw = room - vw;
+            }
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              SizedBox(
+                width: kw,
+                child: Text(k, style: ks),
+              ),
+              const Spacer(),
+              SizedBox(
+                width: vw,
+                child: Text(v, textAlign: TextAlign.right, style: vs),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

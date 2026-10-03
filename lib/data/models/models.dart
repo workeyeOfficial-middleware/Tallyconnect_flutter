@@ -284,3 +284,21 @@ class SearchEntry {
   final NavTo? a;
   final String? f;
 }
+
+/// What the bill PDF shows (`state.pdf`).
+class PdfInfo {
+  const PdfInfo({
+    required this.party,
+    required this.no,
+    required this.date,
+    required this.due,
+    required this.total,
+    required this.kind,
+    required this.city,
+    this.recv,
+  });
+  final String party, no, date, due;
+  final int total;
+  final String kind, city;
+  final bool? recv;
+}

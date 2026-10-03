@@ -22,6 +22,9 @@ import '../core/utils/format.dart';
 import '../data/mock/mock_data.dart';
 import '../data/models/models.dart';
 import '../data/repositories/tally_repository.dart';
+import '../core/share/doc_exporter.dart';
+import '../core/share/report_data.dart';
+import '../core/share/share_doc.dart';
 
 class ListRef {
   const ListRef(this.list, this.id);
@@ -101,23 +104,6 @@ class PickSheet {
   final List<Opt> opts;
 }
 
-class PdfInfo {
-  const PdfInfo({
-    required this.party,
-    required this.no,
-    required this.date,
-    required this.due,
-    required this.total,
-    required this.kind,
-    required this.city,
-    this.recv,
-  });
-  final String party, no, date, due;
-  final int total;
-  final String kind, city;
-  final bool? recv;
-}
-
 class Photo {
   const Photo(this.path, this.lum);
   final String path;
@@ -164,7 +150,8 @@ class AppController extends ChangeNotifier {
     this.repo = const MockTallyRepository(),
     String startScreen = 'login',
     double glassLevel = 60,
-  }) {
+    DocExporter? exporter,
+  }) : exporter = exporter ?? PlatformDocExporter() {
     final int ti = kTabs.indexWhere(
       (({String k, String t, String ic}) t) => t.k == startScreen,
     );
@@ -178,6 +165,9 @@ class AppController extends ChangeNotifier {
 
   final LocalStorage store;
   final TallyRepository repo;
+
+  /// Share / PDF / Download platform side (NEW feature).
+  final DocExporter exporter;
   final HitRegistry reg = HitRegistry();
 
   // ---------------------------------------------------------------- state
@@ -258,6 +248,9 @@ class AppController extends ChangeNotifier {
       party = 'Shree Balaji Traders',
       partyTab = 'summary';
   String repCat = 'all', report = 'top';
+
+  /// NEW: chosen chart per report (bar | pie | line).
+  final Map<String, String> chartType = <String, String>{};
   String actFilter = 'all';
   late List<Act> acts = List<Act>.of(repo.activity());
   String act = 'a2';
@@ -1330,6 +1323,16 @@ class AppController extends ChangeNotifier {
     });
   }
 
+  /// NEW: Share from the long-press menu.
+  void cmShare() {
+    final CMenu? c = cmenu;
+    if (c == null) return;
+    lpFired = false;
+    final ShareDoc? d = docForCard(c.list, c.id);
+    _set(() => cmenu = null);
+    if (d != null) shareDoc(d);
+  }
+
   void cmHide() {
     final CMenu? c = cmenu;
     if (c == null) return;
@@ -1470,7 +1473,8 @@ class AppController extends ChangeNotifier {
   }
 
   void openCardMenu(String list, String id, Rect b) {
-    const double mh = 262, mw = 214;
+    // 262 px in the prototype + one 48 px row for the new Share item.
+    const double mh = 310, mw = 214;
     final double hgt = _screen.height, wid = _screen.width;
     double y = (b.bottom + 10 + mh < hgt - 104)
         ? b.bottom + 10
@@ -2137,6 +2141,168 @@ class AppController extends ChangeNotifier {
     zoom = 100;
     pdf = info;
   });
+
+  // ------------------------------------------- share / pdf (NEW feature)
+  /// Document shown by the generic PDF preview (`overlay == 'doc'`).
+  ShareDoc? docShown;
+  Future<Uint8List>? _docBytes;
+  bool docBusy = false;
+
+  int get _accentArgb => palette.acc.toARGB32();
+
+  Future<Uint8List> pdfOf(ShareDoc d) => exporter.pdf(d, _accentArgb);
+
+  /// Native share sheet with the PDF + a text summary.
+  Future<void> shareDoc(ShareDoc d) async {
+    if (docBusy) return;
+    docBusy = true;
+    say('Share sheet opened');
+    try {
+      await exporter.share(d, await pdfOf(d));
+    } catch (_) {
+      say('Could not open the share sheet');
+    } finally {
+      docBusy = false;
+    }
+  }
+
+  Future<void> downloadDoc(ShareDoc d) async {
+    if (docBusy) return;
+    docBusy = true;
+    try {
+      await exporter.download(d.fileName, await pdfOf(d));
+      say('Saved to Downloads');
+    } catch (_) {
+      say('Could not save the PDF');
+    } finally {
+      docBusy = false;
+    }
+  }
+
+  /// Opens the in-app PDF preview of a generated document.
+  void previewDoc(ShareDoc d) => _set(() {
+    docShown = d;
+    _docBytes = pdfOf(d);
+    zoom = 100;
+    overlay = 'doc';
+  });
+
+  Future<Uint8List>? get docBytes => _docBytes;
+
+  /// The bill PDF currently open in the prototype's viewer, as a document.
+  ShareDoc get pdfDoc => docInvoice(
+    pdf ??
+        const PdfInfo(
+          party: 'Shree Balaji Traders',
+          no: 'Sales 9',
+          date: '21 Sep 2026',
+          due: '06 Oct 2026',
+          total: 112100,
+          kind: 'Sales bill',
+          city: 'Mumbai',
+          recv: true,
+        ),
+    companyName,
+    repo.billLines('Sales 9'),
+  );
+
+  /// Document for a long-pressed card (`list|key`).
+  ShareDoc? docForCard(String list, String key) {
+    final String co = companyName;
+    switch (list) {
+      case 'home':
+        switch (key) {
+          case 'money':
+            return docSums(<SumCard>[
+              for (final String k in curWs.sums)
+                if (repo.moneyCards()[k] != null) repo.moneyCards()[k]!,
+            ], co);
+          case 'items':
+            return docItems(repo.items(), co);
+          case 'party':
+            return docParties(partyPool(), co);
+          case 'vouchers':
+            return docVouchers(
+              'All Vouchers',
+              repo.vouchers(),
+              co,
+              'This month',
+            );
+          case 'outstanding':
+            return docBills(true, repo.receivables(), co);
+          case 'reports':
+            return docReportList(co);
+          case 'sales' || 'purchase' || 'moneyIn' || 'moneyOut':
+            final String kind = kShortcuts[key]!.flow!;
+            final String t = kKinds[kind]!.t;
+            return docVouchers(
+              t,
+              repo.vouchers().where((Voucher v) => v.kind == kind).toList(),
+              co,
+              'This month',
+            );
+          default:
+            final ({String label, String ic, String c})? m = widgetMeta(key);
+            if (m == null) return null;
+            final Shortcut? sc = kShortcuts[key];
+            return ShareDoc(
+              title: m.label,
+              subtitle: sc?.s ?? 'Record a sale, purchase, money in or out',
+              company: co,
+            );
+        }
+      case 'notifs':
+        final Notif? n = notifs.where((Notif x) => x.id == key).firstOrNull;
+        return n == null ? null : docNotif(n, co);
+      case 'vouchers':
+        final Voucher? v = repo
+            .vouchers()
+            .where((Voucher x) => x.no == key)
+            .firstOrNull;
+        return v == null ? null : docEntry(v, co);
+      case 'bills':
+        final Bill? b =
+            (outKind == 'recv' ? repo.receivables() : repo.payables())
+                .where((Bill x) => x.no == key)
+                .firstOrNull;
+        return b == null ? null : docBill(b.withKind(outKind), co);
+      case 'items':
+        final Item? it = repo
+            .items()
+            .where((Item x) => x.name == key)
+            .firstOrNull;
+        return it == null ? null : docItem(it, co);
+      case 'party':
+        final Party? pa = partyPool()
+            .where((Party x) => x.name == key)
+            .firstOrNull;
+        return pa == null ? null : docPartyRow(pa, co);
+      case 'reports':
+        return docReport(reportData(repo, key), co);
+      case 'acts':
+        final Act? a = acts.where((Act x) => x.id == key).firstOrNull;
+        return a == null ? null : docAct(a, co);
+      case 'team':
+        final Member? m = team.where((Member x) => x.email == key).firstOrNull;
+        return m == null ? null : docMember(m, co);
+    }
+    return null;
+  }
+
+  ShareDoc docReportList(String co) => ShareDoc(
+    title: 'Reports · September 2026',
+    subtitle: 'Easy views of your Tally data',
+    company: co,
+    fileStem: 'Reports',
+    table: DocTable(
+      const <String>['Report', 'About', 'Value'],
+      <List<String>>[
+        for (final Report r in repo.reports())
+          <String>[r.t, r.s, reportData(repo, r.id).total],
+      ],
+      right: const <int>{2},
+    ),
+  );
 
   void zoomBy(int d) => _set(() => zoom = (zoom + d).clamp(60, 160));
 

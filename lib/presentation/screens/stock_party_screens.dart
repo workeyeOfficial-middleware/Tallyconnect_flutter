@@ -11,6 +11,7 @@ import '../../core/design/tc_fields.dart';
 import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
+import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
@@ -24,19 +25,21 @@ class StatBox extends StatelessWidget {
     super.key,
     this.kind,
     this.bg,
-    this.color,
     this.glass = false,
     this.top,
   });
   final String value, label;
   final String? kind;
-  final Color? bg, color;
+  final Color? bg;
   final bool glass;
   final Widget? top;
 
   @override
   Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
+    // The prototype runtime wraps bound values in `<span class=sc-interp>`, so
+    // `.stat span` (13 px / 600 / ink3) also styles the number inside `<b>`.
+    final TextStyle st = ts(13, w: w600, c: p.ink3);
     final Widget col = Column(
       crossAxisAlignment: glass
           ? CrossAxisAlignment.start
@@ -44,15 +47,21 @@ class StatBox extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       children: <Widget>[
         ?top,
+        // …while the `<b>` keeps its 24 px / 800 line box.
         Text(
           value,
-          style: ts(24, w: w800, c: color ?? p.ink),
+          style: st,
+          strutStyle: const StrutStyle(
+            fontFamily: kFont,
+            fontSize: 24,
+            fontWeight: w800,
+          ),
         ),
         const SizedBox(height: 2),
         Text(
           label,
           textAlign: glass ? TextAlign.start : TextAlign.center,
-          style: ts(13, w: w600, c: p.ink3),
+          style: st,
         ),
       ],
     );
@@ -135,7 +144,14 @@ class ItemsScreen extends ConsumerWidget {
       children: <Widget>[
         BackNav(
           actions: <Widget>[
-            CBtn('share', onTap: () => c.say('Stock list shared')),
+            CBtn(
+              'file',
+              onTap: () => c.previewDoc(docItems(rows, c.companyName)),
+            ),
+            CBtn(
+              'share',
+              onTap: () => c.shareDoc(docItems(rows, c.companyName)),
+            ),
             CBtn('sync', onTap: c.refreshNow),
           ],
         ),
@@ -286,7 +302,6 @@ class PartyScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
-    final TcPalette p = Tc.of(context);
     final List<Party> pool = c.partyPool();
     final String q = c.f('partyQ').toLowerCase();
     final List<Party> rows = pool
@@ -318,6 +333,10 @@ class PartyScreen extends ConsumerWidget {
       children: <Widget>[
         BackNav(
           actions: <Widget>[
+            CBtn(
+              'file',
+              onTap: () => c.previewDoc(docParties(v.rows, c.companyName)),
+            ),
             CBtn('sync', onTap: c.refreshNow),
             CBtn('userPlus', onTap: () => c.openNewParty()),
           ],
@@ -333,13 +352,11 @@ class PartyScreen extends ConsumerWidget {
               '${pool.where((Party x) => x.type == 'c').length}',
               'Customers',
               glass: true,
-              color: p.pos,
             ),
             StatBox(
               '${pool.where((Party x) => x.type == 's').length}',
               'Suppliers',
               glass: true,
-              color: p.cat('purchase'),
             ),
           ],
         ),
@@ -513,11 +530,18 @@ class PartyDetailScreen extends ConsumerWidget {
         BackNav(
           actions: <Widget>[
             CBtn('sync', onTap: c.refreshNow),
-            CBtn('share', onTap: () => c.say('Party details shared')),
+            CBtn(
+              'file',
+              onTap: () => c.previewDoc(docParty(p0, c.companyName, rows, pv)),
+            ),
+            CBtn(
+              'share',
+              onTap: () => c.shareDoc(docParty(p0, c.companyName, rows, pv)),
+            ),
           ],
         ),
         Seg(
-          margin: const EdgeInsets.only(top: 12, bottom: 14),
+          margin: const EdgeInsets.only(top: 2, bottom: 14),
           items: tabs.map(((String, String) e) => e.$2).toList(),
           selected: tabs.indexWhere(((String, String) e) => e.$1 == c.partyTab),
           onPick: (int i) => c.update(() => c.partyTab = tabs[i].$1),
@@ -544,7 +568,7 @@ class PartyDetailScreen extends ConsumerWidget {
               ),
               Tot(
                 bg: pc ? mix(p.pos, .10) : mix(p.warn, .09),
-                margin: const EdgeInsets.only(top: 12),
+                margin: const EdgeInsets.only(top: 12, bottom: 10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[

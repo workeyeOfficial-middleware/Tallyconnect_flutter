@@ -11,10 +11,13 @@ import '../../core/design/tc_fields.dart';
 import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
+import '../../core/share/report_data.dart';
+import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
+import '../widgets/report_chart.dart';
 import 'stock_party_screens.dart' show StatBox;
 import 'voucher_screens.dart' show monthSums;
 
@@ -62,10 +65,14 @@ class ReportsScreen extends ConsumerWidget {
             CBtn('menu', onTap: () => c.openOverlay('menu')),
             const Spacer(),
             CBtn('search', onTap: () => c.openOverlay('search')),
+            CBtn(
+              'file',
+              onTap: () => c.previewDoc(c.docReportList(c.companyName)),
+            ),
             CBtn('sync', onTap: c.refreshNow),
           ],
         ),
-        const H1('Reports'),
+        const H1('Reports', afterNav: true),
         Sub('Easy views of your Tally data · ${c.companyName}'),
         Glass(
           padding: const EdgeInsets.all(18),
@@ -78,7 +85,7 @@ class ReportsScreen extends ConsumerWidget {
           ),
         ),
         Chips(
-          margin: const EdgeInsets.only(top: 18, bottom: 14),
+          margin: const EdgeInsets.only(top: 4, bottom: 14),
           children: <Widget>[
             for (final (String, String) x in kRC)
               ChipBtn(
@@ -148,9 +155,8 @@ class ReportScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    final Report r0 =
-        c.repo.reports().where((Report r) => r.id == c.report).firstOrNull ??
-        c.repo.reports().first;
+    final ReportData d = reportData(c.repo, c.report);
+    final Report r0 = d.report;
     final List<Color> av = <Color>[
       p.navy2,
       p.cat('sales'),
@@ -158,155 +164,68 @@ class ReportScreen extends ConsumerWidget {
       p.cat('items'),
       p.acc,
     ];
-    List<(String, String, String, String, String)> rows; // n, t, s, v, cls
-    String tot, tl = 'Total';
-    final List<Bill> recv = c.repo.receivables();
-    final List<Voucher> vs = c.repo.vouchers();
-    final List<Item> items = c.repo.items();
-    switch (r0.id) {
-      case 'top':
-        final List<Bill> top = List<Bill>.of(recv)
-          ..sort((Bill a, Bill b) => b.amt - a.amt);
-        final List<Bill> t5 = top.take(5).toList();
-        rows = <(String, String, String, String, String)>[
-          for (int i = 0; i < t5.length; i++)
-            (
-              '${i + 1}',
-              t5[i].party,
-              '${t5[i].city} · ${t5[i].no}',
-              inr(t5[i].amt),
-              'in',
-            ),
-        ];
-        tot = inr(t5.fold<int>(0, (int s, Bill x) => s + x.amt));
-        tl = 'Top 5 owe you';
-      case 'exp':
-        const List<(String, String, int)> e = <(String, String, int)>[
-          ('Salaries A/c', 'Indirect expense', 120000),
-          ('Rent A/c', 'Indirect expense', 35000),
-          ('Depreciation A/c', 'Indirect expense', 24500),
-          ('Freight Charges', 'Direct expense', 6950),
-        ];
-        rows = <(String, String, String, String, String)>[
-          for (int i = 0; i < e.length; i++)
-            ('${i + 1}', e[i].$1, e[i].$2, inr(e[i].$3), 'out'),
-        ];
-        tot = inr(186450);
-        tl = 'All expenses · Sep';
-      case 'inC':
-        rows = <(String, String, String, String, String)>[
-          for (final Party x in c.repo.parties().where(
-            (Party x) => x.type == 'c' && x.bal == 0,
-          ))
-            (
-              initials(x.name),
-              x.name,
-              '${x.city} · no sale in 60 days',
-              '—',
-              '',
-            ),
-        ];
-        tot = '2';
-        tl = 'Quiet customers';
-      case 'inI':
-        rows = <(String, String, String, String, String)>[
-          for (final Item x in items.where((Item x) => x.st == 'out'))
-            (
-              initials(x.name),
-              x.name,
-              'Finished · not sold this month',
-              inr(0),
-              '',
-            ),
-        ];
-        tot = '2';
-        tl = 'Items not moving';
-      case 'day':
-        final List<Voucher> d = List<Voucher>.of(vs)
-          ..sort((Voucher a, Voucher b) => b.day - a.day);
-        rows = <(String, String, String, String, String)>[
-          for (final Voucher v in d)
-            (
-              '${v.day}',
-              v.party,
-              '${kKinds[v.kind]!.t} · ${v.no}',
-              inr(v.amt),
-              '',
-            ),
-        ];
-        tot = inr(918490);
-        tl = '21 entries · value';
-      case 'sreg':
-      case 'preg':
-        final String kk = r0.id == 'sreg' ? 'sales' : 'purchase';
-        final List<Voucher> l2 = vs.where((Voucher v) => v.kind == kk).toList();
-        rows = <(String, String, String, String, String)>[
-          for (final Voucher v in l2)
-            ('${v.day}', v.party, '${v.no} · ${v.day} Sep', inr(v.amt), ''),
-        ];
-        tot = inr(l2.fold<int>(0, (int s, Voucher v) => s + v.amt));
-        tl = '${l2.length} bills';
-      default:
-        rows = <(String, String, String, String, String)>[
-          for (final Item x in items)
-            (
-              initials(x.name),
-              x.name,
-              '${x.stock} ${x.unit} × ${inr(x.rate)}',
-              inr(x.stock * x.rate),
-              '',
-            ),
-        ];
-        tot = stockValue(c);
-        tl = 'Stock value';
-    }
+    final ShareDoc doc = docReport(d, c.companyName);
     return Scr(
       children: <Widget>[
         BackNav(
-          actions: <Widget>[CBtn('share', onTap: () => c.say('Report shared'))],
+          actions: <Widget>[
+            CBtn('file', onTap: () => c.previewDoc(doc)),
+            CBtn('download', onTap: () => c.downloadDoc(doc)),
+            CBtn('share', onTap: () => c.shareDoc(doc)),
+          ],
         ),
-        Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: Row(
-            children: <Widget>[
-              Ico(r0.ic, color: p.cat(r0.c), icon: IcSize.l),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    H1(r0.t, size: 28, margin: EdgeInsets.zero),
-                    const SizedBox(height: 2),
-                    Text('${r0.s} · September 2026', style: rsStyle(context)),
-                  ],
-                ),
+        Row(
+          children: <Widget>[
+            Ico(r0.ic, color: p.cat(r0.c), icon: IcSize.l),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  H1(r0.t, size: 28, margin: EdgeInsets.zero),
+                  const SizedBox(height: 2),
+                  Text('${r0.s} · September 2026', style: rsStyle(context)),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
+        // NEW: chart first (same rows as the list below).
+        if (d.hasChart)
+          Padding(
+            padding: const EdgeInsets.only(top: 18),
+            child: ReportChart(
+              data: d,
+              type: c.chartType[r0.id] ?? (d.lineFirst ? 'line' : 'bar'),
+              onType: (String t) => c.update(() => c.chartType[r0.id] = t),
+            ),
+          ),
         GlassRow(
-          margin: const EdgeInsets.only(top: 18),
+          margin: EdgeInsets.only(top: d.hasChart ? 12 : 18),
           minHeight: 64,
           children: <Widget>[
-            Expanded(child: Text(tl, style: rsStyle(context))),
-            Text(tot, style: amtStyle(context, size: 22)),
+            Expanded(child: Text(d.totalLabel, style: rsStyle(context))),
+            Text(d.total, style: amtStyle(context, size: 22)),
           ],
         ),
         GlassList(
           margin: const EdgeInsets.only(top: 12),
           children: <Widget>[
-            for (int i = 0; i < rows.length; i++)
+            for (int i = 0; i < d.rows.length; i++)
               RowX(
                 children: <Widget>[
                   Av(
-                    rows[i].$1,
+                    d.rows[i].n,
                     size: Av.sm,
                     gradient: LinearGradient(
                       colors: <Color>[av[i % av.length], av[i % av.length]],
                     ),
                   ),
-                  Expanded(child: RTx(rows[i].$2, rows[i].$3, ell: true)),
-                  Text(rows[i].$4, style: amtStyle(context, cls: rows[i].$5)),
+                  Expanded(child: RTx(d.rows[i].t, d.rows[i].s, ell: true)),
+                  Text(
+                    d.rows[i].v,
+                    style: amtStyle(context, cls: d.rows[i].cls),
+                  ),
                 ],
               ),
           ],
@@ -353,6 +272,10 @@ class ActivityScreen extends ConsumerWidget {
             CBtn('menu', onTap: () => c.openOverlay('menu')),
             const Spacer(),
             CBtn('bell', onTap: () => c.go('notifs')),
+            CBtn(
+              'file',
+              onTap: () => c.previewDoc(docActs(v.rows, c.companyName)),
+            ),
             CBtn('sync', onTap: c.syncAll),
           ],
         ),
@@ -393,26 +316,16 @@ class ActivityScreen extends ConsumerWidget {
                 cols: 3,
                 gap: 10,
                 children: <Widget>[
-                  StatBox('${count('ok')}', 'Sent', kind: 'c', color: p.pos),
-                  StatBox(
-                    '${count('wait')}',
-                    'Waiting',
-                    kind: 'b',
-                    color: p.warn,
-                  ),
-                  StatBox(
-                    '${count('fail')}',
-                    'Not sent',
-                    kind: 'n',
-                    color: p.neg,
-                  ),
+                  StatBox('${count('ok')}', 'Sent', kind: 'c'),
+                  StatBox('${count('wait')}', 'Waiting', kind: 'b'),
+                  StatBox('${count('fail')}', 'Not sent', kind: 'n'),
                 ],
               ),
             ],
           ),
         ),
         Chips(
-          margin: const EdgeInsets.only(top: 18, bottom: 14),
+          margin: const EdgeInsets.only(top: 4, bottom: 14),
           children: <Widget>[
             for (final (String, String) x in af)
               ChipBtn(
@@ -643,7 +556,7 @@ class ActDetailScreen extends ConsumerWidget {
               ? 'check'
               : (a0.status == 'fail' ? 'xCircle' : 'sync'),
         ),
-        const Sec('Entry details', margin: EdgeInsets.fromLTRB(8, 4, 8, 8)),
+        const Sec('Entry details', margin: EdgeInsets.fromLTRB(8, 0, 8, 8)),
         KvList(rows),
         if (s11) ...<Widget>[
           const Sec('Items'),
@@ -853,7 +766,7 @@ class TeamScreen extends ConsumerWidget {
           onPick: (int i) => c.update(() => c.teamFilter = segs[i].$1),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(6, 4, 6, 10),
+          padding: const EdgeInsets.fromLTRB(6, 0, 6, 10),
           child: Row(
             children: <Widget>[
               Expanded(

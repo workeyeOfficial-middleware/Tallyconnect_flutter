@@ -9,6 +9,7 @@ import '../../app/providers.dart';
 import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
+import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
@@ -68,7 +69,7 @@ class VHubScreen extends ConsumerWidget {
     return Scr(
       children: <Widget>[
         const BackNav(),
-        const H1('Vouchers'),
+        const H1('Vouchers', afterNav: true),
         const Sub('Entries you have already saved'),
         Glass(
           padding: const EdgeInsets.all(18),
@@ -172,9 +173,22 @@ class VListScreen extends ConsumerWidget {
             CBtn('search', onTap: () => c.openOverlay('search')),
             CBtn('sync', onTap: c.refreshNow),
             CBtn('plus', onTap: () => c.go('newEntry')),
+            CBtn(
+              'file',
+              onTap: () => c.previewDoc(
+                docVouchers(
+                  title,
+                  vrows,
+                  c.companyName,
+                  periods
+                      .firstWhere(((String, String) e) => e.$1 == c.vPeriod)
+                      .$2,
+                ),
+              ),
+            ),
           ],
         ),
-        H1(title),
+        H1(title, afterNav: true),
         Sub('${c.companyName} · September 2026'),
         GlassRow(
           minHeight: 72,
@@ -203,7 +217,7 @@ class VListScreen extends ConsumerWidget {
           ],
         ),
         Chips(
-          margin: const EdgeInsets.only(top: 16, bottom: 14),
+          margin: const EdgeInsets.only(top: 4, bottom: 14),
           children: <Widget>[
             for (final (String, String) x in kVF)
               ChipBtn(
@@ -296,7 +310,7 @@ class EntryDetailScreen extends ConsumerWidget {
     final TcPalette p = Tc.of(context);
     final Voucher e = c.entry ?? c.repo.vouchers().first;
     final Kind k = kKinds[e.kind]!;
-    void share() => c.say('Share sheet opened');
+    void share() => c.shareDoc(docEntry(e, c.companyName));
     return FlowScr(
       foot: <Widget>[
         Expanded(
@@ -336,7 +350,7 @@ class EntryDetailScreen extends ConsumerWidget {
       children: <Widget>[
         BackNav(actions: <Widget>[CBtn('share', onTap: share)]),
         Padding(
-          padding: const EdgeInsets.only(top: 12),
+          padding: const EdgeInsets.only(top: 2),
           child: Glass(
             padding: const EdgeInsets.all(18),
             child: Column(

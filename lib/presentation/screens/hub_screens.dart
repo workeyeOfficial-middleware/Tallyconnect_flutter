@@ -30,7 +30,7 @@ class NotifsScreen extends ConsumerWidget {
     return Scr(
       children: <Widget>[
         BackNav(actions: <Widget>[CBtn('sync', onTap: c.refreshNow)]),
-        const H1('Alerts'),
+        const H1('Alerts', afterNav: true),
         Sub(c.unread > 0 ? '${c.unread} unread' : 'All read'),
         Row(
           children: <Widget>[
@@ -144,6 +144,7 @@ class _WsFeat extends StatelessWidget {
       onTap: onTap,
       child: Glass(
         child: Stack(
+          fit: StackFit.passthrough,
           children: <Widget>[
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 12, 4, 10),
@@ -253,7 +254,7 @@ class CreateWsScreen extends ConsumerWidget {
         ),
         const Sub(
           'A workspace is your own Home screen. Pick the shortcuts and money cards you want.',
-          margin: EdgeInsets.fromLTRB(4, 8, 4, 16),
+          margin: EdgeInsets.fromLTRB(4, 0, 4, 16),
         ),
         Fld(
           label: 'Workspace name',
@@ -272,7 +273,7 @@ class CreateWsScreen extends ConsumerWidget {
           selected: isF ? 0 : 1,
           onPick: (int i) => c.update(() => c.wsTab = i == 0 ? 'f' : 'm'),
         ),
-        const Sec('Chosen', margin: EdgeInsets.fromLTRB(8, 4, 8, 8)),
+        const Sec('Chosen', margin: EdgeInsets.fromLTRB(8, 0, 8, 8)),
         if (chosen.isEmpty) const EmptyBox('Nothing yet. Tap below to add.'),
         if (chosen.isNotEmpty)
           Grid(
@@ -320,7 +321,7 @@ class ManageWsScreen extends ConsumerWidget {
         ),
         const Sub(
           'Workspaces are your own Home screens. Switching one never changes your accounts data.',
-          margin: EdgeInsets.fromLTRB(4, 8, 4, 16),
+          margin: EdgeInsets.fromLTRB(4, 0, 4, 16),
         ),
         for (final Workspace w in c.wsList)
           Padding(
@@ -442,7 +443,7 @@ class NewEntryScreen extends ConsumerWidget {
     return Scr(
       children: <Widget>[
         const BackNav(),
-        const H1('New Entry'),
+        const H1('New Entry', afterNav: true),
         const Sub('What do you want to write down?'),
         Grid(
           cols: 2,

@@ -10,6 +10,7 @@ import '../../app/providers.dart';
 import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
+import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
@@ -65,7 +66,7 @@ class OutHubScreen extends ConsumerWidget {
             const Bdg('Sample data', kind: BadgeKind.acc),
           ],
         ),
-        const H1('Money due'),
+        const H1('Money due', afterNav: true),
         const Sub('Money still to be settled (Outstanding)'),
         for (final (
               String,
@@ -107,11 +108,12 @@ class OutHubScreen extends ConsumerWidget {
                       children: <Widget>[
                         Expanded(
                           child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: <Widget>[
                               Text('Total', style: rsStyle(context)),
                               Text(
                                 inr(o.$5),
+                                textAlign: TextAlign.right,
                                 style: amtStyle(context, cls: o.$6),
                               ),
                             ],
@@ -132,7 +134,7 @@ class OutHubScreen extends ConsumerWidget {
               ),
             ),
           ),
-        const H2Row('Due in the next 7 days'),
+        const H2Row('Due in the next 7 days', top: 10),
         GlassList(
           children: <Widget>[
             for (final Bill b in soon)
@@ -204,8 +206,16 @@ class OutListScreen extends ConsumerWidget {
         );
     return Scr(
       children: <Widget>[
-        BackNav(actions: <Widget>[CBtn('sync', onTap: c.refreshNow)]),
-        H1(isR ? 'To get' : 'To give'),
+        BackNav(
+          actions: <Widget>[
+            CBtn(
+              'file',
+              onTap: () => c.previewDoc(docBills(isR, v.rows, c.companyName)),
+            ),
+            CBtn('sync', onTap: c.refreshNow),
+          ],
+        ),
+        H1(isR ? 'To get' : 'To give', afterNav: true),
         Sub(
           isR
               ? 'Money others owe you (Receivable)'
@@ -226,7 +236,7 @@ class OutListScreen extends ConsumerWidget {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: <Widget>[
                         Text(
                           isR ? 'Others owe you' : 'You owe others',
@@ -234,6 +244,7 @@ class OutListScreen extends ConsumerWidget {
                         ),
                         Text(
                           inr(totO),
+                          textAlign: TextAlign.right,
                           style: amtStyle(
                             context,
                             cls: isR ? 'big in' : 'big out',
@@ -338,7 +349,7 @@ class OutListScreen extends ConsumerWidget {
           ),
         ),
         Chips(
-          margin: const EdgeInsets.only(top: 18, bottom: 14),
+          margin: const EdgeInsets.only(top: 4, bottom: 14),
           children: <Widget>[
             for (final (String, String) x in of)
               ChipBtn(
@@ -397,19 +408,23 @@ class BillDetailScreen extends ConsumerWidget {
     final TcPalette p = Tc.of(context);
     final Bill b = c.bill ?? c.repo.receivables().first;
     final bool r = b.kind == 'recv';
-    void share() => c.say('Share sheet opened');
-    void pdf() => c.openPdf(
-      PdfInfo(
-        party: b.party,
-        no: b.no,
-        date: b.bill,
-        due: b.due,
-        total: b.amt,
-        kind: r ? 'Sales bill' : 'Purchase bill',
-        city: b.city,
-        recv: r,
-      ),
+    final PdfInfo info = PdfInfo(
+      party: b.party,
+      no: b.no,
+      date: b.bill,
+      due: b.due,
+      total: b.amt,
+      kind: r ? 'Sales bill' : 'Purchase bill',
+      city: b.city,
+      recv: r,
     );
+    final ShareDoc invoice = docInvoice(
+      info,
+      c.companyName,
+      c.repo.billLines(b.no),
+    );
+    void share() => c.shareDoc(invoice);
+    void pdf() => c.openPdf(info);
     Widget tile(String ic, String cc, String t, VoidCallback f) => Tap(
       onTap: f,
       child: Glass(
@@ -465,7 +480,7 @@ class BillDetailScreen extends ConsumerWidget {
       ],
       children: <Widget>[
         BackNav(actions: <Widget>[CBtn('share', onTap: share)]),
-        const H1('Bill details'),
+        const H1('Bill details', afterNav: true),
         Sub('${b.no} · ${r ? 'Sales bill' : 'Purchase bill'}'),
         Glass(
           padding: const EdgeInsets.all(18),
@@ -510,7 +525,7 @@ class BillDetailScreen extends ConsumerWidget {
                 children: <Widget>[
                   Expanded(
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: <Widget>[
                         Text(
                           r ? 'Still to get' : 'Still to pay',
@@ -518,6 +533,7 @@ class BillDetailScreen extends ConsumerWidget {
                         ),
                         Text(
                           inr(b.amt),
+                          textAlign: TextAlign.right,
                           style: amtStyle(
                             context,
                             cls: r ? 'big in' : 'big out',
@@ -543,7 +559,7 @@ class BillDetailScreen extends ConsumerWidget {
               'download',
               'purchase',
               'Download',
-              () => c.say('Saved to Downloads'),
+              () => c.downloadDoc(invoice),
             ),
           ],
         ),

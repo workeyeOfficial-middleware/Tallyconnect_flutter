@@ -594,6 +594,7 @@ class LRow extends ConsumerWidget {
     final bool dim = c.cmenu != null && !lift;
     final bool pinned = c.isPinned(list, lk);
     Widget w = Stack(
+      fit: StackFit.passthrough,
       clipBehavior: Clip.none,
       children: <Widget>[
         child,

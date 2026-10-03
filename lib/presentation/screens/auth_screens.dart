@@ -216,7 +216,7 @@ class ForgotScreen extends ConsumerWidget {
     return Scr(
       children: <Widget>[
         NavRow(children: <Widget>[PBtn('Log in', onTap: c.back)]),
-        const SizedBox(height: 26),
+        const SizedBox(height: 16),
         Center(
           child: Ico('key', color: p.acc, box: 72, radius: 24, icon: IcSize.l),
         ),
