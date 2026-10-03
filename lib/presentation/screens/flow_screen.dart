@@ -30,7 +30,7 @@ class FlowScreen extends ConsumerWidget {
     final int step = c.flowStep;
     final int last = cfg.steps.length - 1;
     final List<Line> lines = c.lines[c.flowType] ?? <Line>[];
-    final ({int sub, int gst, int total}) tot = c.totals(lines);
+    final ({num sub, num gst, num total}) tot = c.totals(lines);
     final String pf = cfg.p;
     final num payAmt = numOf(c.form['${pf}Amt']);
     final bool balanced = c.drSum == c.crSum && c.drSum > 0;
@@ -79,9 +79,10 @@ class FlowScreen extends ConsumerWidget {
           Expanded(
             flex: 17,
             child: Btn(
-              label: 'Save',
+              label: c.busy ? 'Saving…' : 'Save',
               icon: 'check',
               kind: BtnKind.a,
+              enabled: !c.busy,
               onTap: () => c.saveFlow(false),
             ),
           ),
@@ -283,7 +284,7 @@ class _Details extends ConsumerWidget {
                                 .map(
                                   (Party x) => Opt(
                                     x.name,
-                                    '${x.type == 'c' ? 'Customer' : 'Supplier'} · ${x.city}',
+                                    '${x.type == 'c' ? 'Customer' : 'Supplier'} · ${x.city.isNotEmpty ? x.city : (x.group ?? '')}',
                                   ),
                                 )
                                 .toList(),
@@ -325,7 +326,10 @@ class _Details extends ConsumerWidget {
                   value: c.f('${pf}Amt'),
                   onChanged: (String v) => c.setF('${pf}Amt', v),
                   prefix: _rupee(context),
-                  keyboard: TextInputType.number,
+                  keyboard: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  formatters: kDecimal,
                   fontSize: 20,
                   fontWeight: w800,
                 ),
@@ -368,7 +372,7 @@ class _Details extends ConsumerWidget {
 class _Items extends ConsumerWidget {
   const _Items({required this.lines, required this.tot});
   final List<Line> lines;
-  final ({int sub, int gst, int total}) tot;
+  final ({num sub, num gst, num total}) tot;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -427,7 +431,7 @@ class _Items extends ConsumerWidget {
                               Expanded(
                                 child: RTx(
                                   lines[i].name,
-                                  '${inr(lines[i].rate)} × ${lines[i].qty} ${lines[i].unit} · GST ${lines[i].gst}%',
+                                  '${inr(lines[i].rate)} × ${lines[i].qty} ${lines[i].unit} · GST ${qty(lines[i].gst)}%',
                                 ),
                               ),
                               const SizedBox(width: 10),
@@ -559,14 +563,14 @@ class _Modes extends ConsumerWidget {
 class _Pay extends ConsumerWidget {
   const _Pay({required this.cfg, required this.tot, required this.payAmt});
   final FlowType cfg;
-  final ({int sub, int gst, int total}) tot;
+  final ({num sub, num gst, num total}) tot;
   final num payAmt;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final String pf = cfg.p;
-    final num bal = tot.total - payAmt;
+    final num bal = paise(tot.total - payAmt);
     return Rise(
       child: Padding(
         padding: const EdgeInsets.only(top: 12),
@@ -586,7 +590,10 @@ class _Pay extends ConsumerWidget {
                   value: c.f('${pf}Amt'),
                   onChanged: (String v) => c.setF('${pf}Amt', v),
                   prefix: _rupee(context),
-                  keyboard: TextInputType.number,
+                  keyboard: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  formatters: kDecimal,
                   fontSize: 20,
                   fontWeight: w800,
                 ),
@@ -710,7 +717,7 @@ class _Ledgers extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    final int dr = c.drSum, cr = c.crSum;
+    final num dr = c.drSum, cr = c.crSum;
     final bool balanced = dr == cr && dr > 0;
     return Rise(
       child: Padding(
@@ -782,7 +789,7 @@ class _Ledgers extends ConsumerWidget {
                 const Banner2('Matched — both sides are equal', ok: true)
               else
                 Banner2(
-                  'Not matching yet · difference ${inr((dr - cr).abs())}',
+                  'Not matching yet · difference ${inr(paise((dr - cr).abs()))}',
                   ok: false,
                 ),
               for (int i = 0; i < c.jl.length; i++) ...<Widget>[
@@ -831,11 +838,12 @@ class _Ledgers extends ConsumerWidget {
                       ),
                       const SizedBox(width: 12),
                       _JInp(
-                        value: '${c.jl[i].amt}',
+                        value: c.jl[i].amt == 0 && c.repo.isRemote
+                            ? ''
+                            : qty(c.jl[i].amt),
                         onChanged: (String v) => c.updJl(
                           i,
-                          (JLine x) =>
-                              x.copyWith(amt: v.isEmpty ? 0 : int.parse(v)),
+                          (JLine x) => x.copyWith(amt: num.tryParse(v) ?? 0),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -888,7 +896,11 @@ class _JInpState extends State<_JInp> {
   @override
   void didUpdateWidget(_JInp old) {
     super.didUpdateWidget(old);
-    if (widget.value != _c.text) _c.text = widget.value;
+    // Keep what the user typed ("12." / "12.50") while it means the same.
+    if (widget.value != _c.text &&
+        num.tryParse(widget.value) != num.tryParse(_c.text)) {
+      _c.text = widget.value;
+    }
   }
 
   @override
@@ -913,9 +925,9 @@ class _JInpState extends State<_JInp> {
       child: TextField(
         controller: _c,
         textAlign: TextAlign.right,
-        keyboardType: TextInputType.number,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
         inputFormatters: <TextInputFormatter>[
-          FilteringTextInputFormatter.digitsOnly,
+          FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
         ],
         onChanged: widget.onChanged,
         style: ts(15, w: w700, c: p.ink),
@@ -931,7 +943,7 @@ class _JInpState extends State<_JInp> {
 class _Summary extends ConsumerWidget {
   const _Summary({required this.cfg, required this.tot, required this.payAmt});
   final FlowType cfg;
-  final ({int sub, int gst, int total}) tot;
+  final ({num sub, num gst, num total}) tot;
   final num payAmt;
 
   @override
@@ -939,15 +951,18 @@ class _Summary extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
     final String type = c.flowType;
+    final String? blocker = c.flowBlocker;
     final String pf = cfg.p;
     final List<Line> lines = c.lines[type] ?? <Line>[];
     final String mode = c.modes[type] ?? 'cash';
     final String modeName = kModes
         .firstWhere((PayMode m) => m.id == mode, orElse: () => kModes.first)
         .t;
-    final num bal = tot.total - payAmt;
+    final num bal = paise(tot.total - payAmt);
     String v(String k) => c.f('$pf$k');
-    final String no = type == 'sales' ? 'Sales ${v('No')}' : v('No');
+    final String no = type == 'sales' && !c.repo.isRemote
+        ? 'Sales ${v('No')}'
+        : (v('No').isEmpty ? '(number from Tally)' : v('No'));
     String orDash(String s) => s.isEmpty ? '—' : s;
 
     final List<(String, int, List<(String, String, bool)>)> sections;
@@ -1090,10 +1105,10 @@ class _Summary extends ConsumerWidget {
                     style: rsStyle(context),
                   ),
                   const SizedBox(height: 8),
-                  const Banner2(
-                    'Ready to send to Tally',
-                    ok: true,
-                    margin: EdgeInsets.only(top: 2),
+                  Banner2(
+                    blocker ?? 'Ready to send to Tally',
+                    ok: blocker == null,
+                    margin: const EdgeInsets.only(top: 2),
                   ),
                 ],
               ),

@@ -12,7 +12,9 @@ import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
 import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
+import '../../data/accounting.dart';
 import '../../data/models/models.dart';
+import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../widgets/common.dart';
 
 class OutHubScreen extends ConsumerWidget {
@@ -23,60 +25,60 @@ class OutHubScreen extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
     final List<Bill> recv = c.repo.receivables(), payb = c.repo.payables();
+    final OutstandingSummary rs = c.repo.outstanding(true),
+        ps = c.repo.outstanding(false);
     final List<
-      (String, String, String, String, int, String, String, int, String)
+      (String, String, String, String, num, String, String, num, String)
     >
     cards =
-        <(String, String, String, String, int, String, String, int, String)>[
+        <(String, String, String, String, num, String, String, num, String)>[
           (
-            'To get',
-            'Others owe you (Receivable)',
+            'Receivable',
+            'Customers owe you',
             'in',
             'receipt',
-            348690,
+            rs.total,
             'big in',
-            '6 parties',
-            113870,
+            '${rs.parties} parties',
+            rs.late,
             'recv',
           ),
           (
-            'To give',
-            'You owe others (Payable)',
+            'Payable',
+            'You owe suppliers',
             'out',
             'payment',
-            126850,
+            ps.total,
             'big out',
-            '5 parties',
-            17700,
+            '${ps.parties} parties',
+            ps.late,
             'pay',
           ),
         ];
-    final List<Bill> soon = <Bill>[
-      recv[4],
-      payb[0].withKind('pay'),
-      payb[2].withKind('pay'),
-      recv[5],
-    ];
+    final List<Bill> soon = dueSoon(recv, payb, c.today);
     return Scr(
       children: <Widget>[
         NavRow(
           children: <Widget>[
             CBtn('menu', onTap: () => c.openOverlay('menu')),
             const Spacer(),
-            const Bdg('Sample data', kind: BadgeKind.acc),
+            Bdg(
+              c.repo.isRemote ? 'As on ${dmy(c.today)}' : 'Sample data',
+              kind: BadgeKind.acc,
+            ),
           ],
         ),
-        const H1('Money due', afterNav: true),
-        const Sub('Money still to be settled (Outstanding)'),
+        const H1('Outstanding', afterNav: true),
+        const Sub('Receivable and payable bills still to be settled'),
         for (final (
               String,
               String,
               String,
               String,
-              int,
+              num,
               String,
               String,
-              int,
+              num,
               String,
             )
             o
@@ -159,6 +161,10 @@ class OutHubScreen extends ConsumerWidget {
                   ),
                 ],
               ),
+            if (soon.isEmpty)
+              EmptyBox(
+                c.emptyText(DataSet.bills, 'Nothing due in the next 7 days.'),
+              ),
           ],
         ),
       ],
@@ -175,25 +181,42 @@ class OutListScreen extends ConsumerWidget {
     final TcPalette p = Tc.of(context);
     final bool isR = c.outKind == 'recv';
     final List<Bill> bl = isR ? c.repo.receivables() : c.repo.payables();
-    final int onTime = isR ? 234820 : 109150,
-        late30 = isR ? 113870 : 17700,
-        totO = isR ? 348690 : 126850;
+    final OutstandingSummary sm = c.repo.outstanding(isR);
+    final num totO = sm.total, late30 = sm.late;
+    int pct(num v) => totO <= 0 ? 0 : (v / totO * 100).round();
+    final List<Bill> lateBills = bl
+        .where((Bill b) => b.st == 'late')
+        .toList();
+    final int lateParties = lateBills
+        .map((Bill b) => b.ledgerGuid ?? b.party)
+        .toSet()
+        .length;
     const List<(String, String)> of = <(String, String)>[
       ('all', 'All'),
       ('late', 'Late'),
       ('soon', 'Due soon'),
       ('ok', 'Later'),
     ];
-    final List<(String, int, int, Color)> ageing = <(String, int, int, Color)>[
-      ('On time (not due yet)', onTime, (onTime / totO * 100).round(), p.pos),
+    final List<(String, num, int, Color)> ageing = <(String, num, int, Color)>[
+      ('On time (not due yet)', sm.ageing[0], pct(sm.ageing[0]), p.pos),
       (
         '1–30 days late',
-        late30,
-        (late30 / totO * 100).round().clamp(2, 100),
+        sm.ageing[1],
+        sm.ageing[1] > 0 ? pct(sm.ageing[1]).clamp(2, 100) : 0,
         p.warn,
       ),
-      ('31–60 days late', 0, 0, p.neg),
-      ('More than 60 days late', 0, 0, p.acc3),
+      (
+        '31–60 days late',
+        sm.ageing[2],
+        sm.ageing[2] > 0 ? pct(sm.ageing[2]).clamp(2, 100) : 0,
+        p.neg,
+      ),
+      (
+        'More than 60 days late',
+        sm.ageing[3],
+        sm.ageing[3] > 0 ? pct(sm.ageing[3]).clamp(2, 100) : 0,
+        p.acc3,
+      ),
     ];
     final ({List<Bill> rows, int hidden, VoidCallback unhide}) v = c
         .listView<Bill>(
@@ -202,7 +225,7 @@ class OutListScreen extends ConsumerWidget {
               .where((Bill b) => c.outFilter == 'all' || b.st == c.outFilter)
               .map((Bill b) => b.withKind(c.outKind))
               .toList(),
-          (Bill b) => b.no,
+          (Bill b) => b.key,
         );
     return Scr(
       children: <Widget>[
@@ -210,16 +233,17 @@ class OutListScreen extends ConsumerWidget {
           actions: <Widget>[
             CBtn(
               'file',
-              onTap: () => c.previewDoc(docBills(isR, v.rows, c.companyName)),
+              onTap: () =>
+                  c.previewDoc(docBills(isR, v.rows, c.companyName, c.today)),
             ),
             CBtn('sync', onTap: c.refreshNow),
           ],
         ),
-        H1(isR ? 'To get' : 'To give', afterNav: true),
+        H1(isR ? 'Receivable' : 'Payable', afterNav: true),
         Sub(
           isR
-              ? 'Money others owe you (Receivable)'
-              : 'Money you owe others (Payable)',
+              ? 'Money customers owe you (Outstanding)'
+              : 'Money you owe suppliers (Outstanding)',
         ),
         Glass(
           padding: const EdgeInsets.all(18),
@@ -239,7 +263,7 @@ class OutListScreen extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: <Widget>[
                         Text(
-                          isR ? 'Others owe you' : 'You owe others',
+                          isR ? 'Customers owe you' : 'You owe suppliers',
                           style: rsStyle(context),
                         ),
                         Text(
@@ -261,26 +285,43 @@ class OutListScreen extends ConsumerWidget {
                   spacing: 8,
                   runSpacing: 8,
                   children: <Widget>[
-                    Bdg('${bl.length} parties'),
+                    Bdg('${sm.parties} parties'),
                     Bdg('${inr(late30)} late', kind: BadgeKind.bad),
-                    const Bdg('As on 26 Sep 2026'),
+                    Bdg('As on ${dmy(c.today)}'),
+                    if (sm.mismatch)
+                      Bdg(
+                        'Server total ${inr(sm.serverTotal)} differs',
+                        kind: BadgeKind.warn,
+                      ),
                   ],
                 ),
               ),
               Btn(
                 label: isR
-                    ? 'Send reminders to 2 late customers'
-                    : 'Pay 2 late bills',
+                    ? 'Send reminders to $lateParties late customers'
+                    : 'Pay ${lateBills.length} late bills',
                 icon: isR ? 'chat' : 'out',
                 kind: BtnKind.g,
                 color: p.acc,
+                enabled: lateBills.isNotEmpty,
                 onTap: isR
-                    ? () => c.say('WhatsApp reminders sent to 2 customers')
-                    : () => c.startFlow('payment', <String, String>{
-                        'yParty': 'Anchor Electricals',
-                        'yAmt': '11800',
-                        'yRef': 'Against PI-0002',
-                      }),
+                    ? () => c.say(
+                        c.repo.isRemote
+                            ? 'WhatsApp reminders are not available yet on the server'
+                            : 'WhatsApp reminders sent to $lateParties customers',
+                      )
+                    : () {
+                        if (lateBills.isEmpty) return;
+                        final Bill b = c.repo.isRemote
+                            ? lateBills.first
+                            : (lateBills.where((Bill x) => x.no == 'PI-0002').firstOrNull ??
+                                  lateBills.first);
+                        c.startFlow('payment', <String, String>{
+                          'yParty': b.party,
+                          'yAmt': '${b.amt}',
+                          'yRef': 'Against ${b.no}',
+                        });
+                      },
               ),
             ],
           ),
@@ -316,7 +357,7 @@ class OutListScreen extends ConsumerWidget {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Text('How late?', style: rtStyle(context, 17)),
                 ),
-                for (final (String, int, int, Color) a in ageing) ...<Widget>[
+                for (final (String, num, int, Color) a in ageing) ...<Widget>[
                   Row(
                     children: <Widget>[
                       Expanded(
@@ -364,17 +405,21 @@ class OutListScreen extends ConsumerWidget {
             for (final Bill b in v.rows)
               LRow(
                 list: 'bills',
-                lk: b.no,
+                lk: b.key,
                 child: RowX(
                   onTap: () {
-                    if (c.guardTap('bills', b.no)) {
+                    if (c.guardTap('bills', b.key)) {
                       c.go('billDetail', <String, Object?>{'bill': b});
                     }
                   },
                   children: <Widget>[
                     Av(initials(b.party), size: Av.sm),
                     Expanded(
-                      child: RTx(b.party, '${b.no} · ${b.city}', ell: true),
+                      child: RTx(
+                        b.party,
+                        '${b.no} · ${b.city.isNotEmpty ? b.city : 'Due ${b.due}'}',
+                        ell: true,
+                      ),
                     ),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
@@ -392,6 +437,15 @@ class OutListScreen extends ConsumerWidget {
               ),
             if (v.hidden > 0)
               HidRow('${v.hidden} hidden · Unhide', onTap: v.unhide),
+            if (v.rows.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(18),
+                child: Text(
+                  c.emptyText(DataSet.bills, 'No pending bills.'),
+                  textAlign: TextAlign.center,
+                  style: rsStyle(context, 15),
+                ),
+              ),
           ],
         ),
       ],
@@ -406,23 +460,26 @@ class BillDetailScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    final Bill b = c.bill ?? c.repo.receivables().first;
+    final Bill? b0 = c.bill ?? c.repo.receivables().firstOrNull;
+    if (b0 == null) {
+      return const Scr(
+        children: <Widget>[BackNav(), EmptyBox('No bill selected.')],
+      );
+    }
+    final Bill b = b0;
     final bool r = b.kind == 'recv';
     final PdfInfo info = PdfInfo(
       party: b.party,
       no: b.no,
       date: b.bill,
       due: b.due,
-      total: b.amt,
+      total: b.billAmt ?? b.amt,
       kind: r ? 'Sales bill' : 'Purchase bill',
       city: b.city,
       recv: r,
+      lines: b.lines.isNotEmpty ? b.lines : c.repo.billLines(b.key),
     );
-    final ShareDoc invoice = docInvoice(
-      info,
-      c.companyName,
-      c.repo.billLines(b.no),
-    );
+    final ShareDoc invoice = docInvoice(info, c.companyName);
     void share() => c.shareDoc(invoice);
     void pdf() => c.openPdf(info);
     Widget tile(String ic, String cc, String t, VoidCallback f) => Tap(
@@ -455,13 +512,17 @@ class BillDetailScreen extends ConsumerWidget {
               label: 'Remind',
               icon: 'chat',
               kind: BtnKind.g,
-              onTap: () => c.say('Reminder sent on WhatsApp to ${b.party}'),
+              onTap: () => c.say(
+                c.repo.isRemote
+                    ? 'WhatsApp reminders are not available yet on the server'
+                    : 'Reminder sent on WhatsApp to ${b.party}',
+              ),
             ),
           ),
         Expanded(
           flex: 17,
           child: Btn(
-            label: r ? 'Record Money In' : 'Record Money Out',
+            label: r ? 'Record Receipt' : 'Record Payment',
             icon: r ? 'in' : 'out',
             kind: BtnKind.a,
             onTap: () => r
@@ -507,7 +568,10 @@ class BillDetailScreen extends ConsumerWidget {
                                 vertical: 2,
                               ),
                             ),
-                            Text(' ${b.city}', style: rsStyle(context)),
+                            Text(
+                              ' ${b.city.isNotEmpty ? b.city : 'Due ${b.due}'}',
+                              style: rsStyle(context),
+                            ),
                           ],
                         ),
                       ],
@@ -570,6 +634,9 @@ class BillDetailScreen extends ConsumerWidget {
           ('Bill date', b.bill, false),
           ('Pay by', b.due, false),
           ('Credit time', b.credit, false),
+          if (b.billAmt != null && b.billAmt != b.amt)
+            ('Bill amount', inr(b.billAmt), false),
+          ('Status', b.txt, false),
         ]),
       ],
     );

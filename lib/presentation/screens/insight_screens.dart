@@ -16,6 +16,7 @@ import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
+import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../widgets/common.dart';
 import '../widgets/report_chart.dart';
 import 'stock_party_screens.dart' show StatBox;
@@ -30,7 +31,7 @@ const List<(String, String)> kRC = <(String, String)>[
 ];
 
 String stockValue(AppController c) =>
-    inr(c.repo.items().fold<int>(0, (int s, Item x) => s + x.stock * x.rate));
+    inr(c.repo.items().fold<num>(0, (num s, Item x) => s + x.worth));
 
 class ReportsScreen extends ConsumerWidget {
   const ReportsScreen({super.key});
@@ -40,14 +41,8 @@ class ReportsScreen extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
     final Map<String, String> rv = <String, String>{
-      'top': 'Shree Balaji Traders',
-      'exp': inr(186450),
-      'inC': '2 customers',
-      'inI': '2 items',
-      'day': '21 entries',
-      'sreg': inr(348690),
-      'preg': inr(126850),
-      'stock': stockValue(c),
+      for (final Report r in c.repo.reports())
+        r.id: reportData(c.repo, r.id).card,
     };
     final ({List<Report> rows, int hidden, VoidCallback unhide}) v = c
         .listView<Report>(
@@ -79,7 +74,7 @@ class ReportsScreen extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              LtBadge(Text('September 2026', style: rtStyle(context))),
+              LtBadge(Text(monthYear(c.today), style: rtStyle(context))),
               Grid(cols: 2, children: monthSums(context, c)),
             ],
           ),
@@ -184,7 +179,7 @@ class ReportScreen extends ConsumerWidget {
                 children: <Widget>[
                   H1(r0.t, size: 28, margin: EdgeInsets.zero),
                   const SizedBox(height: 2),
-                  Text('${r0.s} · September 2026', style: rsStyle(context)),
+                  Text('${r0.s} · ${d.period}', style: rsStyle(context)),
                 ],
               ),
             ),
@@ -228,6 +223,17 @@ class ReportScreen extends ConsumerWidget {
                   ),
                 ],
               ),
+            if (d.rows.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(18),
+                child: Text(
+                  d.note.isNotEmpty
+                      ? d.note
+                      : c.emptyText(DataSet.vouchers, 'Nothing to show.'),
+                  textAlign: TextAlign.center,
+                  style: rsStyle(context, 15),
+                ),
+              ),
           ],
         ),
       ],
@@ -252,8 +258,8 @@ class ActivityScreen extends ConsumerWidget {
       ('all', 'All'),
       ('sales', 'Sales'),
       ('purchase', 'Purchase'),
-      ('receipt', 'Money In'),
-      ('payment', 'Money Out'),
+      ('receipt', 'Receipt'),
+      ('payment', 'Payment'),
       ('journal', 'Adjustment'),
     ];
     final ({List<Act> rows, int hidden, VoidCallback unhide}) v = c
@@ -298,12 +304,17 @@ class ActivityScreen extends ConsumerWidget {
                           children: <Widget>[
                             const LiveDot(),
                             const SizedBox(width: 6),
-                            Text('Tally connected', style: rtStyle(context)),
+                            Text(
+                              c.repo.isRemote ? 'Tally sync' : 'Tally connected',
+                              style: rtStyle(context),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          'RAJESH-PC · ${c.companyName} · checks every 5 min',
+                          c.repo.isRemote
+                              ? '${c.companyName} · ${c.syncText(c.company)}'
+                              : 'RAJESH-PC · ${c.companyName} · checks every 5 min',
                           style: rsStyle(context),
                         ),
                       ],
@@ -422,7 +433,7 @@ class ActivityScreen extends ConsumerWidget {
               Padding(
                 padding: const EdgeInsets.all(18),
                 child: Text(
-                  'Nothing here.',
+                  c.emptyText(DataSet.activity, 'Nothing here.'),
                   textAlign: TextAlign.center,
                   style: rsStyle(context, 15),
                 ),
@@ -441,15 +452,31 @@ class ActDetailScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    final Act a0 =
-        c.acts.where((Act a) => a.id == c.act).firstOrNull ?? c.acts.first;
+    final Act? af =
+        c.acts.where((Act a) => a.id == c.act).firstOrNull ??
+        c.acts.firstOrNull;
+    if (af == null) {
+      return const Scr(
+        children: <Widget>[BackNav(), EmptyBox('No entry selected.')],
+      );
+    }
+    final Act a0 = af;
     final Kind k = kKinds[a0.kind]!;
     final (String, BadgeKind) m = kStMeta[a0.status]!;
     final Color stColor = a0.status == 'ok'
         ? p.pos
         : (a0.status == 'wait' ? p.warn : p.neg);
-    final bool s11 = a0.no == 'Sales 11';
-    final List<(String, String, bool)> rows = s11
+    final bool s11 = !c.repo.isRemote && a0.no == 'Sales 11';
+    final List<(String, String, bool)> rows = c.repo.isRemote
+        ? <(String, String, bool)>[
+            ('Entry number', a0.no, false),
+            ('Party / account', a0.party, false),
+            ('Amount', inr(a0.amt), false),
+            for (final (String, String) r in a0.rows) (r.$1, r.$2, false),
+            ('Status', m.$1, false),
+            if (a0.note.isNotEmpty) ('Error', a0.note, false),
+          ]
+        : s11
         ? const <(String, String, bool)>[
             ('Entry number', 'Sales 11', false),
             ('Date', '26 Sep 2026', false),
@@ -558,6 +585,27 @@ class ActDetailScreen extends ConsumerWidget {
         ),
         const Sec('Entry details', margin: EdgeInsets.fromLTRB(8, 0, 8, 8)),
         KvList(rows),
+        if (a0.items.isNotEmpty) ...<Widget>[
+          Sec(a0.kind == 'journal' ? 'Accounts' : 'Items'),
+          GlassList(
+            children: <Widget>[
+              for (int i = 0; i < a0.items.length; i++)
+                RowX(
+                  children: <Widget>[
+                    Expanded(
+                      child: RTx(
+                        a0.kind == 'journal'
+                            ? a0.items[i].$1
+                            : '${i + 1}. ${a0.items[i].$1}',
+                        a0.items[i].$2,
+                      ),
+                    ),
+                    Text(inr(a0.items[i].$3), style: amtStyle(context)),
+                  ],
+                ),
+            ],
+          ),
+        ],
         if (s11) ...<Widget>[
           const Sec('Items'),
           GlassList(
@@ -654,6 +702,21 @@ class TeamScreen extends ConsumerWidget {
             'settings',
           ),
         ];
+    if (!c.isAdmin) {
+      return Scr(
+        children: <Widget>[
+          NavRow(
+            children: <Widget>[
+              CBtn('menu', onTap: () => c.openOverlay('menu')),
+              const Spacer(),
+            ],
+          ),
+          const TitleBadge('Sales Team'),
+          const Sub('Add people and send invites'),
+          const EmptyBox('Only your admin can see and manage the team.'),
+        ],
+      );
+    }
     void invite() => c.update(() {
       c.overlay = 'invite';
       c.form['iEmail'] = '';
@@ -837,7 +900,7 @@ class TeamScreen extends ConsumerWidget {
               Padding(
                 padding: const EdgeInsets.all(18),
                 child: Text(
-                  'No one here.',
+                  c.emptyText(DataSet.team, 'No one here.'),
                   textAlign: TextAlign.center,
                   style: rsStyle(context, 15),
                 ),

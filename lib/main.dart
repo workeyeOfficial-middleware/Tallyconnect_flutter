@@ -1,6 +1,9 @@
-// TallyConnect — Liquid Glass. Boots local storage, builds the app
-// controller (mock repository; no backend yet) and runs the shell.
+// TallyConnect — Liquid Glass. Boots local storage, restores the saved
+// session, builds the repository (real backend) and the app controller, and
+// runs the shell.
 library;
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +13,8 @@ import 'app/app_state.dart';
 import 'app/providers.dart';
 import 'core/design/tc_kit.dart';
 import 'core/storage/local_storage.dart';
+import 'data/repositories/api_tally_repository.dart';
+import 'data/repositories/tally_repository.dart';
 import 'presentation/shell.dart';
 
 Future<void> main() async {
@@ -29,14 +34,30 @@ Future<void> main() async {
     ),
   );
   final LocalStorage store = await LocalStorage.open();
-  final AppController controller = AppController(store: store);
+  // Real backend by default; `--dart-define=TC_MOCK=true` runs on sample data.
+  final TallyRepository repo = kUseMock
+      ? MockTallyRepository()
+      : ApiTallyRepository();
+  // A saved, unexpired login opens straight to Home and reloads the data.
+  final bool restored = await repo.restoreSession();
+  final AppController controller = AppController(
+    store: store,
+    repo: repo,
+    startScreen: restored ? 'home' : 'login',
+  );
+  if (restored) unawaited(repo.refreshAll());
   runApp(
     ProviderScope(
-      overrides: <Override>[appProvider.overrideWith((Ref ref) => controller)],
+      overrides: <Override>[
+        repositoryProvider.overrideWithValue(repo),
+        appProvider.overrideWith((Ref ref) => controller),
+      ],
       child: const TallyConnectApp(),
     ),
   );
 }
+
+const bool kUseMock = bool.fromEnvironment('TC_MOCK');
 
 class TallyConnectApp extends StatelessWidget {
   const TallyConnectApp({super.key});

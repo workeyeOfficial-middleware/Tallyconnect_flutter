@@ -8,7 +8,7 @@ import '../models/models.dart';
 const List<({String k, String t, String ic})> kTabs =
     <({String k, String t, String ic})>[
       (k: 'home', t: 'Home', ic: 'home'),
-      (k: 'outHub', t: 'Dues', ic: 'rupeeC'),
+      (k: 'outHub', t: 'Outstanding', ic: 'rupeeC'),
       (k: 'team', t: 'Team', ic: 'team'),
       (k: 'activity', t: 'Activity', ic: 'activity'),
       (k: 'reports', t: 'Reports', ic: 'chart'),
@@ -37,8 +37,8 @@ const Map<String, String> kTitles = <String, String>{
   'vHub': 'Vouchers',
   'vList': 'Vouchers',
   'entryDetail': 'Entry',
-  'outHub': 'Dues',
-  'outList': 'Dues',
+  'outHub': 'Outstanding',
+  'outList': 'Outstanding',
   'billDetail': 'Bill',
   'items': 'Items',
   'party': 'Party',
@@ -117,16 +117,16 @@ const Map<String, Shortcut> kShortcuts = <String, Shortcut>{
   ),
   'moneyIn': Shortcut(
     'moneyIn',
-    'Money In',
     'Receipt',
+    'Money received',
     'in',
     'receipt',
     flow: 'receipt',
   ),
   'moneyOut': Shortcut(
     'moneyOut',
-    'Money Out',
     'Payment',
+    'Money paid',
     'out',
     'payment',
     flow: 'payment',
@@ -136,8 +136,8 @@ const Map<String, Shortcut> kShortcuts = <String, Shortcut>{
 const Map<String, SumCard> kSums = <String, SumCard>{
   'toGet': SumCard(
     'toGet',
-    'To get',
-    'Others owe you',
+    'Receivable',
+    'Customers owe you',
     348690,
     'in',
     'receipt',
@@ -146,8 +146,8 @@ const Map<String, SumCard> kSums = <String, SumCard>{
   ),
   'toGive': SumCard(
     'toGive',
-    'To give',
-    'You owe others',
+    'Payable',
+    'You owe suppliers',
     126850,
     'out',
     'payment',
@@ -156,7 +156,7 @@ const Map<String, SumCard> kSums = <String, SumCard>{
   ),
   'mIn': SumCard(
     'mIn',
-    'Money in',
+    'Receipts',
     'This month',
     215000,
     'in',
@@ -166,7 +166,7 @@ const Map<String, SumCard> kSums = <String, SumCard>{
   ),
   'mOut': SumCard(
     'mOut',
-    'Money out',
+    'Payments',
     'This month',
     98450,
     'out',
@@ -222,10 +222,13 @@ const Map<String, SumCard> kSums = <String, SumCard>{
 const Map<String, Kind> kKinds = <String, Kind>{
   'sales': Kind('Sale', 'Sale (Sales)', 'bag', 'sales', 1),
   'purchase': Kind('Purchase', 'Purchase', 'cart', 'purchase', -1),
-  'receipt': Kind('Money In', 'Money In (Receipt)', 'in', 'receipt', 1),
-  'payment': Kind('Money Out', 'Money Out (Payment)', 'out', 'payment', -1),
+  'receipt': Kind('Receipt', 'Receipt', 'in', 'receipt', 1),
+  'payment': Kind('Payment', 'Payment', 'out', 'payment', -1),
   'journal': Kind('Adjustment', 'Adjustment (Journal)', 'book', 'journal', 0),
   'contra': Kind('Bank ↔ Cash', 'Bank ↔ Cash (Contra)', 'swap', 'contra', 0),
+  // Any other Tally voucher type (orders, notes, returns …): listed under
+  // All, never added to Sales / Purchase / Receipt / Payment totals.
+  'other': Kind('Voucher', 'Other voucher', 'receipt', 'vouchers', 0),
 };
 
 const List<Voucher> kVouchers = <Voucher>[
@@ -481,8 +484,8 @@ const Map<String, FlowType> kFlowTypes = <String, FlowType>{
     draft: true,
   ),
   'receipt': FlowType(
-    title: 'Money In',
-    sub: 'Receipt',
+    title: 'Receipt',
+    sub: 'Money received',
     ic: 'in',
     c: 'receipt',
     steps: <String>['Details', 'How paid', 'Check'],
@@ -494,8 +497,8 @@ const Map<String, FlowType> kFlowTypes = <String, FlowType>{
     accLabel: 'Put money into',
   ),
   'payment': FlowType(
-    title: 'Money Out',
-    sub: 'Payment',
+    title: 'Payment',
+    sub: 'Money paid',
     ic: 'out',
     c: 'payment',
     steps: <String>['Details', 'How paid', 'Check'],
@@ -591,7 +594,7 @@ const List<Notif> kNotifs = <Notif>[
   Notif(
     'n1',
     'Payment received',
-    '₹25,000 from Mehta Electricals was saved as Money In RCT-0003.',
+    '₹25,000 from Mehta Electricals was saved as Receipt RCT-0003.',
     '10 min ago',
     'in',
     'receipt',
@@ -909,11 +912,11 @@ const List<SearchEntry> kSearch = <SearchEntry>[
     'purchase',
     f: 'purchase',
   ),
-  SearchEntry('Money In', 'Record a receipt', 'in', 'receipt', f: 'receipt'),
-  SearchEntry('Money Out', 'Record a payment', 'out', 'payment', f: 'payment'),
+  SearchEntry('Receipt', 'Record money received', 'in', 'receipt', f: 'receipt'),
+  SearchEntry('Payment', 'Record money paid', 'out', 'payment', f: 'payment'),
   SearchEntry(
-    'To get (Receivable)',
-    'Money others owe you',
+    'Receivable (Outstanding)',
+    'Money customers owe you',
     'in',
     'receipt',
     a: NavTo('outList', <String, Object?>{
@@ -922,8 +925,8 @@ const List<SearchEntry> kSearch = <SearchEntry>[
     }),
   ),
   SearchEntry(
-    'To give (Payable)',
-    'Money you owe others',
+    'Payable (Outstanding)',
+    'Money you owe suppliers',
     'out',
     'payment',
     a: NavTo('outList', <String, Object?>{

@@ -42,8 +42,9 @@ Future<Uint8List> buildPdf(
   ShareDoc d, {
   required DocFonts fonts,
   required int accentArgb,
-  String generated = '26 Sep 2026',
+  String? generated,
 }) async {
+  final String made = generated ?? dmy(DateTime.now());
   final PdfColor acc = PdfColor.fromInt(accentArgb);
   final pw.Document doc = pw.Document(
     title: d.title,
@@ -101,11 +102,8 @@ Future<Uint8List> buildPdf(
                       d.company,
                       style: st(16, f: fonts.extraBold, c: acc),
                     ),
-                    pw.Text(
-                      'Unit 4, Laxmi Industrial Estate, Andheri (E), Mumbai – 400093',
-                      style: st(11),
-                    ),
-                    pw.Text('GSTIN: 27AAGFG4417K1Z5', style: st(11)),
+                    for (final String l in iv.seller)
+                      pw.Text(_safe(l), style: st(11)),
                   ],
                 ),
                 pw.Column(
@@ -150,7 +148,7 @@ Future<Uint8List> buildPdf(
                   children: <pw.Widget>[
                     pw.Text(iv.toLabel, style: st(9, c: _mute)),
                     pw.Text(iv.party, style: st(12, f: fonts.extraBold)),
-                    pw.Text(iv.city, style: st(11)),
+                    if (iv.city.isNotEmpty) pw.Text(iv.city, style: st(11)),
                   ],
                 ),
                 pw.Column(
@@ -208,18 +206,16 @@ Future<Uint8List> buildPdf(
                     flex: 55,
                     child: pw.Column(
                       children: <pw.Widget>[
-                        lt(
-                          pw.Text('Subtotal', style: st(11)),
-                          pw.Text(inr(iv.sub), style: st(11)),
-                        ),
-                        lt(
-                          pw.Text('CGST @ 9%', style: st(11)),
-                          pw.Text(inr(iv.cgst), style: st(11)),
-                        ),
-                        lt(
-                          pw.Text('SGST @ 9%', style: st(11)),
-                          pw.Text(inr(iv.cgst), style: st(11)),
-                        ),
+                        if (iv.sub != null)
+                          lt(
+                            pw.Text('Subtotal', style: st(11)),
+                            pw.Text(inr(iv.sub), style: st(11)),
+                          ),
+                        for (final (String, num) x in iv.taxes)
+                          lt(
+                            pw.Text(_safe(x.$1), style: st(11)),
+                            pw.Text(inr(x.$2), style: st(11)),
+                          ),
                         pw.Container(
                           margin: const pw.EdgeInsets.only(top: 4),
                           padding: const pw.EdgeInsets.only(top: 4),
@@ -256,6 +252,11 @@ Future<Uint8List> buildPdf(
                   ),
                 ),
               ),
+              if (iv.note.isNotEmpty)
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 8),
+                  child: pw.Text(_safe(iv.note), style: st(9, c: _mute)),
+                ),
               pw.SizedBox(height: 36),
               lt(
                 pw.Text('Made with TallyConnect', style: st(9, c: _mute)),
@@ -295,7 +296,7 @@ Future<Uint8List> buildPdf(
         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
         children: <pw.Widget>[
           pw.Text(
-            'Made with TallyConnect · $generated',
+            'Made with TallyConnect · $made',
             style: st(8.5, c: _mute),
           ),
           pw.Text(

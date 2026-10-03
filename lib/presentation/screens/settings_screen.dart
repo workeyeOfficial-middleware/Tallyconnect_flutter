@@ -17,6 +17,7 @@ import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
 import '../../core/design/tc_wall_spec.dart';
+import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
 import '../widgets/common.dart';
 
@@ -64,13 +65,27 @@ class _Profile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
+    final bool remote = c.repo.isRemote;
+    final String name = remote
+        ? (c.repo.profile?.username ?? c.repo.user?.username ?? '—')
+        : 'workk72002';
+    final String role = remote ? (c.isAdmin ? 'Admin' : 'Team member') : 'Admin';
     final List<(String, String, String)> rows = <(String, String, String)>[
-      ('Username', 'workk72002', 'person'),
-      ('Email', 'workk72002@gmail.com', 'mail'),
-      ('Mobile', '+91 98200 45127', 'phone'),
+      ('Username', name, 'person'),
+      (
+        'Email',
+        remote
+            ? (c.repo.profile?.email ?? c.repo.user?.email ?? '—')
+            : 'workk72002@gmail.com',
+        'mail',
+      ),
+      // The server stores no mobile number for users.
+      ('Mobile', remote ? '—' : '+91 98200 45127', 'phone'),
       ('Company', c.companyName, 'building'),
-      ('Role', 'Admin', 'shield'),
-      ('Plan', 'Enterprise', 'star'),
+      ('Role', role, 'shield'),
+      if (remote && !c.isAdmin && c.repo.profile?.adminEmail != null)
+        ('Admin', c.repo.profile!.adminEmail!, 'shield'),
+      ('Plan', remote ? (c.repo.user?.plan ?? '—') : 'Enterprise', 'star'),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -80,11 +95,11 @@ class _Profile extends ConsumerWidget {
             padding: const EdgeInsets.only(bottom: 16),
             child: Column(
               children: <Widget>[
-                const Av('W', size: 86, fontSize: 34, accent: true),
+                Av(initials(name), size: 86, fontSize: 34, accent: true),
                 const SizedBox(height: 12),
-                Text('workk72002', style: rtStyle(context, 21)),
+                Text(name, style: rtStyle(context, 21)),
                 const SizedBox(height: 4),
-                Text('Admin · ${c.companyName}', style: rsStyle(context)),
+                Text('$role · ${c.companyName}', style: rsStyle(context)),
               ],
             ),
           ),
@@ -156,12 +171,11 @@ class _Alerts extends ConsumerWidget {
         children: <Widget>[
           for (final (String, String, String, String, String) x in prefs)
             RowX(
-              onTap: () =>
-                  c.update(() => c.prefs[x.$1] = !(c.prefs[x.$1] ?? false)),
+              onTap: () => c.toggleAlert(x.$1),
               children: <Widget>[
                 Ico(x.$4, size: IcoSize.xs, color: p.cat(x.$5), icon: IcSize.s),
                 Expanded(child: RTx(x.$2, x.$3)),
-                Sw(c.prefs[x.$1] ?? false),
+                Sw(c.alertOn(x.$1)),
               ],
             ),
         ],
@@ -192,17 +206,22 @@ class _Plan extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       Text('Your plan', style: rsStyle(context)),
-                      Text('Enterprise', style: rtStyle(context, 20)),
+                      Text(
+                        c.repo.isRemote
+                            ? (c.repo.user?.plan ?? 'Not sent by server')
+                            : 'Enterprise',
+                        style: rtStyle(context, 20),
+                      ),
                     ],
                   ),
                 ),
                 const Bdg('Active', kind: BadgeKind.ok, dot: true),
               ],
             ),
-            const Kv(
+            Kv(
               'Renews on',
-              '31 Mar 2027',
-              padding: EdgeInsets.fromLTRB(0, 14, 0, 4),
+              c.repo.isRemote ? 'Not available from server' : '31 Mar 2027',
+              padding: const EdgeInsets.fromLTRB(0, 14, 0, 4),
             ),
             Padding(
               padding: const EdgeInsets.only(top: 12),

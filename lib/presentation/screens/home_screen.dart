@@ -152,7 +152,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                         const SizedBox(width: 5),
                                         Flexible(
                                           child: Text(
-                                            'Tally Connected',
+                                            c.repo.isRemote
+                                                ? 'Tally'
+                                                : 'Tally Connected',
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: ts(
@@ -166,7 +168,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                       ],
                                     ),
                                     Text(
-                                      '· Synced 2 min ago',
+                                      c.repo.isRemote
+                                          ? '· ${c.syncText(c.company)}'
+                                          : '· Synced 2 min ago',
                                       style: ts(12.5, h: 1.25, c: p.ink3),
                                     ),
                                   ],
@@ -659,8 +663,8 @@ class _EntryHero extends ConsumerWidget {
     const List<(String, String, String)> quick = <(String, String, String)>[
       ('Sale', 'bag', 'sales'),
       ('Purchase', 'cart', 'purchase'),
-      ('Money In', 'in', 'receipt'),
-      ('Money Out', 'out', 'payment'),
+      ('Receipt', 'in', 'receipt'),
+      ('Payment', 'out', 'payment'),
     ];
     return HeroBox(
       child: Column(
@@ -684,7 +688,7 @@ class _EntryHero extends ConsumerWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'Record a sale, purchase, money in or out',
+                        'Record a sale, purchase, receipt or payment',
                         style: ts(14, c: p.ink2),
                       ),
                     ],
@@ -801,7 +805,7 @@ class _MoneyCard extends ConsumerWidget {
                           Text(sums[k]!.s, style: rsStyle(context, 12.5)),
                           const SizedBox(height: 6),
                           Text(
-                            inr(sums[k]!.v),
+                            sums[k]!.v == null ? '—' : inr(sums[k]!.v),
                             style: amtStyle(
                               context,
                               size: 19,

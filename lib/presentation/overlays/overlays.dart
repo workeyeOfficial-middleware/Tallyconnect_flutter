@@ -14,6 +14,7 @@ import '../../core/design/tc_fields.dart';
 import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
+import '../../core/share/share_doc.dart' show InvoiceSpec, invoiceOf;
 import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
@@ -127,6 +128,12 @@ class SideMenu extends ConsumerWidget {
     final TcPalette p = Tc.of(context);
     final MediaQueryData mq = MediaQuery.of(context);
     final int unread = c.unread;
+    final String uname = c.repo.isRemote
+        ? (c.repo.profile?.username ?? c.repo.user?.username ?? '')
+        : 'workk72002';
+    final String uemail = c.repo.isRemote
+        ? (c.repo.profile?.email ?? c.repo.user?.email ?? '')
+        : 'workk72002@gmail.com';
     final List<(String, String, String, String, int)> acct =
         <(String, String, String, String, int)>[
           ('Companies', 'building', 'navy', 'companies', 0),
@@ -190,18 +197,18 @@ class SideMenu extends ConsumerWidget {
                             'setTab': 'profile',
                           }),
                           children: <Widget>[
-                            const Av('W', size: 50, accent: true),
+                            Av(initials(uname), size: 50, accent: true),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: <Widget>[
                                   Text(
-                                    'workk72002',
+                                    uname,
                                     style: rtStyle(context, 17),
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    'workk72002@gmail.com',
+                                    uemail,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: rsStyle(context),
@@ -273,8 +280,10 @@ class SideMenu extends ConsumerWidget {
                             icColor: p.acc,
                             t: 'Plans & billing',
                             onTap: () => c.go('billing'),
-                            trailing: const Bdg(
-                              'Enterprise',
+                            trailing: Bdg(
+                              c.repo.isRemote
+                                  ? (c.repo.user?.plan ?? '—')
+                                  : 'Enterprise',
                               kind: BadgeKind.acc,
                             ),
                           ),
@@ -416,7 +425,12 @@ class CompanySheet extends ConsumerWidget {
                     icon: 'sync',
                     iconSize: IcSize.s,
                     kind: BtnKind.g,
-                    onTap: () => c.say('Company list refreshed from Tally'),
+                    onTap: c.repo.isRemote
+                        ? () {
+                            c.closeOv();
+                            c.refreshNow();
+                          }
+                        : () => c.say('Company list refreshed from Tally'),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -646,7 +660,7 @@ class ItemPickerSheet extends ConsumerWidget {
                                           Text.rich(
                                             TextSpan(
                                               text:
-                                                  '${it.stock > 0 ? '${it.stock} ${it.unit} in stock' : 'Out of stock'} · ',
+                                                  '${it.stock > 0 ? '${qty(it.stock)} ${it.unit} in stock' : 'Out of stock'} · ',
                                               children: <InlineSpan>[
                                                 TextSpan(
                                                   text:
@@ -1064,9 +1078,21 @@ class MemberSheet extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    final Member m =
+    final Member? mf =
         c.team.where((Member x) => x.id == c.member).firstOrNull ??
-        c.team.first;
+        c.team.firstOrNull;
+    if (mf == null) {
+      return Sheet(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            const EmptyBox('No team member selected.'),
+            Btn(label: 'Close', kind: BtnKind.g, onTap: c.closeOv),
+          ],
+        ),
+      );
+    }
+    final Member m = mf;
     final List<(String, String, Color, VoidCallback)> actions = m.st == 'active'
         ? <(String, String, Color, VoidCallback)>[
             (
@@ -1144,39 +1170,13 @@ class PdfViewer extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
     final MediaQueryData mq = MediaQuery.of(context);
-    final PdfInfo pd =
-        c.pdf ??
-        const PdfInfo(
-          party: 'Shree Balaji Traders',
-          no: 'Sales 9',
-          date: '21 Sep 2026',
-          due: '06 Oct 2026',
-          total: 112100,
-          kind: 'Sales bill',
-          city: 'Mumbai',
-          recv: true,
-        );
-    final bool s9 = pd.no == 'Sales 9';
-    final int taxable = s9 ? 95000 : (pd.total / 1.18).round();
-    final int cg = s9 ? 8550 : ((pd.total - taxable) / 2).round();
-    final bool purchase =
-        pd.recv == false || RegExp('PI|Purchase').hasMatch(pd.kind);
-    final String city = '${pd.city}${s9 ? ' · GSTIN: 27AAKFS2291M1Z8' : ''}';
-    final List<(String, String, String, String, String, String)> lines = s9
-        ? <(String, String, String, String, String, String)>[
-            for (int i = 0; i < kSales9.length; i++)
-              (
-                '${i + 1}',
-                kSales9[i].name,
-                kSales9[i].hsn,
-                kSales9[i].qty,
-                kSales9[i].rate,
-                inr(kSales9[i].amt),
-              ),
-          ]
-        : <(String, String, String, String, String, String)>[
-            ('1', 'Goods as per Tally entry', '—', '—', '—', inr(taxable)),
-          ];
+    final PdfInfo pd = c.pdf ?? c.samplePdf;
+    // Real values only: item lines and totals as sent by Tally.
+    final InvoiceSpec iv = invoiceOf(pd);
+    final bool purchase = iv.heading == 'PURCHASE BILL';
+    final String city = iv.city;
+    final List<(String, String, String, String, String, String)> lines =
+        iv.lines;
     const Color ink = Color(0xFF16203A), mute = Color(0xFF6B7690);
     TextStyle t9([FontWeight w = w400, Color col = ink, double sz = 9]) =>
         ts(sz, w: w, c: col, h: 1.45);
@@ -1225,10 +1225,7 @@ class PdfViewer extends ConsumerWidget {
                     c.companyName,
                     style: ts(12, w: w800, c: p.acc),
                   ),
-                  const Text(
-                    'Unit 4, Laxmi Industrial Estate, Andheri (E), Mumbai – 400093',
-                  ),
-                  const Text('GSTIN: 27AAGFG4417K1Z5'),
+                  for (final String l in iv.seller) Text(l),
                 ],
               ),
               Column(
@@ -1277,7 +1274,7 @@ class PdfViewer extends ConsumerWidget {
                     style: t9(w400, mute, 7.5),
                   ),
                   Text(pd.party, style: t9(w800)),
-                  Text(city),
+                  if (city.isNotEmpty) Text(city),
                 ],
               ),
               Column(
@@ -1325,9 +1322,10 @@ class PdfViewer extends ConsumerWidget {
               padding: const EdgeInsets.only(left: 300 * .45 - 16),
               child: Column(
                 children: <Widget>[
-                  lt(const Text('Subtotal'), Text(inr(taxable))),
-                  lt(const Text('CGST @ 9%'), Text(inr(cg))),
-                  lt(const Text('SGST @ 9%'), Text(inr(cg))),
+                  if (iv.sub != null)
+                    lt(const Text('Subtotal'), Text(inr(iv.sub))),
+                  for (final (String, num) t in iv.taxes)
+                    lt(Text(t.$1), Text(inr(t.$2))),
                   Container(
                     margin: const EdgeInsets.only(top: 3),
                     padding: const EdgeInsets.only(top: 3),
@@ -1358,10 +1356,17 @@ class PdfViewer extends ConsumerWidget {
                 ),
               ),
             ),
+            if (iv.note.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(iv.note, style: t9(w400, mute, 7.5)),
+              ),
             const SizedBox(height: 22),
             lt(
               Text(
-                'Made with TallyConnect · prototype preview',
+                c.repo.isRemote
+                    ? 'Made with TallyConnect'
+                    : 'Made with TallyConnect · prototype preview',
                 style: t9(w400, mute, 7.5),
               ),
               Container(

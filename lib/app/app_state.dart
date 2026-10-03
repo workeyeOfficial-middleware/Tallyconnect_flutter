@@ -16,11 +16,13 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../core/design/tc_color_math.dart';
+import '../core/network/api_client.dart';
 import '../core/design/tc_palette.dart';
 import '../core/storage/local_storage.dart';
 import '../core/utils/format.dart';
 import '../data/mock/mock_data.dart';
 import '../data/models/models.dart';
+import '../data/repositories/api_tally_repository.dart' show DataSet;
 import '../data/repositories/tally_repository.dart';
 import '../core/share/doc_exporter.dart';
 import '../core/share/report_data.dart';
@@ -147,11 +149,12 @@ class HitRegistry {
 class AppController extends ChangeNotifier {
   AppController({
     required this.store,
-    this.repo = const MockTallyRepository(),
+    TallyRepository? repo,
     String startScreen = 'login',
     double glassLevel = 60,
     DocExporter? exporter,
-  }) : exporter = exporter ?? PlatformDocExporter() {
+  }) : repo = repo ?? MockTallyRepository(),
+       exporter = exporter ?? PlatformDocExporter() {
     final int ti = kTabs.indexWhere(
       (({String k, String t, String ic}) t) => t.k == startScreen,
     );
@@ -161,6 +164,43 @@ class AppController extends ChangeNotifier {
     glass = glassLevel;
     _load();
     pillPos = tabOrder.indexOf(tab).toDouble();
+    if (this.repo.isRemote) {
+      // Real data: no sample values in the entry forms.
+      form = _blankForm(this.repo.today);
+      lines = <String, List<Line>>{'sales': <Line>[], 'purchase': <Line>[]};
+      jl = <JLine>[];
+      company = this.repo.activeCompanyId ?? '';
+      acts = this.repo.activity();
+      notifs = this.repo.notifications();
+      team = this.repo.team();
+      this.repo.addListener(_onRepo);
+    }
+  }
+
+  /// Form defaults for real use: empty fields, today's dates.
+  static Map<String, String> _blankForm(DateTime today) {
+    final String d = ymd(today);
+    return <String, String>{
+      for (final String k in kForm.keys) k: '',
+      'niQty': '1',
+      'niDisc': '0',
+      for (final String p in <String>['s', 'p', 'r', 'y', 'j']) '${p}Date': d,
+    };
+  }
+
+  /// Keeps the controller's lists in step with the repository and ends the
+  /// session when the server rejects the token.
+  void _onRepo() {
+    if (_disposed) return;
+    acts = repo.activity();
+    notifs = repo.notifications();
+    team = repo.team();
+    company = repo.activeCompanyId ?? '';
+    if (repo.sessionExpired && loggedIn) {
+      _endSession('Your session has ended. Please log in again.');
+      return;
+    }
+    _set();
   }
 
   final LocalStorage store;
@@ -237,7 +277,7 @@ class AppController extends ChangeNotifier {
   String niCat = 'General', niUnit = 'PCS';
   int niGst = 18;
 
-  String vFilter = 'all', vPeriod = 'month';
+  String vFilter = 'all', vPeriod = 'all';
   Voucher? entry;
   String outKind = 'recv', outFilter = 'all';
   Bill? bill;
@@ -270,6 +310,12 @@ class AppController extends ChangeNotifier {
   late List<Notif> notifs = List<Notif>.of(repo.notifications());
   String nFilter = 'all';
   bool showPass = false, forgotSent = false;
+
+  /// Login role sent as `loginType` (`ADMIN` | `USER`).
+  String loginType = 'ADMIN';
+
+  /// A login / save request is in flight (blocks double taps).
+  bool busy = false;
   PdfInfo? pdf;
   int zoom = 100;
   String? toast;
@@ -310,6 +356,7 @@ class AppController extends ChangeNotifier {
       t?.cancel();
     }
     _stopRoute();
+    if (repo.isRemote) repo.removeListener(_onRepo);
     super.dispose();
   }
 
@@ -389,11 +436,22 @@ class AppController extends ChangeNotifier {
   bool get showTabs => loggedIn && !kNoTab.contains(screen);
   String get backLabel =>
       kTitles[history.isNotEmpty ? history.last : 'home'] ?? 'Home';
-  Company get companyObj => repo.companies().firstWhere(
-    (Company c) => c.id == company,
-    orElse: () => repo.companies()[1],
-  );
+  Company get companyObj {
+    final List<Company> all = repo.companies();
+    if (all.isEmpty) return const Company('', 'No company', '');
+    return all.firstWhere(
+      (Company c) => c.id == company,
+      orElse: () => all.length > 1 && !repo.isRemote ? all[1] : all.first,
+    );
+  }
+
   String get companyName => companyObj.short;
+
+  /// "Today" for dates shown on screens (fixed for sample data).
+  DateTime get today => repo.today;
+
+  /// Logged-in user is an admin (sample data always is).
+  bool get isAdmin => !repo.isRemote || (repo.user?.isAdmin ?? false);
   int get unread => notifs.where((Notif n) => n.unread).length;
   bool get scrollLock =>
       drag != null || ldrag != null || _lpActive || tdrag != null;
@@ -488,6 +546,21 @@ class AppController extends ChangeNotifier {
       cmenu = null;
       if (extra != null) _applyExtra(extra);
     });
+    _onEnter(s);
+  }
+
+  /// Loads on-demand server data for detail screens.
+  void _onEnter(String s) {
+    if (!repo.isRemote) return;
+    if (s == 'partyDetail') {
+      final Party? p = partyPool()
+          .where((Party x) => x.name == party)
+          .firstOrNull;
+      if (p != null) repo.loadPartyDetail(p);
+    } else if (s == 'entryDetail') {
+      final String? g = entry?.guid;
+      if (g != null && g.isNotEmpty) repo.loadVoucherLines(g);
+    }
   }
 
   void run(NavTo a) => go(a.screen, a.extra.isEmpty ? null : a.extra);
@@ -553,6 +626,10 @@ class AppController extends ChangeNotifier {
 
   // ---------------------------------------------------------- nav actions
   void doLogin() {
+    if (repo.isRemote) {
+      _loginRemote();
+      return;
+    }
     _set(() {
       loggedIn = true;
       tab = 0;
@@ -566,7 +643,61 @@ class AppController extends ChangeNotifier {
     say('Welcome back, workk72002');
   }
 
+  Future<void> _loginRemote() async {
+    final String email = (form['user'] ?? '').trim();
+    final String pass = form['pass'] ?? '';
+    if (busy) return;
+    if (email.isEmpty || pass.isEmpty) {
+      say('Enter your email and password');
+      return;
+    }
+    _set(() => busy = true);
+    try {
+      final AuthUser u = await repo.login(email, pass, loginType);
+      _set(() {
+        busy = false;
+        form['pass'] = '';
+        loggedIn = true;
+        tab = 0;
+        pillPos = posOf(0).toDouble();
+        pillSpan = 1;
+        pillT = PillTr.none;
+        screen = 'home';
+        history = <String>[];
+        dir = 'fwd';
+      });
+      say('Welcome back, ${u.username}');
+      await repo.refreshAll();
+    } on ApiException catch (e) {
+      _set(() => busy = false);
+      say(e.userMessage);
+    } catch (_) {
+      _set(() => busy = false);
+      say('Could not log in. Try again.');
+    }
+  }
+
+  void _endSession(String msg) {
+    _set(() {
+      screen = 'login';
+      history = <String>[];
+      loggedIn = false;
+      overlay = null;
+      tab = 0;
+      pillPos = posOf(0).toDouble();
+      pillSpan = 1;
+      pillT = PillTr.none;
+      dir = 'bk';
+    });
+    repo.logout();
+    say(msg);
+  }
+
   void logout() {
+    if (repo.isRemote) {
+      _endSession('You are logged out');
+      return;
+    }
     _set(() {
       screen = 'login';
       history = <String>[];
@@ -586,6 +717,31 @@ class AppController extends ChangeNotifier {
     go('forgot');
   }
 
+  /// Forgot password: the server emails a reset code (`/api/auth/send-otp`).
+  Future<void> sendReset() async {
+    if (!repo.isRemote) {
+      _set(() => forgotSent = true);
+      return;
+    }
+    final String email = (form['fEmail'] ?? '').trim();
+    if (busy) return;
+    if (email.isEmpty) {
+      say('Enter your email address');
+      return;
+    }
+    _set(() => busy = true);
+    try {
+      await repo.sendResetCode(email);
+      _set(() {
+        busy = false;
+        forgotSent = true;
+      });
+    } on ApiException catch (e) {
+      _set(() => busy = false);
+      say(e.userMessage);
+    }
+  }
+
   void goCreateWs() {
     _set(() {
       wsEdit = null;
@@ -598,11 +754,36 @@ class AppController extends ChangeNotifier {
   }
 
   void pickCompany(Company c) {
+    if (repo.isRemote) {
+      _pickCompanyRemote(c);
+      return;
+    }
     _set(() {
       company = c.id;
       overlay = null;
     });
     say('Now showing ${c.short}');
+  }
+
+  /// The server keeps one active company per admin (shared with the team);
+  /// only an admin may change it.
+  Future<void> _pickCompanyRemote(Company c) async {
+    if (c.id == company) {
+      _set(() => overlay = null);
+      return;
+    }
+    if (!isAdmin) {
+      say('Only your admin can switch the company');
+      return;
+    }
+    _set(() => overlay = null);
+    say('Switching to ${c.short}…');
+    try {
+      await repo.setActiveCompany(c.id);
+      say('Now showing ${c.short}');
+    } on ApiException catch (e) {
+      say(e.userMessage);
+    }
   }
 
   // ------------------------------------------------------------------ flow
@@ -611,25 +792,41 @@ class AppController extends ChangeNotifier {
     go('flow', <String, Object?>{'flowType': type, 'flowStep': 0});
   }
 
-  ({int sub, int gst, int total}) totals(List<Line> ls) {
-    double sub = 0, gst = 0;
-    for (final Line l in ls) {
-      final double a = (l.rate * l.qty).toDouble();
-      sub += a;
-      gst += a * l.gst / 100;
+  /// Bill totals. Sample data keeps the prototype's whole-rupee rounding;
+  /// real entries keep paise (line amount and GST rounded to 2 decimals —
+  /// the same arithmetic as the request body sent to the server).
+  ({num sub, num gst, num total}) totals(List<Line> ls) {
+    if (!repo.isRemote) {
+      double sub = 0, gst = 0;
+      for (final Line l in ls) {
+        final double a = (l.rate * l.qty).toDouble();
+        sub += a;
+        gst += a * l.gst / 100;
+      }
+      final int s = sub.round(), g = gst.round();
+      return (sub: s, gst: g, total: s + g);
     }
-    final int s = sub.round(), g = gst.round();
-    return (sub: s, gst: g, total: s + g);
+    num sub = 0, gst = 0;
+    for (final Line l in ls) {
+      final num a = paise(l.rate * l.qty);
+      sub += a;
+      gst += paise(a * l.gst / 100);
+    }
+    return (sub: paise(sub), gst: paise(gst), total: paise(sub + gst));
   }
 
   List<Party> partyPool() => <Party>[...repo.parties(), ...extraParties];
 
-  int get drSum => jl
-      .where((JLine j) => j.side == 'Dr')
-      .fold(0, (int s, JLine j) => s + j.amt);
-  int get crSum => jl
-      .where((JLine j) => j.side == 'Cr')
-      .fold(0, (int s, JLine j) => s + j.amt);
+  num get drSum => paise(
+    jl
+        .where((JLine j) => j.side == 'Dr')
+        .fold<num>(0, (num s, JLine j) => s + j.amt),
+  );
+  num get crSum => paise(
+    jl
+        .where((JLine j) => j.side == 'Cr')
+        .fold<num>(0, (num s, JLine j) => s + j.amt),
+  );
 
   void setStep(int n) => _set(() => flowStep = n);
 
@@ -648,16 +845,74 @@ class AppController extends ChangeNotifier {
     ),
   );
 
+  /// The entry being built, in repository terms.
+  EntryDraft draftOf() {
+    final String pf = kFlowTypes[flowType]!.p;
+    String v(String k) => (form['$pf$k'] ?? '').trim();
+    return EntryDraft(
+      type: flowType,
+      no: v('No'),
+      date: v('Date'),
+      party: v('Party'),
+      due: v('Due'),
+      note: v('Note'),
+      amount: numOf(form['${pf}Amt']),
+      ref: v('Ref'),
+      mode: modes[flowType] ?? 'cash',
+      bank: v('Bank'),
+      utr: v('Utr'),
+      account: v('Acc'),
+      supplierInvoice: (form['pSupInv'] ?? '').trim(),
+      lines: List<Line>.of(lines[flowType] ?? <Line>[]),
+      journal: List<JLine>.of(jl),
+    );
+  }
+
+  /// Why the current entry cannot be saved to the server, or null.
+  String? get flowBlocker {
+    if (!repo.isRemote) return null;
+    final EntryDraft d = draftOf();
+    final String? b = repo.entryBlocker(d);
+    if (b != null) return b;
+    if (d.date.isEmpty) return 'Pick the date';
+    if (d.type != 'journal' && d.party.isEmpty) return 'Choose the party';
+    switch (d.type) {
+      case 'sales' || 'purchase':
+        if (d.lines.isEmpty) return 'Add at least one item';
+        if (d.lines.any((Line l) => l.rate <= 0 || l.qty <= 0)) {
+          return 'Every item needs a rate and quantity';
+        }
+        if (d.amount < 0) return 'Amount cannot be negative';
+        if (d.amount > totals(d.lines).total) {
+          return 'Money received is more than the bill total';
+        }
+      case 'receipt' || 'payment':
+        if (d.amount <= 0) return 'Enter an amount above zero';
+        if (d.account.isEmpty) return 'Choose the cash / bank account';
+      case 'journal':
+        if (d.journal.length < 2) return 'Add at least two accounts';
+        if (d.journal.any((JLine j) => j.amt <= 0)) {
+          return 'Every account needs an amount above zero';
+        }
+        if (drSum != crSum) return 'Both sides must be equal';
+    }
+    return null;
+  }
+
   void saveFlow(bool draft) {
+    if (repo.isRemote && !draft) {
+      _saveRemote();
+      return;
+    }
     final FlowType cfg = kFlowTypes[flowType]!;
     final String pf = cfg.p;
-    int amt;
+    num amt;
     if (cfg.items) {
       amt = totals(lines[flowType] ?? <Line>[]).total;
     } else if (flowType == 'journal') {
       amt = drSum;
     } else {
-      amt = numOf(form['${pf}Amt']).toInt();
+      amt = numOf(form['${pf}Amt']);
     }
     if (draft) {
       selectTab(0);
@@ -693,7 +948,51 @@ class AppController extends ChangeNotifier {
     });
   }
 
+  /// Sends the entry to the server queue; returns Home only on success.
+  Future<void> _saveRemote() async {
+    if (busy) return;
+    final String? why = flowBlocker;
+    if (why != null) {
+      say(why);
+      return;
+    }
+    final EntryDraft d = draftOf();
+    _set(() => busy = true);
+    final SubmitResult r = await repo.submitEntry(d);
+    _set(() => busy = false);
+    if (!r.ok) {
+      say(r.message.isEmpty ? 'Could not save. Try again.' : r.message);
+      return;
+    }
+    final String pf = kFlowTypes[d.type]!.p;
+    _set(() {
+      form = <String, String>{
+        ...form,
+        for (final String k in <String>[
+          'No',
+          'Party',
+          'Due',
+          'Note',
+          'Amt',
+          'Ref',
+          'Bank',
+          'Utr',
+          'PayNote',
+        ])
+          '$pf$k': '',
+      };
+      if (d.type == 'sales' || d.type == 'purchase') lines[d.type] = <Line>[];
+      if (d.type == 'journal') jl = <JLine>[];
+    });
+    selectTab(0);
+    say(r.message.isEmpty ? 'Saved! It will reach Tally by itself' : r.message);
+  }
+
   void retry(String id) {
+    if (repo.isRemote) {
+      say('Sending again is not available yet — the server has no retry option');
+      return;
+    }
     _set(
       () => acts = acts
           .map(
@@ -715,6 +1014,11 @@ class AppController extends ChangeNotifier {
   }
 
   void syncAll() {
+    if (repo.isRemote) {
+      say('Checking for updates…');
+      repo.refreshActivity().then((_) => say(_statusToast(DataSet.activity)));
+      return;
+    }
     final Act? f1 = acts.where((Act a) => a.status == 'fail').firstOrNull;
     if (f1 != null) {
       retry(f1.id);
@@ -757,6 +1061,10 @@ class AppController extends ChangeNotifier {
   void saveParty() {
     final String nm = (form['npName'] ?? '').trim();
     if (nm.isEmpty) return;
+    if (repo.isRemote) {
+      say('Adding a party is not available yet — the server cannot create parties');
+      return;
+    }
     final String city = form['npCity'] ?? '';
     final Party np = Party(nm, npType, city.isEmpty ? '—' : city, 0);
     _set(() {
@@ -770,7 +1078,22 @@ class AppController extends ChangeNotifier {
   void setMode(String m) => _set(() {
     modes[flowType] = m;
     if (flowType == 'receipt' || flowType == 'payment') {
-      form['${kFlowTypes[flowType]!.p}Acc'] = m == 'cash'
+      final String key = '${kFlowTypes[flowType]!.p}Acc';
+      if (repo.isRemote) {
+        // Default to the first matching cash / bank ledger from Tally.
+        final bool cash = m == 'cash';
+        form[key] =
+            repo
+                .accounts()
+                .where(
+                  (Opt o) => o.s.toLowerCase().contains(cash ? 'cash' : 'bank'),
+                )
+                .firstOrNull
+                ?.t ??
+            '';
+        return;
+      }
+      form[key] = m == 'cash'
           ? 'Cash in hand'
           : (flowType == 'receipt'
                 ? 'HDFC Bank – Current'
@@ -796,7 +1119,18 @@ class AppController extends ChangeNotifier {
     final int i = l.indexWhere((Line x) => x.name == it.name);
     lines[flowType] = i >= 0
         ? (List<Line>.of(l)..removeAt(i))
-        : <Line>[...l, Line(it.name, it.rate, 1, it.unit, 18)];
+        : <Line>[
+            ...l,
+            Line(
+              it.name,
+              it.rate,
+              1,
+              it.unit,
+              it.gst ?? (repo.isRemote ? 0 : 18),
+              guid: it.guid,
+              hsn: it.hsn,
+            ),
+          ];
   });
 
   void stepPickItem(Item it, int d) => _set(() {
@@ -823,6 +1157,9 @@ class AppController extends ChangeNotifier {
           nq.toInt(),
           niUnit.toLowerCase(),
           niGst,
+          hsn: (form['niHsn'] ?? '').trim().isEmpty
+              ? null
+              : form['niHsn']!.trim(),
         ),
       ];
       overlay = null;
@@ -1147,7 +1484,7 @@ class AppController extends ChangeNotifier {
       case 'vouchers':
         final Voucher? v = repo
             .vouchers()
-            .where((Voucher x) => x.no == key)
+            .where((Voucher x) => x.key == key)
             .firstOrNull;
         if (v == null) return null;
         final Kind k = kKinds[v.kind]!;
@@ -1160,7 +1497,7 @@ class AppController extends ChangeNotifier {
       case 'bills':
         final bool r = outKind == 'recv';
         final Bill? b = (r ? repo.receivables() : repo.payables())
-            .where((Bill x) => x.no == key)
+            .where((Bill x) => x.key == key)
             .firstOrNull;
         if (b == null) return null;
         return CardInfo(
@@ -1249,6 +1586,11 @@ class AppController extends ChangeNotifier {
   }
 
   void openNotif(Notif n) {
+    if (repo.isRemote) {
+      if (n.unread) repo.markNotifRead(n.id);
+      run(n.go);
+      return;
+    }
     _set(
       () => notifs = notifs
           .map((Notif x) => x.id == n.id ? x.read() : x)
@@ -1885,6 +2227,12 @@ class AppController extends ChangeNotifier {
   // ----------------------------------------------------------- team
   void sendInvite() {
     final String em = (form['iEmail'] ?? '').trim();
+    if (repo.isRemote) {
+      // SECURITY_BLOCKER: /send-invite emails the user's password in plain
+      // text and has no invitation state.
+      say('Invites are turned off until the server sends a safe join link');
+      return;
+    }
     _set(() {
       overlay = null;
       team = <Member>[
@@ -1903,6 +2251,11 @@ class AppController extends ChangeNotifier {
 
   void saveUser() {
     final String nm = (form['nuName'] ?? '').trim();
+    if (repo.isRemote) {
+      // POST /users needs email + password; this form has name + mobile.
+      say('Adding a person needs email and password on the server — not available yet');
+      return;
+    }
     final String ph = form['nuPhone'] ?? '';
     _set(() {
       overlay = null;
@@ -1921,6 +2274,10 @@ class AppController extends ChangeNotifier {
   }
 
   void setMemberSt(Member m, String st, String msg) {
+    if (repo.isRemote) {
+      say('Turning access on or off is not available yet on the server');
+      return;
+    }
     _set(() {
       overlay = null;
       team = team.map((Member x) => x.id == m.id ? x.withSt(st) : x).toList();
@@ -1929,6 +2286,10 @@ class AppController extends ChangeNotifier {
   }
 
   void cancelInvite(Member m) {
+    if (repo.isRemote) {
+      say('Invites are not available yet on the server');
+      return;
+    }
     _set(() {
       overlay = null;
       team = team.where((Member x) => x.id != m.id).toList();
@@ -1937,8 +2298,35 @@ class AppController extends ChangeNotifier {
   }
 
   void markAll() {
+    if (repo.isRemote) {
+      repo.markAllNotifsRead();
+      say('All marked as read');
+      return;
+    }
     _set(() => notifs = notifs.map((Notif n) => n.read()).toList());
     say('All marked as read');
+  }
+
+  /// Alert switch. With the server, `sync` maps to `sync_completed`; the
+  /// other switches have no server setting and stay on this phone.
+  void toggleAlert(String k) {
+    final bool on = !alertOn(k);
+    if (repo.isRemote && k == 'sync' && repo.alertConfig() != null) {
+      repo.saveAlert('sync_completed', on).catchError((Object e) {
+        say(e is ApiException ? e.userMessage : 'Could not save');
+      });
+      return;
+    }
+    _set(() => prefs[k] = on);
+    if (repo.isRemote) say('Saved on this phone only');
+  }
+
+  bool alertOn(String k) {
+    final Map<String, bool>? cfg = repo.alertConfig();
+    if (repo.isRemote && k == 'sync' && cfg != null) {
+      return cfg['sync_completed'] ?? false;
+    }
+    return prefs[k] ?? false;
   }
 
   // ------------------------------------------------------------- look
@@ -2190,20 +2578,19 @@ class AppController extends ChangeNotifier {
   Future<Uint8List>? get docBytes => _docBytes;
 
   /// The bill PDF currently open in the prototype's viewer, as a document.
-  ShareDoc get pdfDoc => docInvoice(
-    pdf ??
-        const PdfInfo(
-          party: 'Shree Balaji Traders',
-          no: 'Sales 9',
-          date: '21 Sep 2026',
-          due: '06 Oct 2026',
-          total: 112100,
-          kind: 'Sales bill',
-          city: 'Mumbai',
-          recv: true,
-        ),
-    companyName,
-    repo.billLines('Sales 9'),
+  ShareDoc get pdfDoc => docInvoice(pdf ?? samplePdf, companyName);
+
+  /// The prototype's default bill (sample data only).
+  PdfInfo get samplePdf => PdfInfo(
+    party: 'Shree Balaji Traders',
+    no: 'Sales 9',
+    date: '21 Sep 2026',
+    due: '06 Oct 2026',
+    total: 112100,
+    kind: 'Sales bill',
+    city: 'Mumbai',
+    recv: true,
+    lines: repo.billLines('Sales 9'),
   );
 
   /// Document for a long-pressed card (`list|key`).
@@ -2229,7 +2616,7 @@ class AppController extends ChangeNotifier {
               'This month',
             );
           case 'outstanding':
-            return docBills(true, repo.receivables(), co);
+            return docBills(true, repo.receivables(), co, today);
           case 'reports':
             return docReportList(co);
           case 'sales' || 'purchase' || 'moneyIn' || 'moneyOut':
@@ -2257,13 +2644,13 @@ class AppController extends ChangeNotifier {
       case 'vouchers':
         final Voucher? v = repo
             .vouchers()
-            .where((Voucher x) => x.no == key)
+            .where((Voucher x) => x.key == key)
             .firstOrNull;
         return v == null ? null : docEntry(v, co);
       case 'bills':
         final Bill? b =
             (outKind == 'recv' ? repo.receivables() : repo.payables())
-                .where((Bill x) => x.no == key)
+                .where((Bill x) => x.key == key)
                 .firstOrNull;
         return b == null ? null : docBill(b.withKind(outKind), co);
       case 'items':
@@ -2276,7 +2663,7 @@ class AppController extends ChangeNotifier {
         final Party? pa = partyPool()
             .where((Party x) => x.name == key)
             .firstOrNull;
-        return pa == null ? null : docPartyRow(pa, co);
+        return pa == null ? null : docPartyRow(pa, co, repo.isRemote);
       case 'reports':
         return docReport(reportData(repo, key), co);
       case 'acts':
@@ -2290,7 +2677,7 @@ class AppController extends ChangeNotifier {
   }
 
   ShareDoc docReportList(String co) => ShareDoc(
-    title: 'Reports · September 2026',
+    title: 'Reports · ${monthYear(today)}',
     subtitle: 'Easy views of your Tally data',
     company: co,
     fileStem: 'Reports',
@@ -2307,7 +2694,37 @@ class AppController extends ChangeNotifier {
   void zoomBy(int d) => _set(() => zoom = (zoom + d).clamp(60, 160));
 
   // ------------------------------------------------------------ misc
-  void refreshNow() => say('Up to date · synced just now');
+  void refreshNow() {
+    if (!repo.isRemote) {
+      say('Up to date · synced just now');
+      return;
+    }
+    say('Refreshing…');
+    repo.refreshAll().then((_) => say(_statusToast(DataSet.vouchers)));
+  }
+
+  /// Empty-list text: loading / error message from the server, else [normal].
+  String emptyText(String set, String normal) {
+    if (!repo.isRemote) return normal;
+    final DataStatus st = repo.status(set);
+    if (st.loading) return 'Loading from the server…';
+    if (st.failed) return st.message ?? 'Could not load. Tap refresh.';
+    return normal;
+  }
+
+  /// Sync line for a company: `Synced 5 min ago` / `Syncing now`.
+  String syncText(String companyId) {
+    final SyncInfo? s = repo.syncInfo(companyId);
+    if (s == null) return 'Sync status not known';
+    if (s.inProgress) return 'Syncing now';
+    if (s.lastSyncAt == null) return 'Not synced yet';
+    return 'Synced ${ago(s.lastSyncAt!, DateTime.now())}';
+  }
+
+  String _statusToast(String set) {
+    final DataStatus st = repo.status(set);
+    return st.failed ? (st.message ?? 'Could not refresh') : 'Up to date';
+  }
 
   /// Android back: overlay → card menu/armed → screen back.
   bool handleSystemBack() {

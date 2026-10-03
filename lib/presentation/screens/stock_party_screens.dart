@@ -15,6 +15,7 @@ import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
+import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../widgets/common.dart';
 
 /// `.tot.stat` (centred column) / `.glass.stat` (left).
@@ -135,10 +136,10 @@ class ItemsScreen extends ConsumerWidget {
         .toList();
     final ({List<Item> rows, int hidden, VoidCallback unhide}) v = c
         .listView<Item>('items', rows, (Item x) => x.name);
-    const List<(String, String)> segs = <(String, String)>[
-      ('all', 'All (8)'),
-      ('low', 'Low (2)'),
-      ('out', 'Finished (2)'),
+    final List<(String, String)> segs = <(String, String)>[
+      ('all', 'All (${all.length})'),
+      ('low', 'Low (${all.where((Item x) => x.st == 'low').length})'),
+      ('out', 'Finished (${all.where((Item x) => x.st == 'out').length})'),
     ];
     return Scr(
       children: <Widget>[
@@ -173,10 +174,7 @@ class ItemsScreen extends ConsumerWidget {
                         Text('Total stock value', style: rsStyle(context)),
                         Text(
                           inr(
-                            all.fold<int>(
-                              0,
-                              (int s, Item x) => s + x.stock * x.rate,
-                            ),
+                            all.fold<num>(0, (num s, Item x) => s + x.worth),
                           ),
                           style: amtStyle(context, size: 26),
                         ),
@@ -219,7 +217,11 @@ class ItemsScreen extends ConsumerWidget {
           onChanged: (String s) => c.setF('itemQ', s),
           placeholder: 'Search item name',
           icon: 'scan',
-          onAction: () => c.say('Point the camera at a barcode'),
+          onAction: () => c.say(
+            c.repo.isRemote
+                ? 'Barcode search is not available yet on the server'
+                : 'Point the camera at a barcode',
+          ),
         ),
         GlassList(
           children: <Widget>[
@@ -250,7 +252,7 @@ class ItemsScreen extends ConsumerWidget {
                             children: <Widget>[
                               Bdg(
                                 x.stock > 0
-                                    ? '${x.stock} ${x.unit}'
+                                    ? '${qty(x.stock)} ${x.unit}'
                                     : 'Finished',
                                 kind: x.st == 'ok'
                                     ? BadgeKind.ok
@@ -274,7 +276,7 @@ class ItemsScreen extends ConsumerWidget {
                         ],
                       ),
                     ),
-                    Text(inr(x.stock * x.rate), style: amtStyle(context)),
+                    Text(inr(x.worth), style: amtStyle(context)),
                   ],
                 ),
               ),
@@ -284,7 +286,7 @@ class ItemsScreen extends ConsumerWidget {
               Padding(
                 padding: const EdgeInsets.all(18),
                 child: Text(
-                  'No item found.',
+                  c.emptyText(DataSet.items, 'No item found.'),
                   textAlign: TextAlign.center,
                   style: rsStyle(context, 15),
                 ),
@@ -312,7 +314,7 @@ class PartyScreen extends ConsumerWidget {
         )
         .toList();
     if (c.partySort == 'amt') {
-      rows.sort((Party a, Party b) => b.bal - a.bal);
+      rows.sort((Party a, Party b) => b.bal.abs().compareTo(a.bal.abs()));
     } else {
       rows.sort(
         (Party a, Party b) =>
@@ -400,7 +402,7 @@ class PartyScreen extends ConsumerWidget {
                     Expanded(
                       child: RTx(
                         x.name,
-                        '${x.type == 'c' ? 'Customer' : 'Supplier'} · ${x.city}',
+                        '${x.kindLabel} · ${x.city.isNotEmpty ? x.city : (x.group ?? '')}',
                         ell: true,
                       ),
                     ),
@@ -408,19 +410,23 @@ class PartyScreen extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: <Widget>[
                         Text(
-                          inr(x.bal),
+                          inr(x.bal.abs()),
                           style: amtStyle(
                             context,
                             cls: x.bal == 0
                                 ? ''
-                                : (x.type == 'c' ? 'in' : 'out'),
+                                : (x.type == 'c' || (x.type == 'o' && x.bal > 0)
+                                      ? 'in'
+                                      : 'out'),
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           x.bal == 0
-                              ? 'Settled'
-                              : (x.type == 'c' ? 'They owe you' : 'You owe'),
+                              ? (c.repo.isRemote ? 'No pending bills' : 'Settled')
+                              : (x.type == 'c' || (x.type == 'o' && x.bal > 0)
+                                    ? 'They owe you'
+                                    : 'You owe'),
                           style: rsStyle(context, 12),
                         ),
                       ],
@@ -434,7 +440,7 @@ class PartyScreen extends ConsumerWidget {
               Padding(
                 padding: const EdgeInsets.all(18),
                 child: Text(
-                  'No party found.',
+                  c.emptyText(DataSet.ledgers, 'No party found.'),
                   textAlign: TextAlign.center,
                   style: rsStyle(context, 15),
                 ),
@@ -454,21 +460,45 @@ class PartyDetailScreen extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
     final List<Party> pool = c.partyPool();
-    final Party p0 =
+    final Party? pf =
         pool.where((Party x) => x.name == c.party).firstOrNull ??
-        c.repo.parties().first;
+        c.repo.parties().firstOrNull;
+    if (pf == null) {
+      return const Scr(
+        children: <Widget>[BackNav(), EmptyBox('No party selected.')],
+      );
+    }
+    final Party p0 = pf;
     final bool pc = p0.type == 'c';
-    final List<Voucher> pv = c.repo
-        .vouchers()
-        .where((Voucher v) => v.party == p0.name)
-        .toList();
+    final bool other = p0.type == 'o';
+    // Other ledgers: positive pending balance = they owe you.
+    final bool owesYou = pc || (other && p0.bal > 0);
+    final bool remote = c.repo.isRemote;
+    final PartyDetail? det = p0.guid == null
+        ? null
+        : c.repo.partyDetail(p0.guid!);
+    final List<Voucher> pv = remote
+        ? (det?.entries ?? const <Voucher>[])
+        : c.repo.vouchers().where((Voucher v) => v.party == p0.name).toList();
+    // Tally balances arrive without Dr/Cr; the size is shown as synced.
+    String tallyBal(num? v) => v == null ? '—' : '${inr(v.abs())} (Dr/Cr not sent)';
     const List<(String, String)> tabs = <(String, String)>[
       ('summary', 'Summary'),
       ('items', 'Items'),
       ('vouchers', 'Entries'),
     ];
     final bool sbt = p0.name == 'Shree Balaji Traders';
-    final List<(String, String, bool)> rows = sbt
+    final List<(String, String, bool)> rows = remote
+        ? <(String, String, bool)>[
+            ('Group', p0.group ?? '—', false),
+            if (p0.email != null) ('Email', p0.email!, false),
+            if (p0.phone != null) ('Phone', p0.phone!, false),
+            ('Opening balance (Tally)', tallyBal(p0.opening), false),
+            ('Closing balance (Tally)', tallyBal(p0.closing), false),
+            ('Last entry', dmy(p0.lastDate), false),
+            ('Pending bills', '${det?.bills.length ?? '—'}', false),
+          ]
+        : sbt
         ? const <(String, String, bool)>[
             ('Group', 'Customers (Sundry Debtors)', false),
             ('City', 'Mumbai', false),
@@ -495,9 +525,10 @@ class PartyDetailScreen extends ConsumerWidget {
             ('City', p0.city, false),
             ('Entries this month', '${pv.length}', false),
           ];
-    final List<BillLine> items = sbt
-        ? c.repo.billLines('Sales 9')
-        : const <BillLine>[];
+    final List<BillLine> items = remote
+        ? (det?.items ?? const <BillLine>[])
+        : (sbt ? c.repo.billLines('Sales 9') : const <BillLine>[]);
+    final String loadingText = c.emptyText(DataSet.party, '');
     Widget empty(String t) => Padding(
       padding: const EdgeInsets.all(18),
       child: Text(t, textAlign: TextAlign.center, style: rsStyle(context, 15)),
@@ -511,32 +542,47 @@ class PartyDetailScreen extends ConsumerWidget {
             icon: 'bell',
             kind: BtnKind.g,
             color: p.acc,
-            onTap: () => c.say('Reminder sent on WhatsApp to ${p0.name}'),
+            onTap: () => c.say(
+              remote
+                  ? 'WhatsApp reminders are not available yet on the server'
+                  : 'Reminder sent on WhatsApp to ${p0.name}',
+            ),
           ),
         ),
         Expanded(
           flex: 17,
           child: Btn(
-            label: pc ? 'New Sale' : 'New Purchase',
+            label: other ? 'New Entry' : (pc ? 'New Sale' : 'New Purchase'),
             icon: 'plus',
             kind: BtnKind.a,
-            onTap: () => pc
-                ? c.startFlow('sales', <String, String>{'sParty': p0.name})
-                : c.startFlow('purchase', <String, String>{'pParty': p0.name}),
+            onTap: () => other
+                ? c.go('newEntry')
+                : (pc
+                      ? c.startFlow('sales', <String, String>{'sParty': p0.name})
+                      : c.startFlow('purchase', <String, String>{
+                          'pParty': p0.name,
+                        })),
           ),
         ),
       ],
       children: <Widget>[
         BackNav(
           actions: <Widget>[
-            CBtn('sync', onTap: c.refreshNow),
+            CBtn(
+              'sync',
+              onTap: remote ? () => c.repo.loadPartyDetail(p0) : c.refreshNow,
+            ),
             CBtn(
               'file',
-              onTap: () => c.previewDoc(docParty(p0, c.companyName, rows, pv)),
+              onTap: () => c.previewDoc(
+                docParty(p0, c.companyName, rows, pv, c.today, remote: remote),
+              ),
             ),
             CBtn(
               'share',
-              onTap: () => c.shareDoc(docParty(p0, c.companyName, rows, pv)),
+              onTap: () => c.shareDoc(
+                docParty(p0, c.companyName, rows, pv, c.today, remote: remote),
+              ),
             ),
           ],
         ),
@@ -558,7 +604,7 @@ class PartyDetailScreen extends ConsumerWidget {
                   Expanded(
                     child: RTx(
                       p0.name,
-                      '${pc ? 'Customer' : 'Supplier'} · ${p0.city}',
+                      '${p0.kindLabel} · ${p0.city.isNotEmpty ? p0.city : (p0.group ?? '')}',
                       titleSize: 19,
                     ),
                   ),
@@ -567,23 +613,28 @@ class PartyDetailScreen extends ConsumerWidget {
                 ],
               ),
               Tot(
-                bg: pc ? mix(p.pos, .10) : mix(p.warn, .09),
+                bg: owesYou ? mix(p.pos, .10) : mix(p.warn, .09),
                 margin: const EdgeInsets.only(top: 12, bottom: 10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      'Balance · as on 26 Sep 2026',
+                      '${remote ? 'Outstanding (pending bills)' : 'Balance'} · as on ${dmy(c.today)}',
                       style: rsStyle(context),
                     ),
                     Text(
-                      '${inr(p0.bal)}${p0.bal != 0 ? (pc ? ' Dr' : ' Cr') : ''}',
-                      style: amtStyle(context, cls: pc ? 'big in' : 'big out'),
+                      remote
+                          ? inr(p0.bal.abs())
+                          : '${inr(p0.bal)}${p0.bal != 0 ? (pc ? ' Dr' : ' Cr') : ''}',
+                      style: amtStyle(
+                        context,
+                        cls: owesYou ? 'big in' : 'big out',
+                      ),
                     ),
                     Text(
                       p0.bal == 0
-                          ? 'All settled'
-                          : (pc ? 'They owe you' : 'You owe them'),
+                          ? (remote ? 'No pending bills' : 'All settled')
+                          : (owesYou ? 'They owe you' : 'You owe them'),
                       style: ts(13.5, w: w700, c: p.ink3),
                     ),
                   ],
@@ -607,11 +658,25 @@ class PartyDetailScreen extends ConsumerWidget {
                       color: p.cat('items'),
                       icon: IcSize.s,
                     ),
-                    Expanded(child: RTx(l.name, '${l.qty} · ${l.rate}')),
+                    Expanded(
+                      child: RTx(
+                        l.name,
+                        <String>[l.qty, l.rate]
+                            .where((String x) => x.isNotEmpty)
+                            .join(' · '),
+                      ),
+                    ),
                     Text(inr(l.amt), style: amtStyle(context)),
                   ],
                 ),
-              if (items.isEmpty) empty('No item details in sample data.'),
+              if (items.isEmpty)
+                empty(
+                  loadingText.isNotEmpty
+                      ? loadingText
+                      : (remote
+                            ? 'No items bought or sold by this party.'
+                            : 'No item details in sample data.'),
+                ),
             ],
           ),
         if (c.partyTab == 'vouchers')
@@ -621,7 +686,14 @@ class PartyDetailScreen extends ConsumerWidget {
               for (final Voucher v in pv)
                 RowX(
                   onTap: () =>
-                      c.go('entryDetail', <String, Object?>{'entry': v}),
+                      c.go('entryDetail', <String, Object?>{
+                        'entry':
+                            c.repo
+                                .vouchers()
+                                .where((Voucher x) => x.guid != null && x.guid == v.guid)
+                                .firstOrNull ??
+                            v,
+                      }),
                   children: <Widget>[
                     Ico(
                       kKinds[v.kind]!.ic,
@@ -631,14 +703,19 @@ class PartyDetailScreen extends ConsumerWidget {
                     ),
                     Expanded(
                       child: RTx(
-                        '${kKinds[v.kind]!.t} · ${v.no}',
-                        '${v.day} Sep 2026',
+                        '${v.type ?? kKinds[v.kind]!.t} · ${v.no}',
+                        vDate(v),
                       ),
                     ),
                     Text(inr(v.amt), style: amtStyle(context)),
                   ],
                 ),
-              if (pv.isEmpty) empty('No entries this month.'),
+              if (pv.isEmpty)
+                empty(
+                  loadingText.isNotEmpty
+                      ? loadingText
+                      : (remote ? 'No entries for this party.' : 'No entries this month.'),
+                ),
             ],
           ),
       ],

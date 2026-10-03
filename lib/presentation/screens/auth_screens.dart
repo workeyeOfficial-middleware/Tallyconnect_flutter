@@ -55,13 +55,31 @@ class LoginScreen extends ConsumerWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: <Widget>[
+                          // Required by the server (`loginType`): owner
+                          // accounts log in as Admin, team members as User.
                           Fld(
-                            label: 'Username or email',
+                            label: 'Log in as',
+                            child: Seg(
+                              items: const <String>['Admin', 'User'],
+                              selected: c.loginType == 'USER' ? 1 : 0,
+                              onPick: (int i) => c.update(
+                                () => c.loginType = i == 0 ? 'ADMIN' : 'USER',
+                              ),
+                              margin: EdgeInsets.zero,
+                            ),
+                          ),
+                          Fld(
+                            label: c.repo.isRemote
+                                ? 'Email'
+                                : 'Username or email',
                             child: Inp(
                               value: c.f('user'),
                               onChanged: (String v) => c.setF('user', v),
-                              placeholder: 'e.g. workk72002',
+                              placeholder: c.repo.isRemote
+                                  ? 'name@example.com'
+                                  : 'e.g. workk72002',
                               icon: 'person',
+                              keyboard: TextInputType.emailAddress,
                             ),
                           ),
                           Fld(
@@ -100,9 +118,10 @@ class LoginScreen extends ConsumerWidget {
                             ),
                           ),
                           Btn(
-                            label: 'Log In',
+                            label: c.busy ? 'Logging in…' : 'Log In',
                             icon: 'arrow',
                             iconAfter: true,
+                            enabled: !c.busy,
                             onTap: c.doLogin,
                           ),
                           const OrDivider(),
@@ -221,8 +240,10 @@ class ForgotScreen extends ConsumerWidget {
           child: Ico('key', color: p.acc, box: 72, radius: 24, icon: IcSize.l),
         ),
         const H1('Forgot password?', center: true),
-        const Sub(
-          'Type the email you use for TallyConnect. We will send you a link to make a new password.',
+        Sub(
+          c.repo.isRemote
+              ? 'Type the email you use for TallyConnect. We will email you a code to make a new password.'
+              : 'Type the email you use for TallyConnect. We will send you a link to make a new password.',
           center: true,
         ),
         if (!c.forgotSent)
@@ -242,9 +263,12 @@ class ForgotScreen extends ConsumerWidget {
                   ),
                 ),
                 Btn(
-                  label: 'Send link',
+                  label: c.busy
+                      ? 'Sending…'
+                      : (c.repo.isRemote ? 'Send code' : 'Send link'),
                   icon: 'send',
-                  onTap: () => c.update(() => c.forgotSent = true),
+                  enabled: !c.busy,
+                  onTap: c.sendReset,
                 ),
               ],
             ),
@@ -266,7 +290,9 @@ class ForgotScreen extends ConsumerWidget {
                   Padding(
                     padding: const EdgeInsets.fromLTRB(0, 6, 0, 16),
                     child: Text(
-                      'We sent a link. Open it to set a new password.',
+                      c.repo.isRemote
+                          ? 'We sent a 6-digit code to your email. It works for 10 minutes.'
+                          : 'We sent a link. Open it to set a new password.',
                       textAlign: TextAlign.center,
                       style: ts(15, h: 1.3, c: p.ink3),
                     ),

@@ -13,6 +13,7 @@ import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
+import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../widgets/common.dart';
 
 class NotifsScreen extends ConsumerWidget {
@@ -29,7 +30,16 @@ class NotifsScreen extends ConsumerWidget {
         .listView<Notif>('notifs', base, (Notif n) => n.id);
     return Scr(
       children: <Widget>[
-        BackNav(actions: <Widget>[CBtn('sync', onTap: c.refreshNow)]),
+        BackNav(
+          actions: <Widget>[
+            CBtn(
+              'sync',
+              onTap: c.repo.isRemote
+                  ? () => c.repo.refreshNotifications()
+                  : c.refreshNow,
+            ),
+          ],
+        ),
         const H1('Alerts', afterNav: true),
         Sub(c.unread > 0 ? '${c.unread} unread' : 'All read'),
         Row(
@@ -112,7 +122,7 @@ class NotifsScreen extends ConsumerWidget {
               Padding(
                 padding: const EdgeInsets.all(18),
                 child: Text(
-                  'You have read everything.',
+                  c.emptyText(DataSet.notifications, 'You have read everything.'),
                   textAlign: TextAlign.center,
                   style: rsStyle(context, 15),
                 ),
@@ -437,8 +447,8 @@ class NewEntryScreen extends ConsumerWidget {
         <(String, String, String, String, String)>[
           ('Sale', 'You sold goods', 'bag', 'sales', 'sales'),
           ('Purchase', 'You bought goods', 'cart', 'purchase', 'purchase'),
-          ('Money In', 'Money came to you', 'in', 'receipt', 'receipt'),
-          ('Money Out', 'Money went out', 'out', 'payment', 'payment'),
+          ('Receipt', 'Money received', 'in', 'receipt', 'receipt'),
+          ('Payment', 'Money paid', 'out', 'payment', 'payment'),
         ];
     return Scr(
       children: <Widget>[

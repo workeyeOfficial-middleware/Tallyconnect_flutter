@@ -38,11 +38,11 @@ void main() {
   group('mock data matches the prototype', () {
     test('totals', () {
       expect(kVouchers.length, 21);
-      expect(kVouchers.fold<int>(0, (int s, Voucher v) => s + v.amt), 918490);
-      expect(kRecv.fold<int>(0, (int s, Bill b) => s + b.amt), 348690);
-      expect(kPayb.fold<int>(0, (int s, Bill b) => s + b.amt), 126850);
+      expect(kVouchers.fold<num>(0, (num s, Voucher v) => s + v.amt), 918490);
+      expect(kRecv.fold<num>(0, (num s, Bill b) => s + b.amt), 348690);
+      expect(kPayb.fold<num>(0, (num s, Bill b) => s + b.amt), 126850);
       expect(
-        kItems.fold<int>(0, (int s, Item x) => s + x.stock * x.rate),
+        kItems.fold<num>(0, (num s, Item x) => s + x.stock * x.rate),
         245760,
       );
       expect(kParties.length, 14);
@@ -239,7 +239,7 @@ void main() {
   group('entry flow', () {
     test('GST totals of the initial sales lines', () {
       final AppController c = make();
-      final ({int sub, int gst, int total}) t = c.totals(c.lines['sales']!);
+      final ({num sub, num gst, num total}) t = c.totals(c.lines['sales']!);
       expect(t.sub, 1850 * 2 + 34 * 100 + 520 * 10);
       expect(t.gst, (t.sub * .18).round());
       expect(t.total, t.sub + t.gst);

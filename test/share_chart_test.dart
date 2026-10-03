@@ -66,7 +66,7 @@ Future<void> settle(WidgetTester t) async {
 }
 
 void main() {
-  const TallyRepository repo = MockTallyRepository();
+  final TallyRepository repo = MockTallyRepository();
   setUpAll(loadFigtree);
 
   group('report data (unchanged values) and chart series', () {
@@ -96,15 +96,23 @@ void main() {
 
   group('share documents', () {
     test('invoice carries the bill lines and GST', () {
-      const PdfInfo s9 = PdfInfo(party: 'Shree Balaji Traders', no: 'Sales 9', date: '21 Sep 2026', due: '06 Oct 2026', total: 112100, kind: 'Sales bill', city: 'Mumbai', recv: true);
-      final ShareDoc d = docInvoice(s9, 'GI Apr 25-26', kSales9);
+      const PdfInfo s9 = PdfInfo(party: 'Shree Balaji Traders', no: 'Sales 9', date: '21 Sep 2026', due: '06 Oct 2026', total: 112100, kind: 'Sales bill', city: 'Mumbai', recv: true, lines: kSales9);
+      final ShareDoc d = docInvoice(s9, 'GI Apr 25-26');
       expect(d.fileName, 'Sales_9.pdf');
       expect(d.text, contains('Polycab FR Wire 1.0 sq mm (90 m)'));
       expect(d.text, contains('CGST @ 9%: ₹8,550'));
       expect(d.text, contains('Total: ₹1,12,100'));
-      final InvoiceSpec p = invoiceOf(const PdfInfo(party: 'Kiran', no: 'PI-0005', date: '', due: '', total: 48380, kind: 'Purchase bill', city: 'Ludhiana', recv: false), kSales9);
+      // No item lines from the server → no invented subtotal / GST split.
+      final InvoiceSpec p = invoiceOf(const PdfInfo(party: 'Kiran', no: 'PI-0005', date: '', due: '', total: 48380, kind: 'Purchase bill', city: 'Ludhiana', recv: false));
       expect(p.heading, 'PURCHASE BILL');
-      expect(p.sub + 2 * p.cgst, closeTo(48380, 1));
+      expect(p.sub, isNull);
+      expect(p.taxes, isEmpty);
+      expect(p.lines, isEmpty);
+      expect(p.total, 48380);
+      // Real lines whose sum differs from the total show the difference as is.
+      final InvoiceSpec q = invoiceOf(const PdfInfo(party: 'A', no: 'S-1', date: '', due: '', total: 1180, kind: 'Sales', city: '', lines: <BillLine>[BillLine('Wire', '', '1', '', 1000)]));
+      expect(q.sub, 1000);
+      expect(q.taxes.single.$2, 180);
     });
     test('report / list docs contain the actual data', () {
       final ShareDoc r = docReport(reportData(repo, 'top'), 'GI Apr 25-26');
@@ -117,7 +125,7 @@ void main() {
     });
     test('real PDF bytes are produced for every layout', () async {
       for (final ShareDoc d in <ShareDoc>[
-        docInvoice(const PdfInfo(party: 'A', no: 'Sales 9', date: 'd', due: 'd', total: 112100, kind: 'Sales bill', city: 'Mumbai', recv: true), 'GI', kSales9),
+        docInvoice(const PdfInfo(party: 'A', no: 'Sales 9', date: 'd', due: 'd', total: 112100, kind: 'Sales bill', city: 'Mumbai', recv: true, lines: kSales9), 'GI'),
         docReport(reportData(repo, 'day'), 'GI'),
         docItems(kItems, 'GI'),
         docEntry(kVouchers.last, 'GI'),
@@ -215,7 +223,7 @@ void main() {
       // Quick buttons in the New Entry card: four equal columns.
       Rect quick(String l) => t.getRect(find.ancestor(of: find.text(l), matching: find.byType(Tap)).first);
       final double q = quick('Sale').width;
-      for (final String l in <String>['Purchase', 'Money In', 'Money Out']) {
+      for (final String l in <String>['Purchase', 'Receipt', 'Payment']) {
         expect(quick(l).width, closeTo(q, .5), reason: l);
       }
       // Payment modes in the sale flow: five equal buttons.

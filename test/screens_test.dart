@@ -13,6 +13,7 @@ import 'package:tallyconnect_ui/app/providers.dart';
 import 'package:tallyconnect_ui/core/storage/local_storage.dart';
 import 'package:tallyconnect_ui/main.dart';
 import 'package:tallyconnect_ui/presentation/shell.dart';
+import 'package:tallyconnect_ui/presentation/widgets/tab_bar.dart';
 
 Future<AppController> boot(WidgetTester t, {String start = 'login'}) async {
   t.view.physicalSize = const Size(390 * 3, 844 * 3);
@@ -71,7 +72,15 @@ void main() {
     expect(c.screen, 'home');
     expect(find.text('Welcome back, workk72002'), findsOneWidget);
     expect(find.text('What would you like to do?'), findsOneWidget);
-    expect(find.text('Dues'), findsOneWidget);
+    // "Outstanding" is both a tab label and a Home shortcut tile; check the
+    // tab bar's label.
+    expect(
+      find.descendant(
+        of: find.byType(TcTabBar),
+        matching: find.text('Outstanding'),
+      ),
+      findsOneWidget,
+    );
     await drain(t);
   });
 

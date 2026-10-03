@@ -9,6 +9,8 @@ import '../utils/format.dart';
 import 'report_data.dart';
 
 /// Bill / invoice layout data (the prototype's PDF "paper", 1563–1582).
+/// Only real values: item lines and totals as Tally sent them. No tax split
+/// is ever estimated — when the server sends no breakdown, none is shown.
 class InvoiceSpec {
   const InvoiceSpec({
     required this.heading,
@@ -19,27 +21,54 @@ class InvoiceSpec {
     required this.party,
     required this.city,
     required this.lines,
-    required this.sub,
-    required this.cgst,
     required this.total,
     required this.kind,
+    this.sub,
+    this.taxes = const <(String, num)>[],
+    this.seller = const <String>[],
+    this.note = '',
   });
   final String heading, toLabel, no, date, due, party, city, kind;
 
   /// #, item, HSN, qty, rate, amount
   final List<(String, String, String, String, String, String)> lines;
-  final int sub, cgst, total;
+
+  /// Sum of the item lines (null when there are no lines).
+  final num? sub;
+
+  /// Rows between subtotal and total (label, amount).
+  final List<(String, num)> taxes;
+  final num total;
+
+  /// Seller address / GSTIN lines (sample data only — not sent by server).
+  final List<String> seller;
+  final String note;
 
   String get fileName => '${no.replaceFirst(' ', '_')}.pdf';
 }
 
-/// `pdf` view model (2553–2561).
-InvoiceSpec invoiceOf(PdfInfo pd, List<BillLine> sales9) {
-  final bool s9 = pd.no == 'Sales 9';
-  final int taxable = s9 ? 95000 : (pd.total / 1.18).round();
-  final int cg = s9 ? 8550 : ((pd.total - taxable) / 2).round();
+/// The prototype's sample Sales 9 seller block and party GSTIN.
+const List<String> kSampleSeller = <String>[
+  'Unit 4, Laxmi Industrial Estate, Andheri (E), Mumbai – 400093',
+  'GSTIN: 27AAGFG4417K1Z5',
+];
+
+/// `pdf` view model (2553–2561), built only from [PdfInfo]'s real lines.
+InvoiceSpec invoiceOf(PdfInfo pd) {
+  final bool sample = pd.no == 'Sales 9' && pd.city == 'Mumbai';
   final bool purchase =
       pd.recv == false || RegExp('PI|Purchase').hasMatch(pd.kind);
+  final num? sub = pd.lines.isEmpty
+      ? null
+      : paise(pd.lines.fold<num>(0, (num s, BillLine l) => s + l.amt));
+  final num diff = sub == null ? 0 : paise(pd.total - sub);
+  final List<(String, num)> taxes = <(String, num)>[
+    if (sample) ...<(String, num)>[
+      ('CGST @ 9%', diff / 2),
+      ('SGST @ 9%', diff / 2),
+    ] else if (sub != null && diff.abs() >= .01)
+      ('Taxes & charges (as per Tally)', diff),
+  ];
   return InvoiceSpec(
     heading: purchase ? 'PURCHASE BILL' : 'TAX INVOICE',
     toLabel: purchase ? 'BILL FROM' : 'BILLED TO',
@@ -47,26 +76,26 @@ InvoiceSpec invoiceOf(PdfInfo pd, List<BillLine> sales9) {
     date: pd.date,
     due: pd.due,
     party: pd.party,
-    city: '${pd.city}${s9 ? ' · GSTIN: 27AAKFS2291M1Z8' : ''}',
+    city: '${pd.city}${sample ? ' · GSTIN: 27AAKFS2291M1Z8' : ''}',
     kind: pd.kind,
-    lines: s9
-        ? <(String, String, String, String, String, String)>[
-            for (int i = 0; i < sales9.length; i++)
-              (
-                '${i + 1}',
-                sales9[i].name,
-                sales9[i].hsn,
-                sales9[i].qty,
-                sales9[i].rate,
-                inr(sales9[i].amt),
-              ),
-          ]
-        : <(String, String, String, String, String, String)>[
-            ('1', 'Goods as per Tally entry', '—', '—', '—', inr(taxable)),
-          ],
-    sub: taxable,
-    cgst: cg,
+    lines: <(String, String, String, String, String, String)>[
+      for (int i = 0; i < pd.lines.length; i++)
+        (
+          '${i + 1}',
+          pd.lines[i].name,
+          pd.lines[i].hsn.isEmpty ? '—' : pd.lines[i].hsn,
+          pd.lines[i].qty.isEmpty ? '—' : pd.lines[i].qty,
+          pd.lines[i].rate.isEmpty ? '—' : pd.lines[i].rate,
+          inr(pd.lines[i].amt),
+        ),
+    ],
+    sub: sub,
+    taxes: taxes,
     total: pd.total,
+    seller: sample ? kSampleSeller : const <String>[],
+    note: pd.lines.isEmpty
+        ? 'Item lines and tax details were not sent by the server for this bill.'
+        : (sample ? '' : 'Tax details are not sent by the server.'),
   );
 }
 
@@ -121,9 +150,10 @@ class ShareDoc {
           in iv.lines) {
         b.writeln('${l.$1}. ${l.$2} — ${l.$4} × ${l.$5} = ${l.$6}');
       }
-      b.writeln('Subtotal: ${inr(iv.sub)}');
-      b.writeln('CGST @ 9%: ${inr(iv.cgst)}');
-      b.writeln('SGST @ 9%: ${inr(iv.cgst)}');
+      if (iv.sub != null) b.writeln('Subtotal: ${inr(iv.sub)}');
+      for (final (String, num) t in iv.taxes) {
+        b.writeln('${t.$1}: ${inr(t.$2)}');
+      }
       b.write('Total: ${inr(iv.total)}');
       return b.toString();
     }
@@ -155,10 +185,14 @@ class ShareDoc {
 
 // ------------------------------------------------------------- builders
 
-ShareDoc docInvoice(PdfInfo pd, String company, List<BillLine> sales9) =>
-    ShareDoc(title: pd.no, company: company, invoice: invoiceOf(pd, sales9));
+ShareDoc docInvoice(PdfInfo pd, String company) =>
+    ShareDoc(title: pd.no, company: company, invoice: invoiceOf(pd));
 
-ShareDoc docEntry(Voucher e, String company) {
+/// Voucher date: real date when known, else the sample month.
+String vDate(Voucher v) => v.date != null ? dmy(v.date) : '${v.day} Sep 2026';
+String vDay(Voucher v) => v.date != null ? dm(v.date!) : '${v.day} Sep';
+
+ShareDoc docEntry(Voucher e, String company, [List<LedgerLine>? lines]) {
   final Kind k = kKinds[e.kind]!;
   return ShareDoc(
     title: '${k.long} · ${e.no}',
@@ -166,12 +200,14 @@ ShareDoc docEntry(Voucher e, String company) {
     company: company,
     fileStem: 'Entry_${e.no}',
     facts: <(String, String)>[
-      ('Type', k.long),
+      ('Type', e.type ?? k.long),
       ('Number', e.no),
-      ('Date', '${e.day} Sep 2026'),
+      ('Date', vDate(e)),
       ('Party / account', e.party),
       ('Amount', inr(e.amt)),
       ('Company', company),
+      for (final LedgerLine l in lines ?? const <LedgerLine>[])
+        ('${l.debit ? 'Dr' : 'Cr'} · ${l.ledger}', inr(l.amt)),
     ],
   );
 }
@@ -180,7 +216,7 @@ ShareDoc docBill(Bill b, String company) {
   final bool r = b.kind == 'recv';
   return ShareDoc(
     title: 'Bill details · ${b.no}',
-    subtitle: '${b.party} · ${r ? 'Customer' : 'Supplier'} · ${b.city}',
+    subtitle: '${b.party} · ${r ? 'Customer' : 'Supplier'}${b.city.isEmpty ? '' : ' · ${b.city}'}',
     company: company,
     fileStem: 'Bill_${b.no}',
     facts: <(String, String)>[
@@ -202,12 +238,14 @@ ShareDoc docParty(
   String company,
   List<(String, String, bool)> rows,
   List<Voucher> entries,
-) {
+  DateTime today, {
+  bool remote = false,
+}) {
   final bool pc = p0.type == 'c';
   return ShareDoc(
     title: p0.name,
     subtitle:
-        '${pc ? 'Customer' : 'Supplier'} · ${p0.city} · Balance as on 26 Sep 2026',
+        '${p0.kindLabel}${p0.city.isEmpty ? '' : ' · ${p0.city}'} · ${remote ? 'Outstanding' : 'Balance'} as on ${dmy(today)}',
     company: company,
     fileStem: 'Party_${p0.name}',
     facts: <(String, String)>[
@@ -220,7 +258,7 @@ ShareDoc docParty(
             <List<String>>[
               for (final Voucher v in entries)
                 <String>[
-                  '${v.day} Sep 2026',
+                  vDate(v),
                   v.no,
                   kKinds[v.kind]!.t,
                   inr(v.amt),
@@ -229,14 +267,16 @@ ShareDoc docParty(
             right: const <int>{3},
           ),
     totals: <(String, String)>[
-      ('Balance', '${inr(p0.bal)}${p0.bal != 0 ? (pc ? ' Dr' : ' Cr') : ''}'),
+      remote
+          ? ('Outstanding', inr(p0.bal.abs()))
+          : ('Balance', '${inr(p0.bal)}${p0.bal != 0 ? (pc ? ' Dr' : ' Cr') : ''}'),
     ],
   );
 }
 
 ShareDoc docReport(ReportData d, String company) => ShareDoc(
   title: d.report.t,
-  subtitle: '${d.report.s} · September 2026',
+  subtitle: '${d.report.s} · ${d.period}',
   company: company,
   fileStem: 'Report_${d.report.t}',
   table: DocTable(
@@ -256,41 +296,47 @@ ShareDoc docVouchers(
   String title,
   List<Voucher> rows,
   String company,
-  String period,
-) => ShareDoc(
+  String period, [
+  String month = 'September 2026',
+]) => ShareDoc(
   title: title,
-  subtitle: '$company · September 2026 · $period',
+  subtitle: '$company · $month · $period',
   company: company,
   fileStem: 'Vouchers_$title',
   table: DocTable(
     const <String>['Date', 'Entry', 'Party / account', 'Type', 'Amount'],
     <List<String>>[
       for (final Voucher v in rows)
-        <String>['${v.day} Sep', v.no, v.party, kKinds[v.kind]!.t, _pm(v)],
+        <String>[vDay(v), v.no, v.party, v.type ?? kKinds[v.kind]!.t, _pm(v)],
     ],
     right: const <int>{4},
   ),
   totals: <(String, String)>[
     ('Entries', '${rows.length}'),
-    ('Total value', inr(rows.fold<int>(0, (int s, Voucher v) => s + v.amt))),
+    ('Total value', inr(rows.fold<num>(0, (num s, Voucher v) => s + v.amt))),
   ],
 );
 
-ShareDoc docBills(bool recv, List<Bill> rows, String company) => ShareDoc(
-  title: recv ? 'To get (Receivable)' : 'To give (Payable)',
-  subtitle: 'As on 26 Sep 2026',
+ShareDoc docBills(
+  bool recv,
+  List<Bill> rows,
+  String company,
+  DateTime today,
+) => ShareDoc(
+  title: recv ? 'Receivable (Outstanding)' : 'Payable (Outstanding)',
+  subtitle: 'As on ${dmy(today)}',
   company: company,
   fileStem: recv ? 'Receivable' : 'Payable',
   table: DocTable(
-    const <String>['Party', 'Bill', 'City', 'Status', 'Amount'],
+    const <String>['Party', 'Bill', 'Due', 'Status', 'Amount'],
     <List<String>>[
       for (final Bill b in rows)
-        <String>[b.party, b.no, b.city, b.txt, inr(b.amt)],
+        <String>[b.party, b.no, b.due, b.txt, inr(b.amt)],
     ],
     right: const <int>{4},
   ),
   totals: <(String, String)>[
-    ('Total', inr(rows.fold<int>(0, (int s, Bill b) => s + b.amt))),
+    ('Total', inr(rows.fold<num>(0, (num s, Bill b) => s + b.amt))),
   ],
 );
 
@@ -307,7 +353,7 @@ ShareDoc docItems(List<Item> rows, String company) => ShareDoc(
           x.name,
           x.stock > 0 ? '${x.stock} ${x.unit}' : 'Finished',
           '${inr(x.rate)} / ${x.unit}',
-          inr(x.stock * x.rate),
+          inr(x.worth),
         ],
     ],
     right: const <int>{2, 3},
@@ -315,7 +361,7 @@ ShareDoc docItems(List<Item> rows, String company) => ShareDoc(
   totals: <(String, String)>[
     (
       'Total stock value',
-      inr(rows.fold<int>(0, (int s, Item x) => s + x.stock * x.rate)),
+      inr(rows.fold<num>(0, (num s, Item x) => s + x.worth)),
     ),
   ],
 );
@@ -333,7 +379,7 @@ ShareDoc docItem(Item x, String company) => ShareDoc(
       x.st == 'ok' ? 'In stock' : (x.st == 'low' ? 'Running low' : 'Finished'),
     ),
   ],
-  totals: <(String, String)>[('Stock value', inr(x.stock * x.rate))],
+  totals: <(String, String)>[('Stock value', inr(x.worth))],
 );
 
 ShareDoc docParties(List<Party> rows, String company) => ShareDoc(
@@ -341,34 +387,38 @@ ShareDoc docParties(List<Party> rows, String company) => ShareDoc(
   company: company,
   fileStem: 'Parties',
   table: DocTable(
-    const <String>['Party', 'Type', 'City', 'Balance'],
+    const <String>['Party', 'Type', 'Group / city', 'Balance'],
     <List<String>>[
       for (final Party p in rows)
         <String>[
           p.name,
-          p.type == 'c' ? 'Customer' : 'Supplier',
-          p.city,
-          p.bal == 0 ? 'Settled' : inr(p.bal),
+          p.kindLabel,
+          p.city.isNotEmpty ? p.city : (p.group ?? ''),
+          p.bal == 0
+              ? (p.guid != null ? 'No pending bills' : 'Settled')
+              : inr(p.bal.abs()),
         ],
     ],
     right: const <int>{3},
   ),
 );
 
-ShareDoc docPartyRow(Party p, String company) => ShareDoc(
-  title: p.name,
-  subtitle: '${p.type == 'c' ? 'Customer' : 'Supplier'} · ${p.city}',
-  company: company,
-  fileStem: 'Party_${p.name}',
-  totals: <(String, String)>[
-    (
-      'Balance',
-      p.bal == 0
-          ? 'Settled'
-          : '${inr(p.bal)} · ${p.type == 'c' ? 'They owe you' : 'You owe'}',
-    ),
-  ],
-);
+ShareDoc docPartyRow(Party p, String company, [bool remote = false]) =>
+    ShareDoc(
+      title: p.name,
+      subtitle:
+          '${p.kindLabel} · ${p.city.isNotEmpty ? p.city : (p.group ?? '')}',
+      company: company,
+      fileStem: 'Party_${p.name}',
+      totals: <(String, String)>[
+        (
+          remote ? 'Outstanding' : 'Balance',
+          p.bal == 0
+              ? (remote ? 'No pending bills' : 'Settled')
+              : '${inr(p.bal.abs())} · ${p.type == 'c' || (p.type == 'o' && p.bal > 0) ? 'They owe you' : 'You owe'}',
+        ),
+      ],
+    );
 
 const Map<String, String> _stTxt = <String, String>{
   'ok': 'Sent',
@@ -436,12 +486,17 @@ ShareDoc docMember(Member m, String company) => ShareDoc(
   ],
 );
 
-ShareDoc docSums(List<SumCard> sums, String company) => ShareDoc(
+ShareDoc docSums(
+  List<SumCard> sums,
+  String company, [
+  String period = 'September 2026 · Sample data',
+]) => ShareDoc(
   title: 'Money summary',
-  subtitle: 'September 2026 · Sample data',
+  subtitle: period,
   company: company,
   fileStem: 'Money_summary',
   facts: <(String, String)>[
-    for (final SumCard s in sums) ('${s.t} (${s.s})', inr(s.v)),
+    for (final SumCard s in sums)
+      ('${s.t} (${s.s})', s.v == null ? '—' : inr(s.v)),
   ],
 );

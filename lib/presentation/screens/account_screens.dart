@@ -33,7 +33,12 @@ class CompanyRow extends ConsumerWidget {
       onTap: () => c.pickCompany(co),
       children: <Widget>[
         Ico('building', size: IcoSize.sm, color: p.navy),
-        Expanded(child: RTx(co.name, sub ?? co.sub)),
+        Expanded(
+          child: RTx(
+            co.name,
+            c.repo.isRemote ? c.syncText(co.id) : (sub ?? co.sub),
+          ),
+        ),
         Tk(sel),
       ],
     );
@@ -52,7 +57,9 @@ class CompaniesScreen extends ConsumerWidget {
           actions: <Widget>[
             CBtn(
               'sync',
-              onTap: () => c.say('Company list refreshed from Tally'),
+              onTap: c.repo.isRemote
+                  ? c.refreshNow
+                  : () => c.say('Company list refreshed from Tally'),
             ),
           ],
         ),
@@ -62,7 +69,14 @@ class CompaniesScreen extends ConsumerWidget {
           'Pick a company. Reports, bills and stock will show for that company.',
           icon: 'info',
         ),
+        if (c.repo.isRemote && !c.isAdmin)
+          const InfoBox(
+            'Only your admin can switch the company for the team.',
+            icon: 'lock',
+          ),
         for (final Company co in c.repo.companies()) CompanyRow(co),
+        if (c.repo.companies().isEmpty)
+          EmptyBox(c.emptyText('companies', 'No company selected yet.')),
         Padding(
           padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
           child: Text(
@@ -92,6 +106,10 @@ class BillingScreen extends ConsumerWidget {
           selected: c.yearly ? 0 : 1,
           onPick: (int i) => c.update(() => c.yearly = i == 0),
         ),
+        if (c.repo.plans().isEmpty)
+          EmptyBox(
+            'Your plan: ${c.repo.user?.plan ?? '—'}. Plan prices and switching are not available from the server yet.',
+          ),
         for (final Plan pl in c.repo.plans())
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
@@ -220,7 +238,7 @@ class ReferScreen extends ConsumerWidget {
                                 style: ts(11, w: w800, ls: .88, c: p.ink3),
                               ),
                               Text(
-                                'TC-WORKK72',
+                                c.repo.isRemote ? '—' : 'TC-WORKK72',
                                 style: TextStyle(
                                   fontFamily: 'monospace',
                                   fontFamilyFallback: const <String>[
@@ -239,7 +257,11 @@ class ReferScreen extends ConsumerWidget {
                         ChipBtn(
                           'Copy',
                           color: p.acc,
-                          onTap: () => c.say('Code copied'),
+                          onTap: () => c.say(
+                            c.repo.isRemote
+                                ? 'Referral codes are not available yet on the server'
+                                : 'Code copied',
+                          ),
                         ),
                       ],
                     ),
@@ -250,7 +272,11 @@ class ReferScreen extends ConsumerWidget {
                 label: 'Share invite',
                 icon: 'send',
                 kind: BtnKind.a,
-                onTap: () => c.say('Share sheet opened'),
+                onTap: () => c.say(
+                  c.repo.isRemote
+                      ? 'Referral codes are not available yet on the server'
+                      : 'Share sheet opened',
+                ),
               ),
             ],
           ),
