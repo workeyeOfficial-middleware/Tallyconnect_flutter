@@ -429,59 +429,67 @@ class _Page extends ConsumerWidget {
     }
     flush();
 
+    final Widget page = SingleChildScrollView(
+      physics: scrollPhysics(c),
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 10, 4, 12),
+            child: Text(
+              index == 0 ? 'What would you like to do?' : 'Page ${index + 1}',
+              style: ts(19, w: w800, ls: -.19, c: p.ink),
+            ),
+          ),
+          ...rows,
+          Container(
+            key: c.reg.end(index),
+            margin: const EdgeInsets.only(top: 12),
+            child: dragging
+                ? CustomPaint(
+                    painter: DashedRRect(
+                      BorderRadius.circular(20),
+                      navyA(.2),
+                      2,
+                      fill: whiteA(.28),
+                    ),
+                    child: Container(
+                      height: 74,
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(
+                        'Drop here',
+                        textAlign: TextAlign.center,
+                        style: ts(13, w: w700, c: p.ink3),
+                      ),
+                    ),
+                  )
+                : const SizedBox(height: 0, width: double.infinity),
+          ),
+          if (hasHidden)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: HidRow(
+                'Hidden cards · Unhide',
+                glass: true,
+                onTap: () => c.showHiddenPanel(index),
+              ),
+            ),
+        ],
+      ),
+    );
     return fadeMask(
       top: 10,
       bottom: 18,
-      SingleChildScrollView(
-        physics: scrollPhysics(c),
-        padding: const EdgeInsets.fromLTRB(16, 2, 16, 22),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 10, 4, 12),
-              child: Text(
-                index == 0 ? 'What would you like to do?' : 'Page ${index + 1}',
-                style: ts(19, w: w800, ls: -.19, c: p.ink),
-              ),
-            ),
-            ...rows,
-            Container(
-              key: c.reg.end(index),
-              margin: const EdgeInsets.only(top: 12),
-              child: dragging
-                  ? CustomPaint(
-                      painter: DashedRRect(
-                        BorderRadius.circular(20),
-                        navyA(.2),
-                        2,
-                        fill: whiteA(.28),
-                      ),
-                      child: Container(
-                        height: 74,
-                        alignment: Alignment.center,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Text(
-                          'Drop here',
-                          textAlign: TextAlign.center,
-                          style: ts(13, w: w700, c: p.ink3),
-                        ),
-                      ),
-                    )
-                  : const SizedBox(height: 0, width: double.infinity),
-            ),
-            if (hasHidden)
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: HidRow(
-                  'Hidden cards · Unhide',
-                  glass: true,
-                  onTap: () => c.showHiddenPanel(index),
-                ),
-              ),
-          ],
-        ),
-      ),
+      c.repo.isRemote
+          // Pull down to reload; cards keep their values meanwhile.
+          ? RefreshIndicator(
+              color: p.acc,
+              onRefresh: c.pullRefresh,
+              child: page,
+            )
+          : page,
     );
   }
 }

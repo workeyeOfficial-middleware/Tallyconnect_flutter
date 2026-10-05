@@ -214,7 +214,13 @@ class Item {
 
 /// Stock summary row (`/inventory`).
 class StockRow {
-  const StockRow(this.name, this.opening, this.inward, this.outward, this.closing);
+  const StockRow(
+    this.name,
+    this.opening,
+    this.inward,
+    this.outward,
+    this.closing,
+  );
   final String name;
   final num? opening, inward, outward, closing;
 }
@@ -578,4 +584,106 @@ class DataStatus {
   static const DataStatus idle = DataStatus(LoadState.idle);
   bool get loading => state == LoadState.loading;
   bool get failed => state == LoadState.error;
+}
+
+// ------------------------------------------------------------ item detail
+
+/// One customer or supplier of an item
+/// (`/ledger-items/item/:itemName/parties`).
+class ItemParty {
+  const ItemParty({
+    required this.name,
+    required this.qty,
+    required this.amount,
+    required this.invoices,
+    this.lastDate,
+  });
+  final String name;
+  final num? qty, amount;
+  final int? invoices;
+  final DateTime? lastDate;
+
+  /// Average rate = amount ÷ quantity (null when quantity is 0 / unknown).
+  num? get avgRate =>
+      (qty == null || qty == 0 || amount == null) ? null : amount! / qty!;
+}
+
+/// Customers and suppliers of an item, loaded on demand.
+class ItemDetail {
+  const ItemDetail({required this.customers, required this.suppliers});
+  final List<ItemParty> customers, suppliers;
+}
+
+/// Sales or purchase summary of one item, summed from the item lines of
+/// the loaded voucher history.
+class ItemTrade {
+  const ItemTrade({
+    required this.amount,
+    required this.qty,
+    required this.vouchers,
+    this.lastDate,
+    this.lastRate,
+    this.minRate,
+    this.maxRate,
+  });
+  final num amount, qty;
+  final int vouchers;
+  final DateTime? lastDate;
+  final num? lastRate, minRate, maxRate;
+}
+
+// --------------------------------------------------------------- reminders
+
+/// A reminder on an outstanding bill. Kept only on this phone (the backend
+/// has no reminder endpoint).
+class Reminder {
+  const Reminder({
+    required this.id,
+    required this.company,
+    required this.billKey,
+    required this.party,
+    required this.billNo,
+    required this.kind,
+    required this.amount,
+    required this.date,
+    this.note = '',
+  });
+  final String id, company, billKey, party, billNo;
+
+  /// `recv` | `pay`
+  final String kind;
+  final num amount;
+
+  /// `YYYY-MM-DD`
+  final String date;
+  final String note;
+
+  DateTime? get day => DateTime.tryParse(date);
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'id': id,
+    'company': company,
+    'billKey': billKey,
+    'party': party,
+    'billNo': billNo,
+    'kind': kind,
+    'amount': amount,
+    'date': date,
+    'note': note,
+  };
+
+  static Reminder? fromJson(Object? o) {
+    if (o is! Map || o['id'] is! String || o['date'] is! String) return null;
+    return Reminder(
+      id: o['id'] as String,
+      company: '${o['company'] ?? ''}',
+      billKey: '${o['billKey'] ?? ''}',
+      party: '${o['party'] ?? ''}',
+      billNo: '${o['billNo'] ?? ''}',
+      kind: o['kind'] == 'pay' ? 'pay' : 'recv',
+      amount: o['amount'] is num ? o['amount'] as num : 0,
+      date: o['date'] as String,
+      note: '${o['note'] ?? ''}',
+    );
+  }
 }

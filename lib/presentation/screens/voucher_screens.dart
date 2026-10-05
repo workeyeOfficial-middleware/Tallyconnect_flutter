@@ -11,19 +11,29 @@ import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
 import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
+import '../../data/accounting.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../widgets/common.dart';
 
-/// `vsum` (2501): the four month totals shared by Vouchers and Reports,
-/// summed from this month's vouchers of each type (null → `—`).
-List<Widget> monthSums(BuildContext context, AppController c) {
+/// `vsum` (2501): the four totals shared by Vouchers and Reports, summed
+/// from the loaded vouchers of each type (null → `—`). Reports use this
+/// month; the Vouchers hub uses [allTime] so its totals match the lists,
+/// which open on all history.
+List<Widget> monthSums(
+  BuildContext context,
+  AppController c, {
+  bool allTime = false,
+}) {
   final TcPalette p = Tc.of(context);
-  final MonthTotals mt = c.repo.monthTotals();
+  final MonthTotals mt = allTime
+      ? kindTotals(c.repo.vouchers(), complete: c.repo.vouchersComplete)
+      : c.repo.monthTotals();
   final bool ready =
       !c.repo.isRemote ||
-      (c.repo.status(DataSet.vouchers).state == LoadState.ready &&
+      // Last good data stays visible while a refresh runs.
+      (c.repo.hasData(DataSet.vouchers) &&
           // Incomplete lists report no amounts → show `—`.
           (mt.amount.isNotEmpty || mt.count.isEmpty));
   num? a(String k) => ready ? (mt.amount[k] ?? 0) : null;
@@ -39,7 +49,7 @@ List<Widget> monthSums(BuildContext context, AppController c) {
       Tap(
         onTap: () => c.go('vList', <String, Object?>{
           'vFilter': m.$4,
-          'vPeriod': 'month',
+          'vPeriod': allTime ? 'all' : 'month',
         }),
         radius: 16,
         child: Tot(
@@ -67,7 +77,18 @@ class VHubScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    const List<(String, String, String, String)> tiles =
+    final List<Voucher> all = c.repo.vouchers();
+    // Other Tally voucher types found in the data get their own tile too.
+    final List<String> otherTypes =
+        all
+            .where(
+              (Voucher v) => v.kind == 'other' && (v.type ?? '').isNotEmpty,
+            )
+            .map((Voucher v) => v.type!)
+            .toSet()
+            .toList()
+          ..sort();
+    final List<(String, String, String, String)> tiles =
         <(String, String, String, String)>[
           ('all', 'All', 'receipt', 'vouchers'),
           ('sales', 'Sales', 'bag', 'sales'),
@@ -76,11 +97,19 @@ class VHubScreen extends ConsumerWidget {
           ('payment', 'Payment', 'out', 'payment'),
           ('journal', 'Adjustment', 'book', 'journal'),
           ('contra', 'Bank ↔ Cash', 'swap', 'contra'),
+          for (final String t in otherTypes)
+            ('type:$t', t, 'receipt', 'vouchers'),
         ];
-    final Map<String, int> cnt = c.repo.monthTotals().count;
-    int count(String k) => k == 'all'
-        ? cnt.values.fold<int>(0, (int s, int n) => s + n)
-        : (cnt[k] ?? 0);
+    // Counts over the complete loaded history (same data as the lists).
+    int count(String k) {
+      if (k == 'all') return all.length;
+      if (k.startsWith('type:')) {
+        final String t = k.substring(5);
+        return all.where((Voucher v) => v.type == t).length;
+      }
+      return all.where((Voucher v) => v.kind == k).length;
+    }
+
     return Scr(
       children: <Widget>[
         const BackNav(),
@@ -93,11 +122,16 @@ class VHubScreen extends ConsumerWidget {
             children: <Widget>[
               LtBadge(
                 Text(
-                  '${monthYear(c.today)} · ${c.companyName}',
+                  c.repo.isRemote
+                      ? 'All history · ${c.companyName}'
+                      : '${monthYear(c.today)} · ${c.companyName}',
                   style: ts(13.5, w: w700, c: p.ink3),
                 ),
               ),
-              Grid(cols: 2, children: monthSums(context, c)),
+              Grid(
+                cols: 2,
+                children: monthSums(context, c, allTime: c.repo.isRemote),
+              ),
             ],
           ),
         ),
@@ -123,11 +157,15 @@ class VHubScreen extends ConsumerWidget {
                         Text(
                           t.$2,
                           textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: ts(15, w: w800, h: 1.1, c: p.ink),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${count(t.$1)} this month',
+                          c.repo.isRemote
+                              ? '${count(t.$1)} ${count(t.$1) == 1 ? 'entry' : 'entries'}'
+                              : '${count(t.$1)} this month',
                           textAlign: TextAlign.center,
                           style: ts(12.5, c: p.ink3),
                         ),
@@ -179,7 +217,9 @@ class VListScreen extends ConsumerWidget {
     // notes, returns …) each get their own filter: `type:<name>`.
     final List<String> otherTypes =
         all
-            .where((Voucher v) => v.kind == 'other' && (v.type ?? '').isNotEmpty)
+            .where(
+              (Voucher v) => v.kind == 'other' && (v.type ?? '').isNotEmpty,
+            )
             .map((Voucher v) => v.type!)
             .toSet()
             .toList()

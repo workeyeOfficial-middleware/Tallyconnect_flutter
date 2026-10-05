@@ -42,6 +42,7 @@ Widget screenFor(String s) => switch (s) {
   'outList' => const OutListScreen(),
   'billDetail' => const BillDetailScreen(),
   'items' => const ItemsScreen(),
+  'itemDetail' => const ItemDetailScreen(),
   'party' => const PartyScreen(),
   'partyDetail' => const PartyDetailScreen(),
   'reports' => const ReportsScreen(),
@@ -74,6 +75,7 @@ const List<String> kScreens = <String>[
   'outList',
   'billDetail',
   'items',
+  'itemDetail',
   'party',
   'partyDetail',
   'reports',
@@ -111,7 +113,7 @@ class Shell extends ConsumerWidget {
             child: Stack(
               fit: StackFit.expand,
               children: <Widget>[
-                const TcWallpaper(),
+                TcWallpaper(opacity: c.bgOpacity / 100, shade: c.bgShade / 100),
                 Positioned.fill(
                   child: KeyedSubtree(
                     key: ValueKey<String>(c.screen),

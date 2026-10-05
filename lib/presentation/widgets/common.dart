@@ -268,7 +268,7 @@ class _ScrState extends ConsumerState<Scr> {
     c.reg.screenScroll = _sc;
     c.reg.screenViewport = _vp;
     final bool wt = c.showTabs;
-    final Widget scroll = SingleChildScrollView(
+    Widget scroll = SingleChildScrollView(
       key: _vp,
       controller: _sc,
       physics: scrollPhysics(c),
@@ -283,6 +283,15 @@ class _ScrState extends ConsumerState<Scr> {
         children: widget.children,
       ),
     );
+    if (c.repo.isRemote && c.loggedIn) {
+      // Pull down to reload; the current data stays until fresh data arrives.
+      scroll = RefreshIndicator(
+        edgeOffset: topIn(context),
+        color: Tc.of(context).acc,
+        onRefresh: c.pullRefresh,
+        child: scroll,
+      );
+    }
     return Padding(
       padding: EdgeInsets.only(bottom: wt ? wtBottom(context) : 0),
       child: wt ? fadeMask(scroll, bottom: 18) : scroll,
@@ -428,19 +437,27 @@ class BackNav extends ConsumerWidget {
 }
 
 /// Title row with an optional right-side badge (`.lt` + `.h1` + badge).
-class TitleBadge extends StatelessWidget {
-  const TitleBadge(this.title, {super.key, this.badge = 'Sample data'});
+class TitleBadge extends ConsumerWidget {
+  const TitleBadge(this.title, {super.key, this.badge});
   final String title;
-  final String badge;
+
+  /// Default: "From Tally" for server data, "Sample data" for the demo.
+  final String? badge;
 
   @override
-  Widget build(BuildContext context) => Row(
+  Widget build(BuildContext context, WidgetRef ref) => Row(
     crossAxisAlignment: CrossAxisAlignment.end,
     children: <Widget>[
       Expanded(child: H1(title)),
       Padding(
         padding: const EdgeInsets.only(bottom: 10),
-        child: Bdg(badge, kind: BadgeKind.acc),
+        child: Bdg(
+          badge ??
+              (ref.watch(appProvider).repo.isRemote
+                  ? 'From Tally'
+                  : 'Sample data'),
+          kind: BadgeKind.acc,
+        ),
       ),
     ],
   );
@@ -880,24 +897,33 @@ class Stat extends StatelessWidget {
 }
 
 /// "Sample data" / summary header line (`.lt` with badge).
-class LtBadge extends StatelessWidget {
+class LtBadge extends ConsumerWidget {
   const LtBadge(
     this.left, {
     super.key,
-    this.badge = 'Sample data',
+    this.badge,
     this.margin = const EdgeInsets.only(bottom: 12),
   });
   final Widget left;
-  final String badge;
+
+  /// Default: "From Tally" for server data, "Sample data" for the demo.
+  final String? badge;
   final EdgeInsets margin;
 
   @override
-  Widget build(BuildContext context) => Padding(
+  Widget build(BuildContext context, WidgetRef ref) => Padding(
     padding: margin,
     child: Row(
       children: <Widget>[
         Expanded(child: left),
-        Bdg(badge, kind: BadgeKind.acc),
+        const SizedBox(width: 8),
+        Bdg(
+          badge ??
+              (ref.watch(appProvider).repo.isRemote
+                  ? 'From Tally'
+                  : 'Sample data'),
+          kind: BadgeKind.acc,
+        ),
       ],
     ),
   );

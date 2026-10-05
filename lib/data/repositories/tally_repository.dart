@@ -69,10 +69,19 @@ abstract class TallyRepository extends ChangeNotifier {
   Future<void> sendResetCode(String email);
 
   // -------------------------------------------------------------- data
-  Future<void> refreshAll();
+  /// Reloads every data set. Concurrent calls share one load; without
+  /// [force] a load finished in the last few seconds is not repeated.
+  /// Previous data stays visible until fresh data replaces it.
+  Future<void> refreshAll({bool force = false});
   Future<void> refreshActivity();
   Future<void> refreshNotifications();
   DataStatus status(String set);
+
+  /// True once the set has real data (from the server or the local cache).
+  bool hasData(String set);
+
+  /// First error of the last load, or null when everything loaded.
+  String? lastError();
 
   List<Company> companies();
   String? get activeCompanyId;
@@ -109,7 +118,9 @@ abstract class TallyRepository extends ChangeNotifier {
   Future<void> saveAlert(String key, bool on);
 
   PartyDetail? partyDetail(String partyKey);
-  Future<void> loadPartyDetail(Party p);
+  Future<void> loadPartyDetail(Party p, {bool force = false});
+  ItemDetail? itemDetail(String itemName);
+  Future<void> loadItemDetail(Item it, {bool force = false});
   List<LedgerLine>? voucherLines(String guid);
   Future<void> loadVoucherLines(String guid);
 
@@ -141,7 +152,11 @@ class MockTallyRepository extends TallyRepository {
   @override
   bool get sessionExpired => false;
   @override
-  Future<AuthUser> login(String email, String password, String loginType) async =>
+  Future<AuthUser> login(
+    String email,
+    String password,
+    String loginType,
+  ) async =>
       const AuthUser(id: 0, username: 'workk72002', email: '', role: 'ADMIN');
   @override
   Future<bool> restoreSession() async => false;
@@ -151,7 +166,11 @@ class MockTallyRepository extends TallyRepository {
   Future<void> sendResetCode(String email) async {}
 
   @override
-  Future<void> refreshAll() async {}
+  Future<void> refreshAll({bool force = false}) async {}
+  @override
+  bool hasData(String set) => true;
+  @override
+  String? lastError() => null;
   @override
   Future<void> refreshActivity() async {}
   @override
@@ -252,7 +271,11 @@ class MockTallyRepository extends TallyRepository {
   @override
   PartyDetail? partyDetail(String partyKey) => null;
   @override
-  Future<void> loadPartyDetail(Party p) async {}
+  Future<void> loadPartyDetail(Party p, {bool force = false}) async {}
+  @override
+  ItemDetail? itemDetail(String itemName) => null;
+  @override
+  Future<void> loadItemDetail(Item it, {bool force = false}) async {}
   @override
   List<LedgerLine>? voucherLines(String guid) => null;
   @override

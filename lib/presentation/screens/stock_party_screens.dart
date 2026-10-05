@@ -13,6 +13,7 @@ import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
 import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
+import '../../data/accounting.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
@@ -173,9 +174,7 @@ class ItemsScreen extends ConsumerWidget {
                       children: <Widget>[
                         Text('Total stock value', style: rsStyle(context)),
                         Text(
-                          inr(
-                            all.fold<num>(0, (num s, Item x) => s + x.worth),
-                          ),
+                          inr(all.fold<num>(0, (num s, Item x) => s + x.worth)),
                           style: amtStyle(context, size: 26),
                         ),
                       ],
@@ -230,6 +229,9 @@ class ItemsScreen extends ConsumerWidget {
                 list: 'items',
                 lk: x.name,
                 child: RowX(
+                  onTap: () {
+                    if (c.guardTap('items', x.name)) c.openItem(x.name);
+                  },
                   children: <Widget>[
                     Ico(
                       'box',
@@ -423,7 +425,9 @@ class PartyScreen extends ConsumerWidget {
                         const SizedBox(height: 4),
                         Text(
                           x.bal == 0
-                              ? (c.repo.isRemote ? 'No pending bills' : 'Settled')
+                              ? (c.repo.isRemote
+                                    ? 'No pending bills'
+                                    : 'Settled')
                               : (x.type == 'c' || (x.type == 'o' && x.bal > 0)
                                     ? 'They owe you'
                                     : 'You owe'),
@@ -481,7 +485,8 @@ class PartyDetailScreen extends ConsumerWidget {
         ? (det?.entries ?? const <Voucher>[])
         : c.repo.vouchers().where((Voucher v) => v.party == p0.name).toList();
     // Tally balances arrive without Dr/Cr; the size is shown as synced.
-    String tallyBal(num? v) => v == null ? '—' : '${inr(v.abs())} (Dr/Cr not sent)';
+    String tallyBal(num? v) =>
+        v == null ? '—' : '${inr(v.abs())} (Dr/Cr not sent)';
     const List<(String, String)> tabs = <(String, String)>[
       ('summary', 'Summary'),
       ('items', 'Items'),
@@ -558,7 +563,9 @@ class PartyDetailScreen extends ConsumerWidget {
             onTap: () => other
                 ? c.go('newEntry')
                 : (pc
-                      ? c.startFlow('sales', <String, String>{'sParty': p0.name})
+                      ? c.startFlow('sales', <String, String>{
+                          'sParty': p0.name,
+                        })
                       : c.startFlow('purchase', <String, String>{
                           'pParty': p0.name,
                         })),
@@ -570,7 +577,9 @@ class PartyDetailScreen extends ConsumerWidget {
           actions: <Widget>[
             CBtn(
               'sync',
-              onTap: remote ? () => c.repo.loadPartyDetail(p0) : c.refreshNow,
+              onTap: remote
+                  ? () => c.repo.loadPartyDetail(p0, force: true)
+                  : c.refreshNow,
             ),
             CBtn(
               'file',
@@ -661,9 +670,10 @@ class PartyDetailScreen extends ConsumerWidget {
                     Expanded(
                       child: RTx(
                         l.name,
-                        <String>[l.qty, l.rate]
-                            .where((String x) => x.isNotEmpty)
-                            .join(' · '),
+                        <String>[
+                          l.qty,
+                          l.rate,
+                        ].where((String x) => x.isNotEmpty).join(' · '),
                       ),
                     ),
                     Text(inr(l.amt), style: amtStyle(context)),
@@ -685,15 +695,16 @@ class PartyDetailScreen extends ConsumerWidget {
             children: <Widget>[
               for (final Voucher v in pv)
                 RowX(
-                  onTap: () =>
-                      c.go('entryDetail', <String, Object?>{
-                        'entry':
-                            c.repo
-                                .vouchers()
-                                .where((Voucher x) => x.guid != null && x.guid == v.guid)
-                                .firstOrNull ??
-                            v,
-                      }),
+                  onTap: () => c.go('entryDetail', <String, Object?>{
+                    'entry':
+                        c.repo
+                            .vouchers()
+                            .where(
+                              (Voucher x) => x.guid != null && x.guid == v.guid,
+                            )
+                            .firstOrNull ??
+                        v,
+                  }),
                   children: <Widget>[
                     Ico(
                       kKinds[v.kind]!.ic,
@@ -714,10 +725,227 @@ class PartyDetailScreen extends ConsumerWidget {
                 empty(
                   loadingText.isNotEmpty
                       ? loadingText
-                      : (remote ? 'No entries for this party.' : 'No entries this month.'),
+                      : (remote
+                            ? 'No entries for this party.'
+                            : 'No entries this month.'),
                 ),
             ],
           ),
+      ],
+    );
+  }
+}
+
+/// ITEM DETAIL (new): stock from Tally, sales / purchase summary from the
+/// item lines of the loaded voucher history, and the item's customers /
+/// suppliers from `/ledger-items/item/:itemName/parties`.
+class ItemDetailScreen extends ConsumerWidget {
+  const ItemDetailScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    final Item? it = c.repo
+        .items()
+        .where((Item x) => x.name == c.itemSel)
+        .firstOrNull;
+    if (it == null) {
+      return Scr(
+        children: <Widget>[
+          const BackNav(),
+          EmptyBox(c.emptyText(DataSet.items, 'No item selected.')),
+        ],
+      );
+    }
+    final List<Voucher> vs = c.repo.vouchers();
+    final ItemTrade sales = itemTrade(vs, it.name, 'sales');
+    final ItemTrade purch = itemTrade(vs, it.name, 'purchase');
+    final ItemDetail? det = c.repo.itemDetail(it.name);
+    final bool complete = c.repo.vouchersComplete;
+    String rate(num? v) => v == null ? '—' : inr(v);
+    String q(num v) => '${qty(v)} ${it.unit}';
+    List<(String, String, bool)> trade(
+      ItemTrade t,
+      bool sale,
+    ) => <(String, String, bool)>[
+      (
+        sale ? 'Total sales value' : 'Total purchase value',
+        inr(t.amount),
+        true,
+      ),
+      (sale ? 'Quantity sold' : 'Quantity bought', q(t.qty), false),
+      (sale ? 'Last sale date' : 'Last purchase date', dmy(t.lastDate), false),
+      ('Last rate', rate(t.lastRate), false),
+      ('Lowest rate', rate(t.minRate), false),
+      ('Highest rate', rate(t.maxRate), false),
+      (sale ? 'Sales vouchers' : 'Purchase vouchers', '${t.vouchers}', false),
+    ];
+    const List<(String, String)> tabs = <(String, String)>[
+      ('summary', 'Summary'),
+      ('customers', 'Customers'),
+      ('suppliers', 'Suppliers'),
+    ];
+    Widget parties(List<ItemParty>? list, bool sale) {
+      if (list == null) {
+        return EmptyBox(
+          c.repo.isRemote
+              ? c.emptyText(DataSet.item, 'Loading…')
+              : 'No party details in sample data.',
+        );
+      }
+      if (list.isEmpty) {
+        return EmptyBox(
+          sale
+              ? 'No customer has bought this item yet.'
+              : 'No supplier has sold this item to you yet.',
+        );
+      }
+      return GlassList(
+        children: <Widget>[
+          for (final ItemParty x in list)
+            RowX(
+              cross: CrossAxisAlignment.start,
+              children: <Widget>[
+                Av(initials(x.name), size: Av.sm),
+                Expanded(
+                  child: RTx(
+                    x.name,
+                    <String>[
+                      if (x.lastDate != null)
+                        '${sale ? 'Last sold' : 'Last bought'}: ${dmy(x.lastDate)}',
+                      if (x.avgRate != null)
+                        'Avg rate ${inr(paise(x.avgRate!))}',
+                      if (x.invoices != null)
+                        '${x.invoices} ${x.invoices == 1 ? 'voucher' : 'vouchers'}',
+                    ].join(' · '),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: <Widget>[
+                    Text('Total qty', style: rsStyle(context, 12)),
+                    Text(
+                      x.qty == null ? '—' : q(x.qty!),
+                      style: rtStyle(context, 15),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      x.amount == null ? '—' : inr(x.amount),
+                      style: amtStyle(context, size: 14.5),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+        ],
+      );
+    }
+
+    return Scr(
+      children: <Widget>[
+        BackNav(
+          actions: <Widget>[
+            CBtn(
+              'sync',
+              onTap: () => c.repo.isRemote
+                  ? c.repo.loadItemDetail(it, force: true)
+                  : c.refreshNow(),
+            ),
+            CBtn('share', onTap: () => c.shareDoc(docItem(it, c.companyName))),
+          ],
+        ),
+        Glass(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Ico('box', size: IcoSize.sm, color: p.cat('items')),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: RTx(
+                      it.name,
+                      <String>[
+                        if ((it.group ?? '').isNotEmpty) it.group!,
+                        'Unit: ${it.unit}',
+                      ].join(' · '),
+                      titleSize: 19,
+                    ),
+                  ),
+                ],
+              ),
+              Tot(
+                bg: mix(p.cat('items'), .08),
+                margin: const EdgeInsets.only(top: 12),
+                child: Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text('Closing stock', style: rsStyle(context)),
+                          Text(
+                            it.stock > 0 ? q(it.stock) : 'Finished',
+                            style: amtStyle(context, size: 20),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: <Widget>[
+                        Text('Stock value', style: rsStyle(context)),
+                        Text(inr(it.worth), style: amtStyle(context, size: 20)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        Seg(
+          margin: const EdgeInsets.only(top: 14, bottom: 14),
+          items: tabs.map(((String, String) e) => e.$2).toList(),
+          selected: tabs.indexWhere(((String, String) e) => e.$1 == c.itemTab),
+          onPick: (int i) => c.update(() => c.itemTab = tabs[i].$1),
+        ),
+        if (c.itemTab == 'summary') ...<Widget>[
+          const Sec('Item', margin: EdgeInsets.fromLTRB(8, 0, 8, 8)),
+          KvList(<(String, String, bool)>[
+            ('Item name', it.name, false),
+            ('Stock group', (it.group ?? '').isEmpty ? '—' : it.group!, false),
+            ('HSN / SAC', it.hsn ?? 'Not set in Tally', false),
+            (
+              'GST rate',
+              it.gst == null ? 'Not set in Tally' : '${qty(it.gst!)}%',
+              false,
+            ),
+            ('Stock rate (Tally)', inr(it.rate), false),
+          ]),
+          if (!complete)
+            const InfoBox(
+              'The voucher history could not be read in full, so these totals may be incomplete.',
+              icon: 'info',
+              margin: EdgeInsets.only(top: 14),
+            ),
+          const Sec('Sales summary'),
+          KvList(trade(sales, true)),
+          const Sec('Purchase summary'),
+          KvList(trade(purch, false)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(6, 10, 6, 0),
+            child: Text(
+              'Summed from the item lines of your synced Tally vouchers.',
+              style: rsStyle(context, 12.5),
+            ),
+          ),
+        ],
+        if (c.itemTab == 'customers') parties(det?.customers, true),
+        if (c.itemTab == 'suppliers') parties(det?.suppliers, false),
       ],
     );
   }

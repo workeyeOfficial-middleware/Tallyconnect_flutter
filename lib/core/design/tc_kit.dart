@@ -791,20 +791,31 @@ class ChipBtn extends StatelessWidget {
   Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
     final Color fg = on ? Colors.white : (color ?? p.ink2);
-    final Widget inner = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          if (icon != null) ...<Widget>[
-            Ic(icon!, size: iconSize, color: fg),
-            const SizedBox(width: 7),
+    // Never wider than the screen: very long labels end with "…" instead of
+    // overflowing or overlapping the next chip.
+    final double maxW = MediaQuery.sizeOf(context).width - 32;
+    final Widget inner = ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxW > 80 ? maxW : 80),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            if (icon != null) ...<Widget>[
+              Ic(icon!, size: iconSize, color: fg),
+              const SizedBox(width: 7),
+            ],
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: ts(fontSize, w: w700, c: fg),
+              ),
+            ),
           ],
-          Text(
-            label,
-            style: ts(fontSize, w: w700, c: fg),
-          ),
-        ],
+        ),
       ),
     );
     return Tap(
@@ -831,21 +842,54 @@ class ChipBtn extends StatelessWidget {
   }
 }
 
-/// Wrap of chips: `.chips` gap 8, margin 4 0 14.
+/// Wrap of chips: `.chips` gap 8, margin 4 0 14. Up to [wrapMax] chips
+/// wrap onto rows; more than that become two rows that scroll sideways, so
+/// many voucher types never push the page down or overlap.
 class Chips extends StatelessWidget {
   const Chips({
     super.key,
     required this.children,
     this.margin = const EdgeInsets.only(top: 4, bottom: 14),
+    this.wrapMax = 8,
   });
   final List<Widget> children;
   final EdgeInsets margin;
+  final int wrapMax;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: margin,
-    child: Wrap(spacing: 8, runSpacing: 8, children: children),
-  );
+  Widget build(BuildContext context) {
+    if (children.length <= wrapMax) {
+      return Padding(
+        padding: margin,
+        child: Wrap(spacing: 8, runSpacing: 8, children: children),
+      );
+    }
+    final int half = (children.length + 1) ~/ 2;
+    Widget row(List<Widget> cs) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        for (int i = 0; i < cs.length; i++) ...<Widget>[
+          if (i > 0) const SizedBox(width: 8),
+          cs[i],
+        ],
+      ],
+    );
+    return Padding(
+      padding: margin,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        clipBehavior: Clip.none,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            row(children.sublist(0, half)),
+            const SizedBox(height: 8),
+            row(children.sublist(half)),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// `.seg`: glass segmented control.

@@ -25,7 +25,9 @@ DateTime? dateOnly(Object? v) {
   if (d == null) return null;
   final DateTime u = d.isUtc ? d : d.toUtc();
   // A bare `YYYY-MM-DD` parses as local midnight; keep its own fields.
-  return v.length <= 10 ? DateTime(d.year, d.month, d.day) : DateTime(u.year, u.month, u.day);
+  return v.length <= 10
+      ? DateTime(d.year, d.month, d.day)
+      : DateTime(u.year, u.month, u.day);
 }
 
 /// Instant from a TIMESTAMP column, in local time.
@@ -81,7 +83,9 @@ Company companyFrom(Map<String, Object?> m) => Company(
 );
 
 SyncInfo syncFrom(Object? body) {
-  final Map<Object?, Object?> m = body is Map ? body : const <Object?, Object?>{};
+  final Map<Object?, Object?> m = body is Map
+      ? body
+      : const <Object?, Object?>{};
   return SyncInfo(instant(m['last_sync_at']), m['sync_in_progress'] == true);
 }
 
@@ -263,6 +267,15 @@ Item itemFrom(Map<String, Object?> m) {
   );
 }
 
+/// A `/ledger-items/item/:itemName/parties` row.
+ItemParty itemPartyFrom(Map<String, Object?> m) => ItemParty(
+  name: str(m['party_name']),
+  qty: toNum(m['total_qty']),
+  amount: toNum(m['total_amount']),
+  invoices: toNum(m['invoices'])?.toInt(),
+  lastDate: dateOnly(m['last_date']),
+);
+
 StockRow stockFrom(Map<String, Object?> m) => StockRow(
   str(m['name']),
   toNum(m['opening']),
@@ -315,11 +328,15 @@ Act actFrom(Map<String, Object?> m, DateTime now) {
     if (str(p['due_date']).isNotEmpty) ('Pay by', fdate(str(p['due_date']))),
     if (pay is Map && str(pay['payment_mode']).isNotEmpty)
       ('Paid by', str(pay['payment_mode'])),
-    if (str(p['reference_no']).isNotEmpty) ('Reference no.', str(p['reference_no'])),
+    if (str(p['reference_no']).isNotEmpty)
+      ('Reference no.', str(p['reference_no'])),
     if (str(p['narration']).isNotEmpty) ('Note', str(p['narration'])),
     if (at != null) ('Saved', '${dmy(at)} · ${clock(at)}'),
     if (instant(m['processed_at']) != null)
-      ('Processed', '${dmy(instant(m['processed_at']))} · ${clock(instant(m['processed_at'])!)}'),
+      (
+        'Processed',
+        '${dmy(instant(m['processed_at']))} · ${clock(instant(m['processed_at'])!)}',
+      ),
   ];
   final List<(String, String, num)> itemsOut = <(String, String, num)>[
     if (p['items'] is List)
@@ -404,7 +421,9 @@ Member memberFrom(Map<String, Object?> m) => Member(
 // ------------------------------------------------------- entry results
 
 SubmitResult submitResultFrom(Object? body) {
-  final Map<Object?, Object?> m = body is Map ? body : const <Object?, Object?>{};
+  final Map<Object?, Object?> m = body is Map
+      ? body
+      : const <Object?, Object?>{};
   final bool dup = m['duplicate'] == true;
   return SubmitResult(
     ok: m['success'] == true,

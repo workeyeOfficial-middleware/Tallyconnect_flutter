@@ -15,7 +15,7 @@ class ApiConfig {
   /// Override at build time with `--dart-define=TC_API_BASE=https://…`.
   static const String baseUrl = String.fromEnvironment(
     'TC_API_BASE',
-    defaultValue: 'https://tallyconnect-wlup.onrender.com',
+    defaultValue: 'https://tallymobile.utkarshmishra.online',
   );
 
   /// The host sleeps when idle; the first call after a pause can take close
@@ -46,7 +46,9 @@ class ApiException implements Exception {
     ApiErrorKind.network => 'No internet connection. Check your network.',
     ApiErrorKind.timeout => 'The server took too long to answer. Try again.',
     ApiErrorKind.unauthorized =>
-      message.isNotEmpty && message != 'Unauthorized' && message != 'Invalid token'
+      message.isNotEmpty &&
+              message != 'Unauthorized' &&
+              message != 'Invalid token'
           ? message
           : 'Your session has ended. Please log in again.',
     ApiErrorKind.server =>
@@ -59,9 +61,12 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  ApiClient({http.Client? client, String? baseUrl, this.timeout = ApiConfig.timeout})
-    : _http = client ?? http.Client(),
-      _base = (baseUrl ?? ApiConfig.baseUrl).replaceAll(RegExp(r'/+$'), '');
+  ApiClient({
+    http.Client? client,
+    String? baseUrl,
+    this.timeout = ApiConfig.timeout,
+  }) : _http = client ?? http.Client(),
+       _base = (baseUrl ?? ApiConfig.baseUrl).replaceAll(RegExp(r'/+$'), '');
 
   final http.Client _http;
   final String _base;
@@ -76,7 +81,9 @@ class ApiClient {
           in (query ?? const <String, Object?>{}).entries)
         if (e.value != null && '${e.value}'.isNotEmpty) e.key: '${e.value}',
     };
-    return Uri.parse('$_base$path').replace(queryParameters: q.isEmpty ? null : q);
+    return Uri.parse(
+      '$_base$path',
+    ).replace(queryParameters: q.isEmpty ? null : q);
   }
 
   Map<String, String> _headers({bool json = false, bool auth = true}) =>
@@ -86,8 +93,11 @@ class ApiClient {
         if (auth && token != null) 'Authorization': 'Bearer $token',
       };
 
-  Future<Object?> get(String path, {Map<String, Object?>? query, bool auth = true}) =>
-      _send(() => _http.get(uri(path, query), headers: _headers(auth: auth)));
+  Future<Object?> get(
+    String path, {
+    Map<String, Object?>? query,
+    bool auth = true,
+  }) => _send(() => _http.get(uri(path, query), headers: _headers(auth: auth)));
 
   Future<Object?> post(String path, {Object? body, bool auth = true}) => _send(
     () => _http.post(

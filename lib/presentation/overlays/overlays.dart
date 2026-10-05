@@ -41,6 +41,7 @@ class OverlayLayer extends ConsumerWidget {
       'invite' => const InviteSheet(),
       'newUser' => const NewUserSheet(),
       'member' => const MemberSheet(),
+      'reminder' => const ReminderSheet(),
       'pdf' => const PdfViewer(),
       'doc' => const DocViewer(),
       _ => const SizedBox.shrink(),
@@ -202,10 +203,7 @@ class SideMenu extends ConsumerWidget {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: <Widget>[
-                                  Text(
-                                    uname,
-                                    style: rtStyle(context, 17),
-                                  ),
+                                  Text(uname, style: rtStyle(context, 17)),
                                   const SizedBox(height: 2),
                                   Text(
                                     uemail,
@@ -339,13 +337,21 @@ class SearchSheet extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    final String q = c.f('q').toLowerCase().trim();
-    final List<SearchEntry> results = kSearch
-        .where(
-          (SearchEntry r) =>
-              q.isEmpty || '${r.t} ${r.s}'.toLowerCase().contains(q),
-        )
-        .toList();
+    final String q = c.f('q').trim();
+    // Empty: the app's screens. Typed: every loaded item, party, voucher,
+    // bill, activity entry, team member, report and screen that matches.
+    final List<SearchHit> results = q.isEmpty
+        ? <SearchHit>[
+            for (final SearchEntry e in kSearch)
+              SearchHit(e.t, e.s, e.ic, e.c, () {
+                if (e.f != null) {
+                  c.startFlow(e.f!);
+                } else {
+                  c.run(e.a!);
+                }
+              }),
+          ]
+        : c.searchHits(q);
     return Sheet(
       top: 60,
       child: Column(
@@ -355,21 +361,18 @@ class SearchSheet extends ConsumerWidget {
           Inp(
             value: c.f('q'),
             onChanged: (String v) => c.setF('q', v),
-            placeholder: 'Type a screen, e.g. Party or Sales',
+            placeholder: 'Search items, parties, entries, screens…',
             icon: 'search',
           ),
           GlassList(
             margin: const EdgeInsets.only(top: 12),
             children: <Widget>[
-              for (final SearchEntry r in results)
+              for (final SearchHit r in results)
                 RowX(
                   onTap: () {
                     c.setF('q', '');
-                    if (r.f != null) {
-                      c.startFlow(r.f!);
-                    } else {
-                      c.run(r.a!);
-                    }
+                    c.closeOv();
+                    r.open();
                   },
                   children: <Widget>[
                     Ico(
@@ -378,7 +381,7 @@ class SearchSheet extends ConsumerWidget {
                       color: p.cat(r.c),
                       icon: IcSize.s,
                     ),
-                    Expanded(child: RTx(r.t, r.s)),
+                    Expanded(child: RTx(r.t, r.s, ell: true)),
                     chevR(),
                   ],
                 ),
@@ -386,7 +389,11 @@ class SearchSheet extends ConsumerWidget {
                 Padding(
                   padding: const EdgeInsets.all(18),
                   child: Text(
-                    'Nothing found. Try “sale” or “party”.',
+                    c.repo.isRemote &&
+                            c.repo.status('items').loading &&
+                            !c.repo.hasData('items')
+                        ? 'Still loading your data…'
+                        : 'Nothing found for “$q”.',
                     textAlign: TextAlign.center,
                     style: rsStyle(context, 15),
                   ),
@@ -1943,6 +1950,81 @@ class ToastView extends ConsumerWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// --------------------------------------------------------------- reminder
+
+/// Set / edit / remove a reminder on an outstanding bill. Saved on this
+/// phone only (the backend has no reminder endpoint).
+class ReminderSheet extends ConsumerWidget {
+  const ReminderSheet({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    final Bill? b = c.remBill;
+    if (b == null) return const SizedBox.shrink();
+    final Reminder? existing = c.reminderFor(b);
+    final bool recv = b.kind == 'recv';
+    return Sheet(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SheetHead(
+            existing == null ? 'Set a reminder' : 'Edit reminder',
+            sub:
+                '${b.party} · ${b.no} · ${inr(b.amt)} ${recv ? 'to receive' : 'to pay'}',
+          ),
+          Fld(
+            label: 'Remind me on',
+            icon: 'calendar',
+            req: true,
+            child: DateInp(
+              value: c.f('remDate'),
+              onChanged: (String v) => c.setF('remDate', v),
+            ),
+          ),
+          Fld(
+            label: 'Note (optional)',
+            icon: 'note',
+            child: Inp(
+              value: c.f('remNote'),
+              onChanged: (String v) => c.setF('remNote', v),
+              placeholder: recv ? 'e.g. Call for payment' : 'e.g. Pay by NEFT',
+              textarea: true,
+            ),
+          ),
+          Btn(
+            label: existing == null ? 'Save reminder' : 'Update reminder',
+            icon: 'bell',
+            enabled: c.f('remDate').isNotEmpty,
+            onTap: c.saveReminder,
+          ),
+          if (existing != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Btn(
+                label: 'Remove reminder',
+                icon: 'trash',
+                kind: BtnKind.plain,
+                bg: mix(p.neg, .10),
+                color: p.neg,
+                onTap: () => c.deleteReminder(existing.id),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Text(
+              'Reminders are kept on this phone and show in Outstanding.',
+              textAlign: TextAlign.center,
+              style: rsStyle(context, 12.5),
+            ),
+          ),
+        ],
       ),
     );
   }

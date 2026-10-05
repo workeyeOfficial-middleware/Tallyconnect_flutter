@@ -87,14 +87,15 @@ OutstandingSummary summarise(
 
 /// Bills due between today and 7 days from now, soonest first.
 List<Bill> dueSoon(List<Bill> recv, List<Bill> pay, DateTime today) {
-  final List<Bill> all = <Bill>[
-    ...recv.map((Bill b) => b.withKind('recv')),
-    ...pay.map((Bill b) => b.withKind('pay')),
-  ].where((Bill b) {
-    if (b.dueDate == null) return false;
-    final int d = dayDiff(today, b.dueDate!);
-    return d >= 0 && d <= 7;
-  }).toList();
+  final List<Bill> all =
+      <Bill>[
+        ...recv.map((Bill b) => b.withKind('recv')),
+        ...pay.map((Bill b) => b.withKind('pay')),
+      ].where((Bill b) {
+        if (b.dueDate == null) return false;
+        final int d = dayDiff(today, b.dueDate!);
+        return d >= 0 && d <= 7;
+      }).toList();
   all.sort((Bill a, Bill b) => a.dueDate!.compareTo(b.dueDate!));
   return all;
 }
@@ -119,5 +120,64 @@ MonthTotals monthTotals(
         ? amt.map((String k, num v) => MapEntry<String, num>(k, paise(v)))
         : const <String, num>{},
     cnt,
+  );
+}
+
+/// Amount and count per kind over every voucher passed in (all history).
+/// [complete] false → amounts are withheld (shown as `—`), counts kept.
+MonthTotals kindTotals(List<Voucher> vouchers, {bool complete = true}) {
+  final Map<String, num> amt = <String, num>{};
+  final Map<String, int> cnt = <String, int>{};
+  for (final Voucher v in vouchers) {
+    amt[v.kind] = (amt[v.kind] ?? 0) + v.amt;
+    cnt[v.kind] = (cnt[v.kind] ?? 0) + 1;
+  }
+  return MonthTotals(
+    complete
+        ? amt.map((String k, num v) => MapEntry<String, num>(k, paise(v)))
+        : const <String, num>{},
+    cnt,
+  );
+}
+
+/// Sales (`kind` = sales) or purchase summary of one item from the item
+/// lines of [vouchers] (newest first). Item names match case-insensitively.
+ItemTrade itemTrade(List<Voucher> vouchers, String item, String kind) {
+  final String key = item.trim().toLowerCase();
+  num amount = 0, qty = 0;
+  int count = 0;
+  DateTime? last;
+  num? lastRate, minRate, maxRate;
+  for (final Voucher v in vouchers) {
+    if (v.kind != kind) continue;
+    bool hit = false;
+    for (final VoucherItem i in v.items) {
+      if (i.name.trim().toLowerCase() != key) continue;
+      hit = true;
+      amount += i.amt ?? 0;
+      qty += i.qty ?? 0;
+      final num? r = i.rate;
+      if (r != null) {
+        minRate = minRate == null || r < minRate ? r : minRate;
+        maxRate = maxRate == null || r > maxRate ? r : maxRate;
+        final DateTime? d = v.date;
+        if (lastRate == null ||
+            (d != null && (last == null || d.isAfter(last)))) {
+          lastRate = r;
+        }
+      }
+      final DateTime? d = v.date;
+      if (d != null && (last == null || d.isAfter(last))) last = d;
+    }
+    if (hit) count++;
+  }
+  return ItemTrade(
+    amount: paise(amount),
+    qty: qty,
+    vouchers: count,
+    lastDate: last,
+    lastRate: lastRate,
+    minRate: minRate,
+    maxRate: maxRate,
   );
 }

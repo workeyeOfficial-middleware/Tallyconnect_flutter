@@ -35,6 +35,9 @@ class LocalStorage {
   static const String kCustom = 'tc-liquid-custom';
   static const String kWall = 'tc-liquid-wall';
   static const String kPhoto = 'tc-liquid-photo';
+  static const String kBgOpacity = 'tc-liquid-bg-opacity';
+  static const String kBgShade = 'tc-liquid-bg-shade';
+  static const String kReminders = 'tc-outstanding-reminders';
 
   /// `loadJ(k, d)`.
   T load<T>(String k, T d) {

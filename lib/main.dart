@@ -45,7 +45,13 @@ Future<void> main() async {
     repo: repo,
     startScreen: restored ? 'home' : 'login',
   );
-  if (restored) unawaited(repo.refreshAll());
+  // Saved data (snapshot cache) is already on screen; fresh data replaces it
+  // in the background. Errors keep the saved data and show a toast.
+  if (restored) {
+    unawaited(
+      repo.refreshAll().then((_) => controller.afterRefresh(quietOk: true)),
+    );
+  }
   runApp(
     ProviderScope(
       overrides: <Override>[

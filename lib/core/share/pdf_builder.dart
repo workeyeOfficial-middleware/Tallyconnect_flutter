@@ -295,10 +295,7 @@ Future<Uint8List> buildPdf(
       footer: (pw.Context c) => pw.Row(
         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
         children: <pw.Widget>[
-          pw.Text(
-            'Made with TallyConnect · $made',
-            style: st(8.5, c: _mute),
-          ),
+          pw.Text('Made with TallyConnect · $made', style: st(8.5, c: _mute)),
           pw.Text(
             'Page ${c.pageNumber} of ${c.pagesCount}',
             style: st(8.5, c: _mute),

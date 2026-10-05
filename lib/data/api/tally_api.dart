@@ -65,6 +65,12 @@ class TallyApi {
   Future<Object?> inventoryMobile() => http.get('/inventory/mobile');
   Future<Object?> inventory() => http.get('/inventory');
 
+  /// GET /ledger-items/item/:itemName/parties?type=Sales|Purchase
+  Future<Object?> itemParties(String itemName, String type) => http.get(
+    '/ledger-items/item/${Uri.encodeComponent(itemName)}/parties',
+    query: <String, Object?>{'type': type},
+  );
+
   // ---------------------------------------------- entries (§8–§12)
   Future<Object?> createSalesPurchase(Json body) =>
       http.post('/api/mobile-voucher-command/create', body: body);
@@ -109,9 +115,8 @@ class TallyApi {
 
   // ------------------------------------------------- notifications (§19)
   Future<Object?> notifications() => http.get('/api/mobile/notifications');
-  Future<Object?> markNotificationRead(String id) => http.post(
-    '/api/mobile/notifications/${Uri.encodeComponent(id)}/read',
-  );
+  Future<Object?> markNotificationRead(String id) =>
+      http.post('/api/mobile/notifications/${Uri.encodeComponent(id)}/read');
   Future<Object?> notificationConfig() =>
       http.get('/api/mobile/notifications/config');
   Future<Object?> saveNotificationConfig(Map<String, bool> cfg) =>

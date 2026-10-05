@@ -122,7 +122,10 @@ class NotifsScreen extends ConsumerWidget {
               Padding(
                 padding: const EdgeInsets.all(18),
                 child: Text(
-                  c.emptyText(DataSet.notifications, 'You have read everything.'),
+                  c.emptyText(
+                    DataSet.notifications,
+                    'You have read everything.',
+                  ),
                   textAlign: TextAlign.center,
                   style: rsStyle(context, 15),
                 ),

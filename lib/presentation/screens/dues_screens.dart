@@ -167,6 +167,68 @@ class OutHubScreen extends ConsumerWidget {
               ),
           ],
         ),
+        if (c.companyReminders.isNotEmpty) ...<Widget>[
+          const H2Row('Your reminders', top: 18),
+          GlassList(
+            children: <Widget>[
+              for (final Reminder rm in c.companyReminders)
+                Builder(
+                  builder: (BuildContext context) {
+                    final DateTime? d = rm.day;
+                    final int left = d == null ? 1 : dayDiff(c.today, d);
+                    final bool recvR = rm.kind == 'recv';
+                    return RowX(
+                      onTap: () => c.openReminderBill(rm),
+                      cross: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Ico(
+                          'bell',
+                          size: IcoSize.xs,
+                          color: p.cat(recvR ? 'receipt' : 'payment'),
+                          icon: IcSize.s,
+                        ),
+                        Expanded(
+                          child: RTx(
+                            rm.party,
+                            <String>[
+                              rm.billNo,
+                              d == null ? rm.date : dmy(d),
+                              if (rm.note.isNotEmpty) rm.note,
+                            ].join(' · '),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: <Widget>[
+                            Text(
+                              '${recvR ? '+' : '−'}${inr(rm.amount)}',
+                              style: amtStyle(
+                                context,
+                                cls: recvR ? 'in' : 'out',
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Bdg(
+                              left < 0
+                                  ? 'Overdue'
+                                  : (left == 0
+                                        ? 'Due today'
+                                        : 'In $left ${left == 1 ? 'day' : 'days'}'),
+                              kind: left < 0
+                                  ? BadgeKind.bad
+                                  : (left == 0 ? BadgeKind.warn : BadgeKind.ok),
+                              dot: true,
+                            ),
+                          ],
+                        ),
+                      ],
+                    );
+                  },
+                ),
+            ],
+          ),
+        ],
       ],
     );
   }
@@ -184,9 +246,7 @@ class OutListScreen extends ConsumerWidget {
     final OutstandingSummary sm = c.repo.outstanding(isR);
     final num totO = sm.total, late30 = sm.late;
     int pct(num v) => totO <= 0 ? 0 : (v / totO * 100).round();
-    final List<Bill> lateBills = bl
-        .where((Bill b) => b.st == 'late')
-        .toList();
+    final List<Bill> lateBills = bl.where((Bill b) => b.st == 'late').toList();
     final int lateParties = lateBills
         .map((Bill b) => b.ledgerGuid ?? b.party)
         .toSet()
@@ -314,7 +374,9 @@ class OutListScreen extends ConsumerWidget {
                         if (lateBills.isEmpty) return;
                         final Bill b = c.repo.isRemote
                             ? lateBills.first
-                            : (lateBills.where((Bill x) => x.no == 'PI-0002').firstOrNull ??
+                            : (lateBills
+                                      .where((Bill x) => x.no == 'PI-0002')
+                                      .firstOrNull ??
                                   lateBills.first);
                         c.startFlow('payment', <String, String>{
                           'yParty': b.party,
@@ -480,6 +542,7 @@ class BillDetailScreen extends ConsumerWidget {
       lines: b.lines.isNotEmpty ? b.lines : c.repo.billLines(b.key),
     );
     final ShareDoc invoice = docInvoice(info, c.companyName);
+    final Reminder? rem = c.reminderFor(b);
     void share() => c.shareDoc(invoice);
     void pdf() => c.openPdf(info);
     Widget tile(String ic, String cc, String t, VoidCallback f) => Tap(
@@ -505,20 +568,18 @@ class BillDetailScreen extends ConsumerWidget {
     );
     return FlowScr(
       foot: <Widget>[
-        if (r)
-          Expanded(
-            flex: 10,
-            child: Btn(
-              label: 'Remind',
-              icon: 'chat',
-              kind: BtnKind.g,
-              onTap: () => c.say(
-                c.repo.isRemote
-                    ? 'WhatsApp reminders are not available yet on the server'
-                    : 'Reminder sent on WhatsApp to ${b.party}',
-              ),
-            ),
+        // Local reminder on this bill (receivable or payable).
+        Expanded(
+          flex: 10,
+          child: Btn(
+            label: rem == null
+                ? 'Remind'
+                : 'Remind · ${rem.day == null ? rem.date : dm(rem.day!)}',
+            icon: 'bell',
+            kind: BtnKind.g,
+            onTap: () => c.openReminder(b),
           ),
+        ),
         Expanded(
           flex: 17,
           child: Btn(

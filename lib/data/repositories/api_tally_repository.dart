@@ -10,6 +10,7 @@ import 'dart:async';
 
 import '../../core/network/api_client.dart';
 import '../../core/storage/session_store.dart';
+import '../../core/storage/snapshot_cache.dart';
 import '../../core/utils/format.dart';
 import '../accounting.dart';
 import '../api/adapters.dart';
@@ -32,6 +33,7 @@ abstract final class DataSet {
   static const String team = 'team';
   static const String alerts = 'alerts';
   static const String party = 'party';
+  static const String item = 'item';
   static const String voucher = 'voucher';
 }
 
@@ -39,17 +41,27 @@ class ApiTallyRepository extends TallyRepository {
   ApiTallyRepository({
     ApiClient? client,
     SessionStore? sessions,
+    SnapshotCache? cache,
     DateTime Function()? clock,
   }) : _client = client ?? ApiClient(),
        _sessions = sessions ?? SecureSessionStore(),
+       _cache = cache ?? FileSnapshotCache(),
        _clock = clock ?? DateTime.now {
     _api = TallyApi(_client);
   }
 
   final ApiClient _client;
   final SessionStore _sessions;
+  final SnapshotCache _cache;
   final DateTime Function() _clock;
   late final TallyApi _api;
+
+  /// A full reload finished less than this long ago is not repeated unless
+  /// forced (explicit refresh / pull-to-refresh force it).
+  static const Duration kFreshFor = Duration(seconds: 30);
+
+  /// Detail screens reuse data loaded less than this long ago.
+  static const Duration kDetailFreshFor = Duration(seconds: 60);
 
   AuthUser? _user;
   Profile? _profile;
@@ -60,6 +72,11 @@ class ApiTallyRepository extends TallyRepository {
   final Map<String, SyncInfo> _sync = <String, SyncInfo>{};
 
   List<LedgerRow> _ledgers = const <LedgerRow>[];
+
+  /// Every pending bill of the active company as the server sent it…
+  List<Bill> _recvAll = const <Bill>[], _payAll = const <Bill>[];
+
+  /// …and the bills this user may see (USER: permitted ledgers only).
   List<Bill> _recv = const <Bill>[], _pay = const <Bill>[];
   num? _serverRecv, _serverPay;
   List<Party> _parties = const <Party>[];
@@ -72,10 +89,39 @@ class ApiTallyRepository extends TallyRepository {
   List<Member> _team = const <Member>[];
   Map<String, bool>? _alerts;
   final Map<String, PartyDetail> _partyDetail = <String, PartyDetail>{};
+  final Map<String, ItemDetail> _itemDetail = <String, ItemDetail>{};
   final Map<String, List<LedgerLine>> _voucherLines =
       <String, List<LedgerLine>>{};
   final Map<String, DataStatus> _status = <String, DataStatus>{};
+
+  /// Last good raw payload per data set (what the snapshot cache stores).
+  final Map<String, Object?> _payloads = <String, Object?>{};
+
+  /// Sets that hold real data (from the server or the snapshot cache).
+  final Set<String> _loaded = <String>{};
+
+  /// One in-flight load per key: concurrent callers share it.
+  final Map<String, Future<void>> _inflight = <String, Future<void>>{};
+  final Map<String, DateTime> _detailAt = <String, DateTime>{};
+  Future<void>? _refreshing;
+  DateTime? _lastFull;
   bool _disposed = false;
+
+  static const List<String> _order = <String>[
+    DataSet.companies,
+    DataSet.profile,
+    DataSet.ledgers,
+    DataSet.bills,
+    DataSet.vouchers,
+    DataSet.items,
+    DataSet.stock,
+    DataSet.activity,
+    DataSet.notifications,
+    DataSet.alerts,
+    DataSet.team,
+  ];
+
+  String get _cacheKey => 'u${_user?.id ?? 0}';
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -117,10 +163,12 @@ class ApiTallyRepository extends TallyRepository {
       loginType,
     );
     final ({String token, AuthUser user}) r = loginResult(body);
+    if (_user != null && _user!.id != r.user.id) _clearData();
     _client.token = r.token;
     _user = r.user;
     _expired = false;
     await _sessions.write(r.token, r.user);
+    await _hydrate();
     _notify();
     return r.user;
   }
@@ -132,23 +180,39 @@ class ApiTallyRepository extends TallyRepository {
     _client.token = s.token;
     _user = s.user;
     _expired = false;
+    await _hydrate();
     return true;
   }
 
   @override
   Future<void> logout() async {
+    final String key = _cacheKey;
     _client.token = null;
     _user = null;
     _profile = null;
     _expired = false;
-    _companies = const <Company>[];
-    _active = null;
-    _sync.clear();
+    _clearData();
+    _status.clear();
+    _lastFull = null;
+    await _sessions.clear();
+    // Accounting data must not stay on the phone after logout.
+    await _cache.clear(key);
+    _notify();
+  }
+
+  /// Drops every loaded data set (logout, other user, company switch).
+  void _clearData({bool keepCompanies = false}) {
+    if (!keepCompanies) {
+      _companies = const <Company>[];
+      _active = null;
+      _sync.clear();
+    }
     _ledgers = const <LedgerRow>[];
-    _recv = _pay = const <Bill>[];
+    _recvAll = _payAll = _recv = _pay = const <Bill>[];
     _serverRecv = _serverPay = null;
     _parties = const <Party>[];
     _vouchers = const <Voucher>[];
+    _vouchersComplete = true;
     _items = const <Item>[];
     _stock = const <StockRow>[];
     _acts = const <Act>[];
@@ -156,10 +220,15 @@ class ApiTallyRepository extends TallyRepository {
     _team = const <Member>[];
     _alerts = null;
     _partyDetail.clear();
+    _itemDetail.clear();
     _voucherLines.clear();
-    _status.clear();
-    await _sessions.clear();
-    _notify();
+    _detailAt.clear();
+    _payloads.removeWhere(
+      (String k, _) => !(keepCompanies && k == DataSet.companies),
+    );
+    _loaded.removeWhere(
+      (String k) => !(keepCompanies && k == DataSet.companies),
+    );
   }
 
   @override
@@ -167,130 +236,219 @@ class ApiTallyRepository extends TallyRepository {
     await _api.sendOtp(email.trim());
   }
 
+  // ------------------------------------------------------- snapshot cache
+
+  /// Shows the last saved real data at once (before the network answers).
+  Future<void> _hydrate() async {
+    final Map<String, Object?>? c = await _cache.read(_cacheKey);
+    final Object? sets = c?['sets'];
+    if (sets is! Map) return;
+    for (final String set in _order) {
+      final Object? payload = sets[set];
+      if (payload == null || _loaded.contains(set)) continue;
+      try {
+        _apply(set, payload);
+        _payloads[set] = payload;
+        _loaded.add(set);
+      } catch (_) {
+        // A corrupt entry is skipped; the next load replaces it.
+      }
+    }
+    _rebuild();
+    _notify();
+  }
+
+  Future<void> _persist() async {
+    if (_user == null || _payloads.isEmpty) return;
+    await _cache.write(_cacheKey, <String, Object?>{
+      'saved': _clock().toIso8601String(),
+      'sets': Map<String, Object?>.of(_payloads),
+    });
+  }
+
   // ------------------------------------------------------------ loading
   @override
   DataStatus status(String set) => _status[set] ?? DataStatus.idle;
 
-  /// Runs one load, recording its status. A 401 marks the session expired.
-  Future<void> _run(String set, Future<void> Function() load) async {
+  @override
+  bool hasData(String set) => _loaded.contains(set);
+
+  @override
+  String? lastError() {
+    for (final String set in _order) {
+      final DataStatus s = status(set);
+      if (s.failed) return s.message;
+    }
+    return null;
+  }
+
+  /// Runs [body] once per [key] at a time; a second caller gets the same
+  /// future instead of a duplicate request.
+  Future<void> _once(String key, Future<void> Function() body) {
+    final Future<void>? running = _inflight[key];
+    if (running != null) return running;
+    // The callback must not return the removed future: whenComplete would
+    // wait on it, i.e. the load would wait on itself forever.
+    final Future<void> f = body().whenComplete(() {
+      _inflight.remove(key);
+    });
+    _inflight[key] = f;
+    return f;
+  }
+
+  /// Records [set]'s status around [body]. On failure the previous data is
+  /// left untouched; a 401 ends the session.
+  Future<void> _track(String set, Future<void> Function() body) async {
     _status[set] = const DataStatus(LoadState.loading);
     _notify();
     try {
-      await load();
+      await body();
       _status[set] = const DataStatus(LoadState.ready);
     } on ApiException catch (e) {
       if (e.kind == ApiErrorKind.unauthorized) {
         _expired = true;
         _client.token = null;
         await _sessions.clear();
+        await _cache.clear(_cacheKey);
       }
       _status[set] = DataStatus(LoadState.error, e.userMessage);
     } on FormatException catch (e) {
-      _status[set] = DataStatus(LoadState.error, 'Unexpected data: ${e.message}');
+      _status[set] = DataStatus(
+        LoadState.error,
+        'Unexpected data: ${e.message}',
+      );
     } catch (e) {
       _status[set] = DataStatus(LoadState.error, 'Could not load: $e');
     }
     _notify();
   }
 
+  /// Fetches one data set and, only when it fully succeeds, swaps it in.
+  Future<void> _load(String set) => _once(
+    set,
+    () => _track(set, () async {
+      final Object? payload = await _fetch(set);
+      _apply(set, payload);
+      _payloads[set] = payload;
+      _loaded.add(set);
+      if (set == DataSet.ledgers || set == DataSet.bills) _rebuild();
+    }),
+  );
+
   @override
-  Future<void> refreshAll() async {
-    if (_client.token == null) return;
-    await _run(DataSet.companies, _loadCompanies);
+  Future<void> refreshAll({bool force = false}) {
+    if (_client.token == null) return Future<void>.value();
+    final Future<void>? running = _refreshing;
+    if (running != null) return running;
+    final DateTime? last = _lastFull;
+    if (!force && last != null && _clock().difference(last) < kFreshFor) {
+      return Future<void>.value();
+    }
+    final Future<void> f = _refreshAll().whenComplete(() {
+      _refreshing = null;
+    });
+    _refreshing = f;
+    return f;
+  }
+
+  Future<void> _refreshAll() async {
+    await _load(DataSet.companies);
     if (_expired) return;
     await Future.wait(<Future<void>>[
-      _run(DataSet.profile, () async => _profile = profileFrom(await _api.me())),
-      _run(DataSet.ledgers, _loadLedgers),
-      _run(DataSet.bills, _loadBills),
-      _run(DataSet.vouchers, _loadVouchers),
-      _run(DataSet.items, _loadItems),
-      _run(DataSet.stock, _loadStock),
-      _run(DataSet.activity, _loadActivity),
-      _run(DataSet.notifications, _loadNotifs),
-      _run(DataSet.alerts, _loadAlerts),
-      if (_user?.isAdmin ?? false) _run(DataSet.team, _loadTeam),
+      for (final String set in _order.skip(1))
+        if (set != DataSet.team || (_user?.isAdmin ?? false)) _load(set),
     ]);
-    _rebuildParties();
+    _rebuild();
+    _lastFull = _clock();
     _notify();
+    if (!_expired) await _persist();
   }
 
   @override
-  Future<void> refreshActivity() => _run(DataSet.activity, _loadActivity);
+  Future<void> refreshActivity() async {
+    await _load(DataSet.activity);
+    await _persist();
+  }
 
   @override
-  Future<void> refreshNotifications() =>
-      _run(DataSet.notifications, _loadNotifs);
-
-  Future<void> _loadCompanies() async {
-    final List<Object?> r = await Future.wait(<Future<Object?>>[
-      _api.companiesSelected(),
-      _api.companyActive(),
-    ]);
-    _companies = rows(r[0]).map(companyFrom).toList();
-    final Object? a = r[1];
-    _active = a is Map && a['company_guid'] is String
-        ? a['company_guid'] as String
-        : null;
-    if (_active != null && !_companies.any((Company c) => c.id == _active)) {
-      _companies = <Company>[
-        ..._companies,
-        Company(_active!, _active!, 'Active company'),
-      ];
-    }
-    await Future.wait(<Future<void>>[
-      for (final Company c in _companies) _loadSync(c.id),
-    ]);
+  Future<void> refreshNotifications() async {
+    await _load(DataSet.notifications);
+    await _persist();
   }
 
-  Future<void> _loadSync(String guid) async {
-    try {
-      _sync[guid] = syncFrom(await _api.syncStatus(guid));
-    } on ApiException catch (e) {
-      if (e.kind == ApiErrorKind.unauthorized) rethrow;
+  /// Network part of a data set: the raw, JSON-serialisable payload.
+  Future<Object?> _fetch(String set) async {
+    switch (set) {
+      case DataSet.companies:
+        final List<Object?> r = await Future.wait(<Future<Object?>>[
+          _api.companiesSelected(),
+          _api.companyActive(),
+        ]);
+        final Set<String> ids = <String>{
+          for (final Map<String, Object?> m in rows(r[0]))
+            str(m['company_guid']),
+          if (r[1] is Map && (r[1]! as Map)['company_guid'] is String)
+            (r[1]! as Map)['company_guid'] as String,
+        }..remove('');
+        final Map<String, Object?> sync = <String, Object?>{};
+        await Future.wait(<Future<void>>[
+          for (final String id in ids)
+            _api
+                .syncStatus(id)
+                .then(
+                  (Object? b) => sync[id] = b,
+                  onError: (Object e) {
+                    if (e is ApiException &&
+                        e.kind == ApiErrorKind.unauthorized) {
+                      throw e;
+                    }
+                    return null; // sync line is optional
+                  },
+                ),
+        ]);
+        return <String, Object?>{
+          'selected': r[0],
+          'active': r[1],
+          'sync': sync,
+        };
+      case DataSet.profile:
+        return _api.me();
+      case DataSet.ledgers:
+        return _api.ledgers();
+      case DataSet.bills:
+        final Object? bills = await _api.bills();
+        Object? summary;
+        if ((_user?.isAdmin ?? false) && _active != null) {
+          summary = await _api.dashboardSummary(_active!);
+        }
+        return <String, Object?>{'bills': bills, 'summary': summary};
+      case DataSet.vouchers:
+        return _fetchVouchers();
+      case DataSet.items:
+        return _api.inventoryMobile();
+      case DataSet.stock:
+        return _api.inventory();
+      case DataSet.activity:
+        if (_active == null) return const <Object?>[];
+        return _api.queueActivity(_active!);
+      case DataSet.notifications:
+        return _api.notifications();
+      case DataSet.alerts:
+        return _api.notificationConfig();
+      case DataSet.team:
+        return _api.users();
     }
-  }
-
-  Future<void> _loadLedgers() async {
-    _ledgers = rows(await _api.ledgers()).map(ledgerFrom).toList();
-  }
-
-  /// `GET /bill` returns every company of the admin and is not limited to a
-  /// USER's ledgers, so both filters are applied here.
-  Future<void> _loadBills() async {
-    final List<Map<String, Object?>> all = rows(await _api.bills());
-    final List<Bill> recv = <Bill>[], pay = <Bill>[];
-    for (final Map<String, Object?> m in all) {
-      if (_active == null || str(m['company_guid']) != _active) continue;
-      final Bill? b = billFrom(m, today);
-      if (b == null) continue;
-      (b.kind == 'pay' ? pay : recv).add(b);
-    }
-    int byDue(Bill a, Bill b) => (a.dueDate ?? DateTime(9999)).compareTo(
-      b.dueDate ?? DateTime(9999),
-    );
-    _recv = recv..sort(byDue);
-    _pay = pay..sort(byDue);
-    _serverRecv = _serverPay = null;
-    if ((_user?.isAdmin ?? false) && _active != null) {
-      final Object? s = await _api.dashboardSummary(_active!);
-      if (s is Map) {
-        _serverRecv = toNum(s['receivables']);
-        _serverPay = toNum(s['payables']);
-      }
-    }
+    throw ArgumentError(set);
   }
 
   /// The complete voucher history of the active company (no year / month
   /// filter), page by page until the server says there is no more. The
-  /// server already limits rows to the active company and, for a USER, to
-  /// the allowed vouchers. Soft-deleted rows (`is_active=false`) are dropped,
-  /// duplicates (rows shifting between pages) are removed by GUID, and the
-  /// server order (newest first) is kept.
-  ///
-  /// The list is only marked complete when every row of `meta.total` was
-  /// received; otherwise month totals show `—` instead of a partial sum.
-  Future<void> _loadVouchers() async {
-    final List<Voucher> out = <Voucher>[];
+  /// server limits rows to the active company and, for a USER, to the
+  /// allowed vouchers. Duplicates (rows shifting between pages) are removed
+  /// by GUID; server order (newest first) is kept. Marked complete only when
+  /// every row of `meta.total` arrived.
+  Future<Map<String, Object?>> _fetchVouchers() async {
+    final List<Map<String, Object?>> out = <Map<String, Object?>>[];
     final Set<String> seen = <String>{};
     int page = 1;
     int? expected;
@@ -307,8 +465,7 @@ class ApiTallyRepository extends TallyRepository {
         final String g = str(m['voucher_guid']);
         if (g.isNotEmpty && !seen.add(g)) continue; // duplicate
         fresh++;
-        final Voucher? v = voucherFrom(m);
-        if (v != null) out.add(v);
+        out.add(m);
       }
       final bool more = meta is Map && meta['hasMore'] == true;
       if (!more) break;
@@ -320,61 +477,126 @@ class ApiTallyRepository extends TallyRepository {
       page++;
     }
     if (expected != null && seen.length < expected) complete = false;
-    _vouchers = out;
-    _vouchersComplete = complete;
+    return <String, Object?>{'rows': out, 'complete': complete};
+  }
+
+  /// Parses a payload into the snapshot. Each branch builds locals first and
+  /// assigns at the end, so a parse error never leaves half-applied data.
+  void _apply(String set, Object? payload) {
+    final DateTime now = _clock();
+    switch (set) {
+      case DataSet.companies:
+        final Map<Object?, Object?> m = payload is Map
+            ? payload
+            : const <Object?, Object?>{};
+        List<Company> cos = rows(m['selected']).map(companyFrom).toList();
+        final Object? a = m['active'];
+        final String? active = a is Map && a['company_guid'] is String
+            ? a['company_guid'] as String
+            : null;
+        if (active != null && !cos.any((Company c) => c.id == active)) {
+          cos = <Company>[...cos, Company(active, active, 'Active company')];
+        }
+        final Object? sy = m['sync'];
+        final Map<String, SyncInfo> sync = <String, SyncInfo>{
+          if (sy is Map)
+            for (final MapEntry<Object?, Object?> e in sy.entries)
+              if (e.value != null) '${e.key}': syncFrom(e.value),
+        };
+        // The admin switched company elsewhere: other sets belong to the
+        // previous company, so they are dropped before the new ones load.
+        if (_active != null && active != _active) _clearData();
+        _companies = cos;
+        _active = active;
+        _sync
+          ..clear()
+          ..addAll(sync);
+      case DataSet.profile:
+        _profile = profileFrom(payload);
+      case DataSet.ledgers:
+        _ledgers = rows(payload).map(ledgerFrom).toList();
+      case DataSet.bills:
+        // `GET /bill` returns every company of the admin: keep the active
+        // company's pending bills only.
+        final Map<Object?, Object?> m = payload is Map
+            ? payload
+            : const <Object?, Object?>{};
+        final List<Bill> recv = <Bill>[], pay = <Bill>[];
+        for (final Map<String, Object?> b in rows(m['bills'])) {
+          if (_active == null || str(b['company_guid']) != _active) continue;
+          final Bill? x = billFrom(b, today);
+          if (x == null) continue;
+          (x.kind == 'pay' ? pay : recv).add(x);
+        }
+        int byDue(Bill a, Bill b) => (a.dueDate ?? DateTime(9999)).compareTo(
+          b.dueDate ?? DateTime(9999),
+        );
+        final Object? s = m['summary'];
+        _recvAll = recv..sort(byDue);
+        _payAll = pay..sort(byDue);
+        _serverRecv = s is Map ? toNum(s['receivables']) : null;
+        _serverPay = s is Map ? toNum(s['payables']) : null;
+      case DataSet.vouchers:
+        final Map<Object?, Object?> m = payload is Map
+            ? payload
+            : const <Object?, Object?>{};
+        final List<Voucher> vs = <Voucher?>[
+          if (m['rows'] is List)
+            for (final Object? r in m['rows']! as List)
+              if (r is Map) voucherFrom(r.cast<String, Object?>()),
+        ].whereType<Voucher>().toList();
+        _vouchers = vs;
+        _vouchersComplete = m['complete'] != false;
+      case DataSet.items:
+        _items = rows(payload, 'items').map(itemFrom).toList();
+      case DataSet.stock:
+        _stock = rows(payload).map(stockFrom).toList();
+      case DataSet.activity:
+        _acts = rows(
+          payload,
+        ).map((Map<String, Object?> m) => actFrom(m, now)).toList();
+      case DataSet.notifications:
+        _notifs = rows(
+          payload,
+          'notifications',
+        ).map((Map<String, Object?> m) => notifFrom(m, now)).toList();
+      case DataSet.alerts:
+        final Object? c = payload is Map ? payload['config'] : null;
+        _alerts = c is Map
+            ? <String, bool>{
+                for (final MapEntry<Object?, Object?> e in c.entries)
+                  '${e.key}': e.value == true,
+              }
+            : null;
+      case DataSet.team:
+        _team = rows(payload).map(memberFrom).toList();
+    }
   }
 
   @override
   bool get vouchersComplete => _vouchersComplete;
 
-  Future<void> _loadItems() async {
-    _items = rows(await _api.inventoryMobile(), 'items').map(itemFrom).toList();
-  }
-
-  Future<void> _loadStock() async {
-    _stock = rows(await _api.inventory()).map(stockFrom).toList();
-  }
-
-  Future<void> _loadActivity() async {
-    if (_active == null) {
-      _acts = const <Act>[];
-      return;
+  /// Parties and visible bills, derived from ledgers + bills.
+  ///
+  /// Parties = every ledger `/ledger` returns for the active company (USER:
+  /// permitted ones). Customer / supplier comes only from the Tally group;
+  /// other ledgers are `o`. Balance = pending bills: customer r − p,
+  /// supplier p − r, other r − p (positive = they owe you).
+  ///
+  /// `/bill` is not limited to a USER's ledgers, so a USER only sees bills
+  /// of ledgers `/ledger` returned — none until ledgers are known.
+  void _rebuild() {
+    final Set<String> seen = <String>{};
+    for (final LedgerRow l in _ledgers) {
+      seen.add(l.guid);
+      seen.add(l.name);
     }
-    final DateTime now = _clock();
-    _acts = rows(
-      await _api.queueActivity(_active!),
-    ).map((Map<String, Object?> m) => actFrom(m, now)).toList();
-  }
+    final bool admin = _user?.isAdmin ?? false;
+    bool ok(Bill b) =>
+        admin || seen.contains(b.ledgerGuid ?? '') || seen.contains(b.party);
+    _recv = _recvAll.where(ok).toList();
+    _pay = _payAll.where(ok).toList();
 
-  Future<void> _loadNotifs() async {
-    final DateTime now = _clock();
-    _notifs = rows(
-      await _api.notifications(),
-      'notifications',
-    ).map((Map<String, Object?> m) => notifFrom(m, now)).toList();
-  }
-
-  Future<void> _loadAlerts() async {
-    final Object? b = await _api.notificationConfig();
-    final Object? c = b is Map ? b['config'] : null;
-    _alerts = c is Map
-        ? <String, bool>{
-            for (final MapEntry<Object?, Object?> e in c.entries)
-              '${e.key}': e.value == true,
-          }
-        : null;
-  }
-
-  Future<void> _loadTeam() async {
-    _team = rows(await _api.users()).map(memberFrom).toList();
-  }
-
-  /// Parties = every ledger `/ledger` returns for the active company (and,
-  /// for a USER, only the permitted ones). Customer / supplier comes only
-  /// from the Tally group; all other ledgers are `o`. Balance = pending
-  /// bills: customer r − p, supplier p − r, other r − p (signed: positive =
-  /// they owe you).
-  void _rebuildParties() {
     final Map<String, num> recvBy = <String, num>{}, payBy = <String, num>{};
     String key(Bill b) => b.ledgerGuid ?? b.party;
     for (final Bill b in _recv) {
@@ -384,14 +606,12 @@ class ApiTallyRepository extends TallyRepository {
       payBy[key(b)] = (payBy[key(b)] ?? 0) + b.amt;
     }
     final List<Party> out = <Party>[];
-    final Set<String> seen = <String>{};
+    final Set<String> done = <String>{};
     for (final LedgerRow l in _ledgers) {
-      if (l.guid.isNotEmpty && seen.contains(l.guid)) continue; // duplicate
+      if (l.guid.isNotEmpty && !done.add(l.guid)) continue; // duplicate
       final num r = recvBy[l.guid] ?? recvBy[l.name] ?? 0;
       final num p = payBy[l.guid] ?? payBy[l.name] ?? 0;
       final String t = partyTypeOf(l.group);
-      seen.add(l.guid);
-      seen.add(l.name);
       out.add(
         Party(
           l.name,
@@ -409,13 +629,6 @@ class ApiTallyRepository extends TallyRepository {
       );
     }
     _parties = out;
-    // A USER only sees permitted ledgers; keep their bills only.
-    if (!(_user?.isAdmin ?? true)) {
-      bool ok(Bill b) =>
-          seen.contains(b.ledgerGuid ?? '') || seen.contains(b.party);
-      _recv = _recv.where(ok).toList();
-      _pay = _pay.where(ok).toList();
-    }
   }
 
   // ---------------------------------------------------------- snapshots
@@ -429,10 +642,12 @@ class ApiTallyRepository extends TallyRepository {
   @override
   Future<void> setActiveCompany(String id) async {
     await _api.setActiveCompany(id);
+    // Another company's figures must never show under the new name.
+    _clearData(keepCompanies: true);
     _active = id;
-    _partyDetail.clear();
-    _voucherLines.clear();
-    await refreshAll();
+    await _cache.clear(_cacheKey);
+    _notify();
+    await refreshAll(force: true);
   }
 
   @override
@@ -501,16 +716,28 @@ class ApiTallyRepository extends TallyRepository {
     final MonthTotals m = monthTotals();
     final OutstandingSummary r = outstanding(true), p = outstanding(false);
     final String month = monthYear(today);
-    final bool ok = status(DataSet.vouchers).state == LoadState.ready &&
-        _vouchersComplete;
-    final bool billsOk = status(DataSet.bills).state == LoadState.ready;
+    // Last good data stays on screen during a refresh (stale-while-refresh).
+    final bool ok = hasData(DataSet.vouchers) && _vouchersComplete;
+    final bool billsOk = hasData(DataSet.bills);
     return <String, SumCard>{
       'toGet': kSums['toGet']!.withValue(billsOk ? r.total : null),
       'toGive': kSums['toGive']!.withValue(billsOk ? p.total : null),
-      'mIn': kSums['mIn']!.withValue(ok ? (m.amount['receipt'] ?? 0) : null, month),
-      'mOut': kSums['mOut']!.withValue(ok ? (m.amount['payment'] ?? 0) : null, month),
-      'sales': kSums['sales']!.withValue(ok ? (m.amount['sales'] ?? 0) : null, month),
-      'purch': kSums['purch']!.withValue(ok ? (m.amount['purchase'] ?? 0) : null, month),
+      'mIn': kSums['mIn']!.withValue(
+        ok ? (m.amount['receipt'] ?? 0) : null,
+        month,
+      ),
+      'mOut': kSums['mOut']!.withValue(
+        ok ? (m.amount['payment'] ?? 0) : null,
+        month,
+      ),
+      'sales': kSums['sales']!.withValue(
+        ok ? (m.amount['sales'] ?? 0) : null,
+        month,
+      ),
+      'purch': kSums['purch']!.withValue(
+        ok ? (m.amount['purchase'] ?? 0) : null,
+        month,
+      ),
       // Cash / bank balances need Dr/Cr from the server (not sent).
       'cash': kSums['cash']!.withValue(null, 'Not available from server'),
       'bank': kSums['bank']!.withValue(null, 'Not available from server'),
@@ -523,7 +750,9 @@ class ApiTallyRepository extends TallyRepository {
 
   @override
   Future<void> saveAlert(String key, bool on) async {
-    final Object? b = await _api.saveNotificationConfig(<String, bool>{key: on});
+    final Object? b = await _api.saveNotificationConfig(<String, bool>{
+      key: on,
+    });
     final Object? c = b is Map ? b['config'] : null;
     if (c is Map) {
       _alerts = <String, bool>{
@@ -538,52 +767,95 @@ class ApiTallyRepository extends TallyRepository {
   @override
   PartyDetail? partyDetail(String partyKey) => _partyDetail[partyKey];
 
+  bool _fresh(String key, bool force) {
+    final DateTime? at = _detailAt[key];
+    return !force && at != null && _clock().difference(at) < kDetailFreshFor;
+  }
+
   @override
-  Future<void> loadPartyDetail(Party p) async {
+  Future<void> loadPartyDetail(Party p, {bool force = false}) async {
     final String? g = p.guid;
     if (g == null || g.isEmpty) return;
-    await _run(DataSet.party, () async {
-      final List<Object?> r = await Future.wait(<Future<Object?>>[
-        _api.ledgerVouchers(g),
-        _api.ledgerItems(g),
-        _api.ledgerBills(g),
-      ]);
-      final List<Voucher> entries = rows(r[0])
-          .map((Map<String, Object?> m) => ledgerVoucherFrom(m, p.name))
-          .toList()
-        ..sort(
-          (Voucher a, Voucher b) =>
-              (b.date ?? DateTime(0)).compareTo(a.date ?? DateTime(0)),
+    if (_fresh('party:$g', force)) return;
+    await _once(
+      'party:$g',
+      () => _track(DataSet.party, () async {
+        final List<Object?> r = await Future.wait(<Future<Object?>>[
+          _api.ledgerVouchers(g),
+          _api.ledgerItems(g),
+          _api.ledgerBills(g),
+        ]);
+        final List<Voucher> entries =
+            rows(r[0])
+                .map((Map<String, Object?> m) => ledgerVoucherFrom(m, p.name))
+                .toList()
+              ..sort(
+                (Voucher a, Voucher b) =>
+                    (b.date ?? DateTime(0)).compareTo(a.date ?? DateTime(0)),
+              );
+        _partyDetail[g] = PartyDetail(
+          entries: entries,
+          items: <BillLine>[
+            for (final Map<String, Object?> m in rows(r[1]))
+              BillLine(
+                str(m['item_name']),
+                '',
+                str(m['total_qty']),
+                dateOnly(m['last_date']) == null
+                    ? ''
+                    : 'last ${dmy(dateOnly(m['last_date']))}',
+                toNum(m['total_amount']) ?? 0,
+              ),
+          ],
+          bills: rows(r[2])
+              .map((Map<String, Object?> m) => billFrom(m, today))
+              .whereType<Bill>()
+              .toList(),
         );
-      _partyDetail[g] = PartyDetail(
-        entries: entries,
-        items: <BillLine>[
-          for (final Map<String, Object?> m in rows(r[1]))
-            BillLine(
-              str(m['item_name']),
-              '',
-              str(m['total_qty']),
-              dateOnly(m['last_date']) == null
-                  ? ''
-                  : 'last ${dmy(dateOnly(m['last_date']))}',
-              toNum(m['total_amount']) ?? 0,
-            ),
-        ],
-        bills: rows(r[2])
-            .map((Map<String, Object?> m) => billFrom(m, today))
-            .whereType<Bill>()
-            .toList(),
-      );
-    });
+        _detailAt['party:$g'] = _clock();
+      }),
+    );
+  }
+
+  @override
+  ItemDetail? itemDetail(String itemName) => _itemDetail[itemName];
+
+  /// Customers / suppliers of one item (`/ledger-items/item/:name/parties`,
+  /// `type=Sales` and `type=Purchase`).
+  @override
+  Future<void> loadItemDetail(Item it, {bool force = false}) async {
+    final String n = it.name;
+    if (n.isEmpty || _fresh('item:$n', force)) return;
+    await _once(
+      'item:$n',
+      () => _track(DataSet.item, () async {
+        final List<Object?> r = await Future.wait(<Future<Object?>>[
+          _api.itemParties(n, 'Sales'),
+          _api.itemParties(n, 'Purchase'),
+        ]);
+        _itemDetail[n] = ItemDetail(
+          customers: rows(r[0]).map(itemPartyFrom).toList(),
+          suppliers: rows(r[1]).map(itemPartyFrom).toList(),
+        );
+        _detailAt['item:$n'] = _clock();
+      }),
+    );
   }
 
   @override
   List<LedgerLine>? voucherLines(String guid) => _voucherLines[guid];
 
+  /// Ledger lines of a synced voucher do not change — loaded once.
   @override
-  Future<void> loadVoucherLines(String guid) => _run(DataSet.voucher, () async {
-    _voucherLines[guid] = ledgerLinesFrom(await _api.voucherDetail(guid));
-  });
+  Future<void> loadVoucherLines(String guid) async {
+    if (_voucherLines.containsKey(guid)) return;
+    await _once(
+      'voucher:$guid',
+      () => _track(DataSet.voucher, () async {
+        _voucherLines[guid] = ledgerLinesFrom(await _api.voucherDetail(guid));
+      }),
+    );
+  }
 
   // -------------------------------------------------------- notifications
   @override
@@ -664,11 +936,10 @@ class ApiTallyRepository extends TallyRepository {
 
 String? _opt(String s) => s.trim().isEmpty ? null : s.trim();
 
-Map<String, Object?> _clean(Map<String, Object?> m) =>
-    <String, Object?>{
-      for (final MapEntry<String, Object?> e in m.entries)
-        if (e.value != null) e.key: e.value,
-    };
+Map<String, Object?> _clean(Map<String, Object?> m) => <String, Object?>{
+  for (final MapEntry<String, Object?> e in m.entries)
+    if (e.value != null) e.key: e.value,
+};
 
 /// Sales body (`POST /api/mobile-voucher-command/create`). GST is split
 /// equally into CGST / SGST because the endpoint has no IGST field.

@@ -305,7 +305,9 @@ class ActivityScreen extends ConsumerWidget {
                             const LiveDot(),
                             const SizedBox(width: 6),
                             Text(
-                              c.repo.isRemote ? 'Tally sync' : 'Tally connected',
+                              c.repo.isRemote
+                                  ? 'Tally sync'
+                                  : 'Tally connected',
                               style: rtStyle(context),
                             ),
                           ],

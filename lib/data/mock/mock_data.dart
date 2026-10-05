@@ -41,6 +41,7 @@ const Map<String, String> kTitles = <String, String>{
   'outList': 'Outstanding',
   'billDetail': 'Bill',
   'items': 'Items',
+  'itemDetail': 'Item',
   'party': 'Party',
   'partyDetail': 'Party',
   'reports': 'Reports',
@@ -912,7 +913,13 @@ const List<SearchEntry> kSearch = <SearchEntry>[
     'purchase',
     f: 'purchase',
   ),
-  SearchEntry('Receipt', 'Record money received', 'in', 'receipt', f: 'receipt'),
+  SearchEntry(
+    'Receipt',
+    'Record money received',
+    'in',
+    'receipt',
+    f: 'receipt',
+  ),
   SearchEntry('Payment', 'Record money paid', 'out', 'payment', f: 'payment'),
   SearchEntry(
     'Receivable (Outstanding)',

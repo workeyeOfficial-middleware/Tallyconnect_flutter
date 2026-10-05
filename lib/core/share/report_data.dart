@@ -119,7 +119,9 @@ ReportData reportData(TallyRepository repo, String id) {
             t5[i].value,
           ),
       ];
-      tot = inr(t5.fold<num>(0, (num s, MapEntry<String, num> x) => s + x.value));
+      tot = inr(
+        t5.fold<num>(0, (num s, MapEntry<String, num> x) => s + x.value),
+      );
       tl = 'Top ${t5.length} owe you';
       card = t5.isEmpty ? 'No dues' : t5.first.key;
     case 'exp':
@@ -221,7 +223,9 @@ ReportData reportData(TallyRepository repo, String id) {
     case 'day':
       final List<Voucher> d = List<Voucher>.of(vs)
         ..sort((Voucher a, Voucher b) {
-          final int c = (b.date ?? DateTime(0)).compareTo(a.date ?? DateTime(0));
+          final int c = (b.date ?? DateTime(0)).compareTo(
+            a.date ?? DateTime(0),
+          );
           return c != 0 ? c : b.day - a.day;
         });
       rows = <ReportRow>[

@@ -157,6 +157,8 @@ void main() {
     expect(find.text('Mint Ledger'), findsOneWidget);
     c.pickLook('royal');
     c.pickCombo(2);
+    // Wallpapers live in the Look → Background sub-tab.
+    c.update(() => c.lookTab = 'background');
     c.pickWall('silk');
     await settle(t);
     expect(find.text('Preview · Silk waves'), findsOneWidget);

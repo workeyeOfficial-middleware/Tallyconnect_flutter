@@ -34,6 +34,13 @@ class ListRef {
   bool matches(String l, String i) => list == l && id == i;
 }
 
+/// One global-search result (screen, item, party, voucher, bill, …).
+class SearchHit {
+  const SearchHit(this.t, this.s, this.ic, this.c, this.open);
+  final String t, s, ic, c;
+  final VoidCallback open;
+}
+
 class CMenu {
   const CMenu(this.list, this.id, this.x, this.y);
   final String list, id;
@@ -289,6 +296,22 @@ class AppController extends ChangeNotifier {
       partyTab = 'summary';
   String repCat = 'all', report = 'top';
 
+  /// Item detail: selected item name and tab (summary | customers | suppliers).
+  String itemSel = '', itemTab = 'summary';
+
+  /// Settings → Look sub-tab: theme | colour | background | glass.
+  String lookTab = 'theme';
+
+  /// Wallpaper opacity (20–100 %) and shade (−100 lighter … +100 darker),
+  /// independent of the glass / card level. Saved on this phone.
+  double bgOpacity = 100, bgShade = 0;
+
+  /// Outstanding reminders (this phone only — no backend endpoint).
+  List<Reminder> reminders = <Reminder>[];
+
+  /// Bill the reminder sheet is editing.
+  Bill? remBill;
+
   /// NEW: chosen chart per report (bar | pie | line).
   final Map<String, String> chartType = <String, String>{};
   String actFilter = 'all';
@@ -405,6 +428,17 @@ class AppController extends ChangeNotifier {
       customCombo = (cu['combo'] as num?)?.toInt() ?? 0;
     }
     wallK = store.load<String>(LocalStorage.kWall, 'theme');
+    bgOpacity =
+        ((store.load<Object?>(LocalStorage.kBgOpacity, 100) as num?) ?? 100)
+            .toDouble()
+            .clamp(20, 100);
+    bgShade = ((store.load<Object?>(LocalStorage.kBgShade, 0) as num?) ?? 0)
+        .toDouble()
+        .clamp(-100, 100);
+    final Object? rm = store.load<Object?>(LocalStorage.kReminders, null);
+    reminders = rm is List
+        ? rm.map(Reminder.fromJson).whereType<Reminder>().toList()
+        : <Reminder>[];
     final Object? ph = store.load<Object?>(LocalStorage.kPhoto, null);
     if (ph is Map &&
         ph['path'] is String &&
@@ -560,6 +594,12 @@ class AppController extends ChangeNotifier {
     } else if (s == 'entryDetail') {
       final String? g = entry?.guid;
       if (g != null && g.isNotEmpty) repo.loadVoucherLines(g);
+    } else if (s == 'itemDetail') {
+      final Item? it = repo
+          .items()
+          .where((Item x) => x.name == itemSel)
+          .firstOrNull;
+      if (it != null) repo.loadItemDetail(it);
     }
   }
 
@@ -617,6 +657,10 @@ class AppController extends ChangeNotifier {
           flowStep = v! as int;
         case 'acts':
           acts = v! as List<Act>;
+        case 'item':
+          itemSel = v! as String;
+        case 'itemTab':
+          itemTab = v! as String;
       }
     });
   }
@@ -668,6 +712,7 @@ class AppController extends ChangeNotifier {
       });
       say('Welcome back, ${u.username}');
       await repo.refreshAll();
+      afterRefresh(quietOk: true);
     } on ApiException catch (e) {
       _set(() => busy = false);
       say(e.userMessage);
@@ -990,7 +1035,9 @@ class AppController extends ChangeNotifier {
 
   void retry(String id) {
     if (repo.isRemote) {
-      say('Sending again is not available yet — the server has no retry option');
+      say(
+        'Sending again is not available yet — the server has no retry option',
+      );
       return;
     }
     _set(
@@ -1062,7 +1109,9 @@ class AppController extends ChangeNotifier {
     final String nm = (form['npName'] ?? '').trim();
     if (nm.isEmpty) return;
     if (repo.isRemote) {
-      say('Adding a party is not available yet — the server cannot create parties');
+      say(
+        'Adding a party is not available yet — the server cannot create parties',
+      );
       return;
     }
     final String city = form['npCity'] ?? '';
@@ -1508,12 +1557,7 @@ class AppController extends ChangeNotifier {
               go('billDetail', <String, Object?>{'bill': b.withKind(outKind)}),
         );
       case 'items':
-        return CardInfo(
-          key,
-          'box',
-          'items',
-          () => go('report', <String, Object?>{'report': 'stock'}),
-        );
+        return CardInfo(key, 'box', 'items', () => openItem(key));
       case 'party':
         return CardInfo(
           key,
@@ -2253,7 +2297,9 @@ class AppController extends ChangeNotifier {
     final String nm = (form['nuName'] ?? '').trim();
     if (repo.isRemote) {
       // POST /users needs email + password; this form has name + mobile.
-      say('Adding a person needs email and password on the server — not available yet');
+      say(
+        'Adding a person needs email and password on the server — not available yet',
+      );
       return;
     }
     final String ph = form['nuPhone'] ?? '';
@@ -2366,6 +2412,8 @@ class AppController extends ChangeNotifier {
     store.save(LocalStorage.kAccent, 'look');
     store.save(LocalStorage.kMode, 'look');
     store.save(LocalStorage.kWall, 'theme');
+    setBgOpacity(100);
+    setBgShade(0);
     say('Look set back to default');
   }
 
@@ -2600,10 +2648,16 @@ class AppController extends ChangeNotifier {
       case 'home':
         switch (key) {
           case 'money':
-            return docSums(<SumCard>[
-              for (final String k in curWs.sums)
-                if (repo.moneyCards()[k] != null) repo.moneyCards()[k]!,
-            ], co);
+            return docSums(
+              <SumCard>[
+                for (final String k in curWs.sums)
+                  if (repo.moneyCards()[k] != null) repo.moneyCards()[k]!,
+              ],
+              co,
+              repo.isRemote
+                  ? 'As on ${dmy(today)}'
+                  : 'September 2026 · Sample data',
+            );
           case 'items':
             return docItems(repo.items(), co);
           case 'party':
@@ -2694,20 +2748,47 @@ class AppController extends ChangeNotifier {
   void zoomBy(int d) => _set(() => zoom = (zoom + d).clamp(60, 160));
 
   // ------------------------------------------------------------ misc
+  /// Refresh button: forced reload; the data on screen stays until the
+  /// fresh data replaces it.
   void refreshNow() {
     if (!repo.isRemote) {
       say('Up to date · synced just now');
       return;
     }
     say('Refreshing…');
-    repo.refreshAll().then((_) => say(_statusToast(DataSet.vouchers)));
+    pullRefresh();
+  }
+
+  /// Pull-to-refresh / Refresh: one shared forced reload (a reload already
+  /// running is joined, not repeated).
+  Future<void> pullRefresh() async {
+    if (!repo.isRemote) return;
+    await repo.refreshAll(force: true);
+    afterRefresh();
+  }
+
+  /// Toast after a reload: the error (old data is kept on screen), or
+  /// "Up to date"; then any reminder due today.
+  void afterRefresh({bool quietOk = false}) {
+    if (_disposed || !loggedIn) return;
+    final String? err = repo.lastError();
+    if (err != null) {
+      say('$err · showing the last saved data');
+    } else if (!quietOk) {
+      say('Up to date');
+    } else {
+      final int due = dueReminders.length;
+      if (due > 0) {
+        say('$due ${due == 1 ? 'reminder is' : 'reminders are'} due');
+      }
+    }
   }
 
   /// Empty-list text: loading / error message from the server, else [normal].
   String emptyText(String set, String normal) {
     if (!repo.isRemote) return normal;
     final DataStatus st = repo.status(set);
-    if (st.loading) return 'Loading from the server…';
+    if (st.loading && !repo.hasData(set)) return 'Loading from the server…';
     if (st.failed) return st.message ?? 'Could not load. Tap refresh.';
     return normal;
   }
@@ -2724,6 +2805,227 @@ class AppController extends ChangeNotifier {
   String _statusToast(String set) {
     final DataStatus st = repo.status(set);
     return st.failed ? (st.message ?? 'Could not refresh') : 'Up to date';
+  }
+
+  // ---------------------------------------------------------- item detail
+  void openItem(String name) =>
+      go('itemDetail', <String, Object?>{'item': name, 'itemTab': 'summary'});
+
+  // ---------------------------------------------------------- global search
+  /// Searches every loaded entity: items, parties, vouchers, outstanding
+  /// bills, activity, team, reports and app screens. Every word typed must
+  /// appear (any order, any case).
+  List<SearchHit> searchHits(String query) {
+    final List<String> words = query
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((String w) => w.isNotEmpty)
+        .toList();
+    if (words.isEmpty) return const <SearchHit>[];
+    bool hit(String hay) {
+      final String h = hay.toLowerCase();
+      return words.every(h.contains);
+    }
+
+    const int cap = 25;
+    final List<SearchHit> out = <SearchHit>[];
+    void add(List<SearchHit> group) => out.addAll(group.take(cap));
+
+    add(<SearchHit>[
+      for (final Item x in repo.items())
+        if (hit('${x.name} ${x.group ?? ''} ${x.hsn ?? ''}'))
+          SearchHit(
+            x.name,
+            'Item · ${x.stock > 0 ? '${qty(x.stock)} ${x.unit} in stock' : 'Finished'}',
+            'box',
+            'items',
+            () => openItem(x.name),
+          ),
+    ]);
+    add(<SearchHit>[
+      for (final Party x in partyPool())
+        if (hit('${x.name} ${x.group ?? ''} ${x.city} ${x.kindLabel}'))
+          SearchHit(
+            x.name,
+            '${x.kindLabel}${(x.group ?? x.city).isEmpty ? '' : ' · ${x.group ?? x.city}'}',
+            'person',
+            'party',
+            () => go('partyDetail', <String, Object?>{
+              'party': x.name,
+              'partyTab': 'summary',
+            }),
+          ),
+    ]);
+    add(<SearchHit>[
+      for (final Voucher v in repo.vouchers())
+        if (hit(
+          '${v.party} ${v.no} ${v.type ?? kKinds[v.kind]!.t} ${v.date == null ? '' : dmy(v.date)}',
+        ))
+          SearchHit(
+            v.party,
+            '${v.type ?? kKinds[v.kind]!.t} · ${v.no} · ${inr(v.amt)}',
+            kKinds[v.kind]!.ic,
+            kKinds[v.kind]!.c,
+            () => go('entryDetail', <String, Object?>{'entry': v}),
+          ),
+    ]);
+    add(<SearchHit>[
+      for (final (Bill, String) b in <(Bill, String)>[
+        for (final Bill x in repo.receivables()) (x, 'recv'),
+        for (final Bill x in repo.payables()) (x, 'pay'),
+      ])
+        if (hit('${b.$1.party} ${b.$1.no} outstanding'))
+          SearchHit(
+            '${b.$1.party} · ${b.$1.no}',
+            '${b.$2 == 'recv' ? 'Receivable' : 'Payable'} · ${inr(b.$1.amt)} · ${b.$1.txt}',
+            b.$2 == 'recv' ? 'in' : 'out',
+            b.$2 == 'recv' ? 'receipt' : 'payment',
+            () => go('billDetail', <String, Object?>{
+              'bill': b.$1.withKind(b.$2),
+            }),
+          ),
+    ]);
+    add(<SearchHit>[
+      for (final Act a in acts)
+        if (hit('${a.party} ${a.no} ${kKinds[a.kind]!.t}'))
+          SearchHit(
+            '${kKinds[a.kind]!.t} · ${a.no}',
+            'Activity · ${a.party} · ${inr(a.amt)}',
+            'activity',
+            'activity',
+            () => go('actDetail', <String, Object?>{'act': a.id}),
+          ),
+    ]);
+    if (isAdmin) {
+      add(<SearchHit>[
+        for (final Member m in team)
+          if (hit('${m.name} ${m.email}'))
+            SearchHit(m.name, 'Team · ${m.email}', 'person', 'team', () {
+              go('team');
+              openMember(m);
+            }),
+      ]);
+    }
+    add(<SearchHit>[
+      for (final Report r in repo.reports())
+        if (hit('${r.t} ${r.s} report'))
+          SearchHit(
+            r.t,
+            'Report · ${r.s}',
+            r.ic,
+            r.c,
+            () => go('report', <String, Object?>{'report': r.id}),
+          ),
+    ]);
+    add(<SearchHit>[
+      for (final SearchEntry e in kSearch)
+        if (hit('${e.t} ${e.s}'))
+          SearchHit(e.t, e.s, e.ic, e.c, () {
+            if (e.f != null) {
+              startFlow(e.f!);
+            } else {
+              run(e.a!);
+            }
+          }),
+    ]);
+    return out;
+  }
+
+  // ------------------------------------------------------ background look
+  void setBgOpacity(double v) {
+    _set(() => bgOpacity = v.clamp(20, 100).roundToDouble());
+    store.save(LocalStorage.kBgOpacity, bgOpacity);
+  }
+
+  void setBgShade(double v) {
+    _set(() => bgShade = v.clamp(-100, 100).roundToDouble());
+    store.save(LocalStorage.kBgShade, bgShade);
+  }
+
+  // ------------------------------------------------------------ reminders
+  String get _reminderCompany => repo.activeCompanyId ?? company;
+
+  /// Reminders of the active company, soonest first.
+  List<Reminder> get companyReminders =>
+      reminders.where((Reminder r) => r.company == _reminderCompany).toList()
+        ..sort((Reminder a, Reminder b) => a.date.compareTo(b.date));
+
+  /// Reminders due today or earlier.
+  List<Reminder> get dueReminders => companyReminders.where((Reminder r) {
+    final DateTime? d = r.day;
+    return d != null && dayDiff(d, today) >= 0;
+  }).toList();
+
+  Reminder? reminderFor(Bill b) =>
+      companyReminders.where((Reminder r) => r.billKey == b.key).firstOrNull;
+
+  /// Opens the reminder sheet for [b] (new or existing reminder).
+  void openReminder(Bill b) {
+    final Reminder? r = reminderFor(b);
+    _set(() {
+      remBill = b;
+      form['remDate'] = r?.date ?? ymd(today.add(const Duration(days: 1)));
+      form['remNote'] = r?.note ?? '';
+      overlay = 'reminder';
+    });
+  }
+
+  void saveReminder() {
+    final Bill? b = remBill;
+    final String date = (form['remDate'] ?? '').trim();
+    if (b == null) return;
+    if (DateTime.tryParse(date) == null) {
+      say('Pick a date for the reminder');
+      return;
+    }
+    final Reminder? old = reminderFor(b);
+    final Reminder r = Reminder(
+      id: old?.id ?? 'r${DateTime.now().microsecondsSinceEpoch}',
+      company: _reminderCompany,
+      billKey: b.key,
+      party: b.party,
+      billNo: b.no,
+      kind: b.kind,
+      amount: b.amt,
+      date: date,
+      note: (form['remNote'] ?? '').trim(),
+    );
+    _set(() {
+      reminders = <Reminder>[
+        for (final Reminder x in reminders)
+          if (x.id != r.id) x,
+        r,
+      ];
+      overlay = null;
+    });
+    _saveReminders();
+    say('Reminder set for ${fdate(date)}');
+  }
+
+  void deleteReminder(String id) {
+    _set(() {
+      reminders = reminders.where((Reminder x) => x.id != id).toList();
+      if (overlay == 'reminder') overlay = null;
+    });
+    _saveReminders();
+    say('Reminder removed');
+  }
+
+  void _saveReminders() => store.save(
+    LocalStorage.kReminders,
+    reminders.map((Reminder r) => r.toJson()).toList(),
+  );
+
+  /// Opens the bill of a reminder (if it is still pending).
+  void openReminderBill(Reminder r) {
+    final Bill? b = (r.kind == 'pay' ? repo.payables() : repo.receivables())
+        .where((Bill x) => x.key == r.billKey)
+        .firstOrNull;
+    if (b == null) {
+      say('This bill is no longer pending');
+      return;
+    }
+    go('billDetail', <String, Object?>{'bill': b.withKind(r.kind)});
   }
 
   /// Android back: overlay → card menu/armed → screen back.

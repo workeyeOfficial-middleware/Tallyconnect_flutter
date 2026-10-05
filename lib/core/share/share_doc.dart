@@ -216,7 +216,8 @@ ShareDoc docBill(Bill b, String company) {
   final bool r = b.kind == 'recv';
   return ShareDoc(
     title: 'Bill details · ${b.no}',
-    subtitle: '${b.party} · ${r ? 'Customer' : 'Supplier'}${b.city.isEmpty ? '' : ' · ${b.city}'}',
+    subtitle:
+        '${b.party} · ${r ? 'Customer' : 'Supplier'}${b.city.isEmpty ? '' : ' · ${b.city}'}',
     company: company,
     fileStem: 'Bill_${b.no}',
     facts: <(String, String)>[
@@ -257,19 +258,17 @@ ShareDoc docParty(
             const <String>['Date', 'Entry', 'Type', 'Amount'],
             <List<String>>[
               for (final Voucher v in entries)
-                <String>[
-                  vDate(v),
-                  v.no,
-                  kKinds[v.kind]!.t,
-                  inr(v.amt),
-                ],
+                <String>[vDate(v), v.no, kKinds[v.kind]!.t, inr(v.amt)],
             ],
             right: const <int>{3},
           ),
     totals: <(String, String)>[
       remote
           ? ('Outstanding', inr(p0.bal.abs()))
-          : ('Balance', '${inr(p0.bal)}${p0.bal != 0 ? (pc ? ' Dr' : ' Cr') : ''}'),
+          : (
+              'Balance',
+              '${inr(p0.bal)}${p0.bal != 0 ? (pc ? ' Dr' : ' Cr') : ''}',
+            ),
     ],
   );
 }
@@ -317,28 +316,24 @@ ShareDoc docVouchers(
   ],
 );
 
-ShareDoc docBills(
-  bool recv,
-  List<Bill> rows,
-  String company,
-  DateTime today,
-) => ShareDoc(
-  title: recv ? 'Receivable (Outstanding)' : 'Payable (Outstanding)',
-  subtitle: 'As on ${dmy(today)}',
-  company: company,
-  fileStem: recv ? 'Receivable' : 'Payable',
-  table: DocTable(
-    const <String>['Party', 'Bill', 'Due', 'Status', 'Amount'],
-    <List<String>>[
-      for (final Bill b in rows)
-        <String>[b.party, b.no, b.due, b.txt, inr(b.amt)],
-    ],
-    right: const <int>{4},
-  ),
-  totals: <(String, String)>[
-    ('Total', inr(rows.fold<num>(0, (num s, Bill b) => s + b.amt))),
-  ],
-);
+ShareDoc docBills(bool recv, List<Bill> rows, String company, DateTime today) =>
+    ShareDoc(
+      title: recv ? 'Receivable (Outstanding)' : 'Payable (Outstanding)',
+      subtitle: 'As on ${dmy(today)}',
+      company: company,
+      fileStem: recv ? 'Receivable' : 'Payable',
+      table: DocTable(
+        const <String>['Party', 'Bill', 'Due', 'Status', 'Amount'],
+        <List<String>>[
+          for (final Bill b in rows)
+            <String>[b.party, b.no, b.due, b.txt, inr(b.amt)],
+        ],
+        right: const <int>{4},
+      ),
+      totals: <(String, String)>[
+        ('Total', inr(rows.fold<num>(0, (num s, Bill b) => s + b.amt))),
+      ],
+    );
 
 ShareDoc docItems(List<Item> rows, String company) => ShareDoc(
   title: 'Items · Stock summary',
@@ -403,22 +398,24 @@ ShareDoc docParties(List<Party> rows, String company) => ShareDoc(
   ),
 );
 
-ShareDoc docPartyRow(Party p, String company, [bool remote = false]) =>
-    ShareDoc(
-      title: p.name,
-      subtitle:
-          '${p.kindLabel} · ${p.city.isNotEmpty ? p.city : (p.group ?? '')}',
-      company: company,
-      fileStem: 'Party_${p.name}',
-      totals: <(String, String)>[
-        (
-          remote ? 'Outstanding' : 'Balance',
-          p.bal == 0
-              ? (remote ? 'No pending bills' : 'Settled')
-              : '${inr(p.bal.abs())} · ${p.type == 'c' || (p.type == 'o' && p.bal > 0) ? 'They owe you' : 'You owe'}',
-        ),
-      ],
-    );
+ShareDoc docPartyRow(
+  Party p,
+  String company, [
+  bool remote = false,
+]) => ShareDoc(
+  title: p.name,
+  subtitle: '${p.kindLabel} · ${p.city.isNotEmpty ? p.city : (p.group ?? '')}',
+  company: company,
+  fileStem: 'Party_${p.name}',
+  totals: <(String, String)>[
+    (
+      remote ? 'Outstanding' : 'Balance',
+      p.bal == 0
+          ? (remote ? 'No pending bills' : 'Settled')
+          : '${inr(p.bal.abs())} · ${p.type == 'c' || (p.type == 'o' && p.bal > 0) ? 'They owe you' : 'You owe'}',
+    ),
+  ],
+);
 
 const Map<String, String> _stTxt = <String, String>{
   'ok': 'Sent',

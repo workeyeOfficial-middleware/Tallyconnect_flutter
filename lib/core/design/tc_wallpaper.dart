@@ -11,8 +11,12 @@ import 'package:flutter/widgets.dart';
 import 'tc_palette.dart';
 import 'tc_wall_spec.dart';
 
+/// [opacity] (0.2–1) fades the wallpaper towards the plain base colour;
+/// [shade] (−1 lighter … +1 darker) veils it with white or black. Both are
+/// independent of the glass / card level.
 class TcWallpaper extends StatefulWidget {
-  const TcWallpaper({super.key});
+  const TcWallpaper({super.key, this.opacity = 1, this.shade = 0});
+  final double opacity, shade;
 
   @override
   State<TcWallpaper> createState() => _TcWallpaperState();
@@ -35,10 +39,11 @@ class _TcWallpaperState extends State<TcWallpaper>
   @override
   Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
-    return Stack(
+    final double op = widget.opacity.clamp(.2, 1);
+    final double sh = widget.shade.clamp(-1, 1);
+    final Widget wall = Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        const ColoredBox(color: Color(0xFFE9EDF7)),
         if (p.hasPhoto)
           Image.file(
             File(p.photoPath!),
@@ -74,6 +79,19 @@ class _TcWallpaperState extends State<TcWallpaper>
               ),
             ),
           ),
+      ],
+    );
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        const ColoredBox(color: Color(0xFFE9EDF7)),
+        if (op >= .999) wall else Opacity(opacity: op, child: wall),
+        // Darker: black veil up to 45 % (text stays readable on the glass);
+        // lighter: white veil up to 60 %.
+        if (sh > 0)
+          ColoredBox(color: Color.fromRGBO(0, 0, 0, .45 * sh))
+        else if (sh < 0)
+          ColoredBox(color: Color.fromRGBO(255, 255, 255, .6 * -sh)),
       ],
     );
   }

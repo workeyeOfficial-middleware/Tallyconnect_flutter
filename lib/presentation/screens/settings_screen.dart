@@ -69,7 +69,9 @@ class _Profile extends ConsumerWidget {
     final String name = remote
         ? (c.repo.profile?.username ?? c.repo.user?.username ?? '—')
         : 'workk72002';
-    final String role = remote ? (c.isAdmin ? 'Admin' : 'Team member') : 'Admin';
+    final String role = remote
+        ? (c.isAdmin ? 'Admin' : 'Team member')
+        : 'Admin';
     final List<(String, String, String)> rows = <(String, String, String)>[
       ('Username', name, 'person'),
       (
@@ -411,277 +413,444 @@ class _Look extends ConsumerWidget {
           for (final String k in kLookAcc[c.preset] ?? const <String>[])
             (k, accentOf(k)!.t, accentOf(k)!.a, accentOf(k)!.b),
         ];
+    const List<(String, String)> tabs = <(String, String)>[
+      ('theme', 'Looks'),
+      ('colour', 'Colour'),
+      ('background', 'Background'),
+      ('glass', 'Glass'),
+    ];
+    final String tab = c.lookTab;
     return Rise(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          const _Hd(
-            'Look',
-            'Each look sets the wallpaper, glass, colours and text together.',
-            top: 0,
+          // Sub-sections so each kind of setting has its own place.
+          Seg(
+            fontSize: 13.5,
+            items: tabs.map(((String, String) e) => e.$2).toList(),
+            selected: tabs.indexWhere(((String, String) e) => e.$1 == tab),
+            onPick: (int i) => c.update(() => c.lookTab = tabs[i].$1),
           ),
-          Grid(
-            cols: 2,
-            children: <Widget>[
-              for (final KT l in kLooks)
-                _SelCard(
-                  on: c.mode == 'look' && c.preset == l.k,
-                  onTap: () => c.pickLook(l.k),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      _Thumb(
-                        p: lookThumbPalette(l.k, c.accent),
-                        on: c.mode == 'look' && c.preset == l.k,
-                      ),
-                      const SizedBox(height: 9),
-                      RTx(
-                        l.t,
-                        l.s,
-                        titleSize: 15,
-                        subStyle: ts(13.5, h: 1.3, c: p.ink3),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-          if (c.mode == 'look') ...<Widget>[
+          if (tab == 'theme') ...<Widget>[
             const _Hd(
-              'Colour palette',
-              'Colours picked to suit this look. Used for buttons, tabs, icons and highlights on every screen.',
+              'Look',
+              'Each look sets the wallpaper, glass, colours and text together.',
+              top: 0,
             ),
             Grid(
-              cols: 5,
-              gap: 8,
+              cols: 2,
               children: <Widget>[
-                for (final (String, String, String, String) a in accents)
+                for (final KT l in kLooks)
                   _SelCard(
-                    on: c.accent == a.$1,
-                    onTap: () => c.pickAccent(a.$1),
-                    padding: const EdgeInsets.fromLTRB(2, 12, 2, 10),
-                    child: Stack(
-                      fit: StackFit.passthrough,
-                      clipBehavior: Clip.none,
+                    on: c.mode == 'look' && c.preset == l.k,
+                    onTap: () => c.pickLook(l.k),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: <Widget>[
-                        Column(
-                          children: <Widget>[
-                            Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 2,
-                                ),
-                                gradient: LinearGradient(
-                                  begin: const Alignment(-.5, -1),
-                                  end: const Alignment(.5, 1),
-                                  colors: <Color>[
-                                    hexColor(a.$3),
-                                    hexColor(a.$4),
-                                  ],
-                                ),
-                                boxShadow: <BoxShadow>[
-                                  css(
-                                    0,
-                                    6,
-                                    14,
-                                    -6,
-                                    Colors.black.withValues(alpha: .35),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              a.$2,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: ts(11.5, w: w700, c: p.ink),
-                            ),
-                          ],
+                        _Thumb(
+                          p: lookThumbPalette(l.k, c.accent),
+                          on: c.mode == 'look' && c.preset == l.k,
                         ),
-                        if (c.accent == a.$1)
-                          const Positioned(top: -6, right: -2, child: Thck()),
+                        const SizedBox(height: 9),
+                        RTx(
+                          l.t,
+                          l.s,
+                          titleSize: 15,
+                          subStyle: ts(13.5, h: 1.3, c: p.ink3),
+                        ),
                       ],
                     ),
                   ),
               ],
             ),
+            if (c.mode == 'custom')
+              const InfoBox(
+                'Using your own colour. Pick a ready-made look above to switch back.',
+                icon: 'drop',
+                margin: EdgeInsets.only(top: 18, bottom: 14),
+              ),
+            const _ResetLook(),
           ],
-          if (c.mode == 'custom')
-            const InfoBox(
-              'Using your own colour. Pick a ready-made look above to switch back.',
-              icon: 'drop',
-              margin: EdgeInsets.only(top: 18, bottom: 14),
-            ),
-          const _Hd(
-            'Your own colour',
-            'Pick any colour. We make matching looks for you.',
-          ),
-          const _ColourPicker(),
-          const _Hd(
-            'Matching combinations',
-            'Tap one to use it on every screen.',
-          ),
-          Grid(
-            cols: 2,
-            children: <Widget>[
-              for (int i = 0; i < kCombos.length; i++)
-                Builder(
-                  builder: (BuildContext context) {
-                    final String hex = c.cpHex;
-                    final bool on =
-                        c.mode == 'custom' &&
-                        c.customBase == hex &&
-                        c.customCombo == i;
-                    final TcPalette tp = resolvePalette(
-                      preset: c.preset,
-                      mode: 'custom',
-                      customBase: hex,
-                      customCombo: i,
-                    );
-                    return _SelCard(
-                      on: on,
-                      onTap: () => c.pickCombo(i),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: <Widget>[
-                          _Thumb(p: tp, on: on, orb: false, cardAlpha: .55),
-                          const SizedBox(height: 9),
-                          RTx(kCombos[i].t, kCombos[i].s, titleSize: 15),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-            ],
-          ),
-          const _Hd(
-            'Wallpaper',
-            'Choose a background or use your own photo. You will see a preview first.',
-          ),
-          const _Walls(),
-          if (c.pendWall != null) const _WallPreview(),
-          Padding(
-            padding: const EdgeInsets.only(top: 18),
-            child: Glass(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+          if (tab == 'colour') ...<Widget>[
+            if (c.mode == 'look') ...<Widget>[
+              const _Hd(
+                'Colour palette',
+                'Colours picked to suit this look. Used for buttons, tabs, icons and highlights on every screen.',
+              ),
+              Grid(
+                cols: 5,
+                gap: 8,
                 children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      const Expanded(
-                        child: RTx(
-                          'Glass see-through',
-                          'How clear the glass looks',
-                          titleSize: 17,
-                        ),
-                      ),
-                      Text(
-                        '${c.glass.round()}%',
-                        style: amtStyle(context, size: 20),
-                      ),
-                    ],
-                  ),
-                  SizedBox(
-                    height: 30,
-                    child: SliderTheme(
-                      data: SliderThemeData(
-                        trackHeight: 4,
-                        activeTrackColor: p.acc,
-                        inactiveTrackColor: navyA(.15),
-                        thumbColor: p.acc,
-                        overlayShape: SliderComponentShape.noOverlay,
-                        thumbShape: const RoundSliderThumbShape(
-                          enabledThumbRadius: 9,
-                        ),
-                        showValueIndicator: ShowValueIndicator.never,
-                        tickMarkShape: SliderTickMarkShape.noTickMark,
-                      ),
-                      child: Slider(
-                        value: c.glass.clamp(20, 100),
-                        min: 20,
-                        max: 100,
-                        divisions: 8,
-                        onChanged: c.setGlass,
-                      ),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(0, 8, 0, 14),
-                    child: Row(
-                      children: <Widget>[
-                        for (final int v in const <int>[
-                          20,
-                          40,
-                          60,
-                          80,
-                          100,
-                        ]) ...<Widget>[
-                          if (v != 20) const SizedBox(width: 8),
-                          Expanded(
-                            child: Tap(
-                              onTap: () => c.setGlass(v.toDouble()),
-                              radius: 13,
-                              child: c.glass == v
-                                  ? Container(
-                                      height: 42,
-                                      alignment: Alignment.center,
-                                      decoration: BoxDecoration(
-                                        color: p.navy,
-                                        borderRadius: BorderRadius.circular(13),
-                                      ),
-                                      child: Text(
-                                        '$v%',
-                                        style: ts(14, w: w700, c: Colors.white),
-                                      ),
-                                    )
-                                  : Glass(
-                                      radius: 13,
-                                      height: 42,
-                                      child: Center(
-                                        child: Text(
-                                          '$v%',
-                                          style: ts(14, w: w700, c: p.ink),
-                                        ),
-                                      ),
+                  for (final (String, String, String, String) a in accents)
+                    _SelCard(
+                      on: c.accent == a.$1,
+                      onTap: () => c.pickAccent(a.$1),
+                      padding: const EdgeInsets.fromLTRB(2, 12, 2, 10),
+                      child: Stack(
+                        fit: StackFit.passthrough,
+                        clipBehavior: Clip.none,
+                        children: <Widget>[
+                          Column(
+                            children: <Widget>[
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white,
+                                    width: 2,
+                                  ),
+                                  gradient: LinearGradient(
+                                    begin: const Alignment(-.5, -1),
+                                    end: const Alignment(.5, 1),
+                                    colors: <Color>[
+                                      hexColor(a.$3),
+                                      hexColor(a.$4),
+                                    ],
+                                  ),
+                                  boxShadow: <BoxShadow>[
+                                    css(
+                                      0,
+                                      6,
+                                      14,
+                                      -6,
+                                      Colors.black.withValues(alpha: .35),
                                     ),
-                            ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                a.$2,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: ts(11.5, w: w700, c: p.ink),
+                              ),
+                            ],
                           ),
+                          if (c.accent == a.$1)
+                            const Positioned(top: -6, right: -2, child: Thck()),
                         ],
-                      ],
+                      ),
                     ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text('Live preview', style: rtStyle(context, 15)),
-                  ),
-                  _GlassPreview(glassTxt: '${c.glass.round()}%'),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 10),
-                    child: Text(
-                      'Changes cards, top bars, sheets and the bottom bar on every screen. Text and icons always stay clear.',
-                      style: rsStyle(context),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: Btn(
-                      label: 'Reset to default',
-                      icon: 'sync',
-                      kind: BtnKind.g,
-                      onTap: c.resetLook,
-                    ),
-                  ),
                 ],
               ),
+            ],
+            const _Hd(
+              'Your own colour',
+              'Pick any colour. We make matching looks for you.',
+            ),
+            const _ColourPicker(),
+            const _Hd(
+              'Matching combinations',
+              'Tap one to use it on every screen.',
+            ),
+            Grid(
+              cols: 2,
+              children: <Widget>[
+                for (int i = 0; i < kCombos.length; i++)
+                  Builder(
+                    builder: (BuildContext context) {
+                      final String hex = c.cpHex;
+                      final bool on =
+                          c.mode == 'custom' &&
+                          c.customBase == hex &&
+                          c.customCombo == i;
+                      final TcPalette tp = resolvePalette(
+                        preset: c.preset,
+                        mode: 'custom',
+                        customBase: hex,
+                        customCombo: i,
+                      );
+                      return _SelCard(
+                        on: on,
+                        onTap: () => c.pickCombo(i),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            _Thumb(p: tp, on: on, orb: false, cardAlpha: .55),
+                            const SizedBox(height: 9),
+                            RTx(kCombos[i].t, kCombos[i].s, titleSize: 15),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+              ],
+            ),
+          ],
+          if (tab == 'background') ...<Widget>[
+            const _Hd(
+              'Wallpaper',
+              'Choose a background or use your own photo. You will see a preview first.',
+              top: 0,
+            ),
+            const _Walls(),
+            if (c.pendWall != null) const _WallPreview(),
+            const _BackgroundLevels(),
+          ],
+          if (tab == 'glass')
+            Padding(
+              padding: const EdgeInsets.only(top: 18),
+              child: Glass(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        const Expanded(
+                          child: RTx(
+                            'Glass see-through',
+                            'How clear the glass looks',
+                            titleSize: 17,
+                          ),
+                        ),
+                        Text(
+                          '${c.glass.round()}%',
+                          style: amtStyle(context, size: 20),
+                        ),
+                      ],
+                    ),
+                    SizedBox(
+                      height: 30,
+                      child: SliderTheme(
+                        data: SliderThemeData(
+                          trackHeight: 4,
+                          activeTrackColor: p.acc,
+                          inactiveTrackColor: navyA(.15),
+                          thumbColor: p.acc,
+                          overlayShape: SliderComponentShape.noOverlay,
+                          thumbShape: const RoundSliderThumbShape(
+                            enabledThumbRadius: 9,
+                          ),
+                          showValueIndicator: ShowValueIndicator.never,
+                          tickMarkShape: SliderTickMarkShape.noTickMark,
+                        ),
+                        child: Slider(
+                          value: c.glass.clamp(20, 100),
+                          min: 20,
+                          max: 100,
+                          divisions: 8,
+                          onChanged: c.setGlass,
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(0, 8, 0, 14),
+                      child: Row(
+                        children: <Widget>[
+                          for (final int v in const <int>[
+                            20,
+                            40,
+                            60,
+                            80,
+                            100,
+                          ]) ...<Widget>[
+                            if (v != 20) const SizedBox(width: 8),
+                            Expanded(
+                              child: Tap(
+                                onTap: () => c.setGlass(v.toDouble()),
+                                radius: 13,
+                                child: c.glass == v
+                                    ? Container(
+                                        height: 42,
+                                        alignment: Alignment.center,
+                                        decoration: BoxDecoration(
+                                          color: p.navy,
+                                          borderRadius: BorderRadius.circular(
+                                            13,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '$v%',
+                                          style: ts(
+                                            14,
+                                            w: w700,
+                                            c: Colors.white,
+                                          ),
+                                        ),
+                                      )
+                                    : Glass(
+                                        radius: 13,
+                                        height: 42,
+                                        child: Center(
+                                          child: Text(
+                                            '$v%',
+                                            style: ts(14, w: w700, c: p.ink),
+                                          ),
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text('Live preview', style: rtStyle(context, 15)),
+                    ),
+                    _GlassPreview(glassTxt: '${c.glass.round()}%'),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Text(
+                        'Changes cards, top bars, sheets and the bottom bar on every screen. Text and icons always stay clear.',
+                        style: rsStyle(context),
+                      ),
+                    ),
+                    const _ResetLook(),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResetLook extends ConsumerWidget {
+  const _ResetLook();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Btn(
+        label: 'Reset to default',
+        icon: 'sync',
+        kind: BtnKind.g,
+        onTap: c.resetLook,
+      ),
+    );
+  }
+}
+
+/// Glass-style slider used by the background controls.
+class _LevelSlider extends StatelessWidget {
+  const _LevelSlider({
+    required this.title,
+    required this.sub,
+    required this.valueText,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.onChanged,
+    this.ends = const ('', ''),
+  });
+  final String title, sub, valueText;
+  final double value, min, max;
+  final ValueChanged<double> onChanged;
+  final (String, String) ends;
+
+  @override
+  Widget build(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(child: RTx(title, sub, titleSize: 17)),
+            const SizedBox(width: 10),
+            Text(valueText, style: amtStyle(context, size: 20)),
+          ],
+        ),
+        SizedBox(
+          height: 30,
+          child: SliderTheme(
+            data: SliderThemeData(
+              trackHeight: 4,
+              activeTrackColor: p.acc,
+              inactiveTrackColor: navyA(.15),
+              thumbColor: p.acc,
+              overlayShape: SliderComponentShape.noOverlay,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
+              showValueIndicator: ShowValueIndicator.never,
+              tickMarkShape: SliderTickMarkShape.noTickMark,
+            ),
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              divisions: ((max - min) / 5).round(),
+              onChanged: onChanged,
             ),
           ),
-        ],
+        ),
+        if (ends.$1.isNotEmpty)
+          Row(
+            children: <Widget>[
+              Text(ends.$1, style: rsStyle(context, 12.5)),
+              const Spacer(),
+              Text(ends.$2, style: rsStyle(context, 12.5)),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+/// Background (wallpaper) opacity and shade — separate from the glass level.
+class _BackgroundLevels extends ConsumerWidget {
+  const _BackgroundLevels();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final int sh = c.bgShade.round();
+    return Padding(
+      padding: const EdgeInsets.only(top: 18),
+      child: Glass(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _LevelSlider(
+              title: 'Background opacity',
+              sub: 'How strongly the wallpaper shows',
+              valueText: '${c.bgOpacity.round()}%',
+              value: c.bgOpacity,
+              min: 20,
+              max: 100,
+              onChanged: c.setBgOpacity,
+              ends: const ('Faint', 'Full'),
+            ),
+            const SizedBox(height: 18),
+            _LevelSlider(
+              title: 'Background shade',
+              sub: 'Make the background lighter or darker',
+              valueText: sh == 0 ? 'Normal' : (sh > 0 ? '+$sh' : '$sh'),
+              value: c.bgShade,
+              min: -100,
+              max: 100,
+              onChanged: c.setBgShade,
+              ends: const ('Lighter', 'Darker'),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(
+                'Only the background changes. Cards keep their own glass level (Glass tab).',
+                style: rsStyle(context),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Btn(
+                label: 'Background back to normal',
+                icon: 'sync',
+                kind: BtnKind.g,
+                onTap: () {
+                  c.setBgOpacity(100);
+                  c.setBgShade(0);
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
