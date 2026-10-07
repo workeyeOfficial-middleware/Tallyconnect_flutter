@@ -1,6 +1,6 @@
-// Preview PDF (NEW feature): shows a generated document's real PDF pages in
-// the same dark viewer chrome as the prototype's bill PDF (1563–1582), with
-// zoom, Share and Download.
+// Preview PDF: shows a generated document's real PDF pages (the same bytes
+// Share and Download use) in the dark viewer chrome, with touch zoom — pinch
+// in / out, pan while zoomed, double-tap to zoom — plus Share and Download.
 library;
 
 import 'dart:math' as math;
@@ -12,7 +12,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/app_state.dart';
 import '../../app/providers.dart';
-import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
 import '../../core/share/share_doc.dart';
@@ -25,9 +24,60 @@ class DocViewer extends ConsumerStatefulWidget {
   ConsumerState<DocViewer> createState() => _DocViewerState();
 }
 
-class _DocViewerState extends ConsumerState<DocViewer> {
+class _DocViewerState extends ConsumerState<DocViewer>
+    with SingleTickerProviderStateMixin {
   Future<List<ui.Image>>? _pages;
   Future<Uint8List>? _src;
+
+  /// Pinch / pan state of the pages.
+  final TransformationController _tc = TransformationController();
+  late final AnimationController _zoomAnim =
+      AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 260),
+      )..addListener(
+        () => _tc.value = _zoomTween?.evaluate(_zoomCurve) ?? _tc.value,
+      );
+  late final Animation<double> _zoomCurve = CurvedAnimation(
+    parent: _zoomAnim,
+    curve: Curves.easeOutCubic,
+  );
+  Matrix4Tween? _zoomTween;
+  Offset _tapAt = Offset.zero;
+
+  static const double _maxZoom = 4;
+  static const double _tapZoom = 2.5;
+
+  @override
+  void dispose() {
+    _zoomAnim.dispose();
+    _tc.dispose();
+    super.dispose();
+  }
+
+  void _animateTo(Matrix4 end) {
+    _zoomTween = Matrix4Tween(begin: _tc.value, end: end);
+    _zoomAnim.forward(from: 0);
+  }
+
+  /// Double-tap: zoom in at the tapped point, or back to fit.
+  void _doubleTap() {
+    if (_tc.value.getMaxScaleOnAxis() > 1.01) {
+      _animateTo(Matrix4.identity());
+      return;
+    }
+    final Offset f = _tapAt;
+    _animateTo(
+      Matrix4.identity()
+        ..translateByDouble(
+          -f.dx * (_tapZoom - 1),
+          -f.dy * (_tapZoom - 1),
+          0,
+          1,
+        )
+        ..scaleByDouble(_tapZoom, _tapZoom, 1, 1),
+    );
+  }
 
   Future<List<ui.Image>> _render(
     AppController c,
@@ -45,19 +95,8 @@ class _DocViewerState extends ConsumerState<DocViewer> {
     if (!identical(bytes, _src)) {
       _src = bytes;
       _pages = _render(c, bytes);
+      _tc.value = Matrix4.identity(); // a new document opens unzoomed
     }
-    Widget ctl(String ic, VoidCallback f) => Tap(
-      onTap: f,
-      radius: 23,
-      subtleHighlight: true,
-      child: Container(
-        width: 46,
-        height: 46,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(color: whiteA(.14), shape: BoxShape.circle),
-        child: Ic(ic, color: Colors.white),
-      ),
-    );
     return fadeIn(
       ColoredBox(
         color: const Color(0xFF1D2231),
@@ -120,6 +159,14 @@ class _DocViewerState extends ConsumerState<DocViewer> {
                     color: Colors.white,
                     onTap: () => c.shareDoc(d),
                   ),
+                  const SizedBox(width: 10),
+                  CBtn(
+                    'download',
+                    glass: false,
+                    bg: whiteA(.12),
+                    color: Colors.white,
+                    onTap: () => c.downloadDoc(d),
+                  ),
                 ],
               ),
             ),
@@ -148,86 +195,82 @@ class _DocViewerState extends ConsumerState<DocViewer> {
                           ),
                         );
                       }
-                      return SingleChildScrollView(
-                        padding: const EdgeInsets.only(top: 10, bottom: 10),
-                        child: Center(
-                          child: TweenAnimationBuilder<double>(
-                            tween: Tween<double>(end: c.zoom / 100),
-                            duration: const Duration(milliseconds: 350),
-                            curve: const Cubic(.3, 1.4, .5, 1),
-                            builder:
-                                (BuildContext context, double z, Widget? ch) =>
-                                    Transform.scale(
-                                      scale: z,
-                                      alignment: Alignment.topCenter,
-                                      child: ch,
-                                    ),
-                            child: Column(
-                              children: <Widget>[
-                                for (final ui.Image img in s.data!)
-                                  Container(
-                                    width: math.min(mq.size.width - 32, 360),
-                                    margin: const EdgeInsets.symmetric(
-                                      vertical: 10,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(4),
-                                      boxShadow: <BoxShadow>[
-                                        css(
-                                          0,
-                                          20,
-                                          40,
-                                          0,
-                                          Colors.black.withValues(alpha: .4),
-                                        ),
-                                      ],
-                                    ),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: RawImage(
-                                        image: img,
-                                        fit: BoxFit.fitWidth,
-                                        filterQuality: FilterQuality.medium,
-                                      ),
-                                    ),
+                      return LayoutBuilder(
+                        builder: (BuildContext context, BoxConstraints box) {
+                          final double pw = math.min(box.maxWidth - 32, 420);
+                          // Pages centred; at 1x they scroll vertically, and
+                          // pinch zooms in / out (pan while zoomed).
+                          return GestureDetector(
+                            onDoubleTapDown: (TapDownDetails t) =>
+                                _tapAt = t.localPosition,
+                            onDoubleTap: _doubleTap,
+                            child: InteractiveViewer(
+                              transformationController: _tc,
+                              constrained: false,
+                              minScale: 1,
+                              maxScale: _maxZoom,
+                              boundaryMargin: EdgeInsets.zero,
+                              child: ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  minWidth: box.maxWidth,
+                                  maxWidth: box.maxWidth,
+                                  minHeight: box.maxHeight,
+                                ),
+                                child: Padding(
+                                  padding: EdgeInsets.fromLTRB(
+                                    16,
+                                    10,
+                                    16,
+                                    22 + mq.padding.bottom * .6,
                                   ),
-                              ],
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: <Widget>[
+                                      for (final ui.Image img in s.data!)
+                                        Container(
+                                          width: pw,
+                                          margin: const EdgeInsets.symmetric(
+                                            vertical: 10,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            borderRadius: BorderRadius.circular(
+                                              4,
+                                            ),
+                                            boxShadow: <BoxShadow>[
+                                              css(
+                                                0,
+                                                20,
+                                                40,
+                                                0,
+                                                Colors.black.withValues(
+                                                  alpha: .4,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(
+                                              4,
+                                            ),
+                                            child: RawImage(
+                                              image: img,
+                                              width: pw,
+                                              fit: BoxFit.fitWidth,
+                                              filterQuality:
+                                                  FilterQuality.medium,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
+                          );
+                        },
                       );
                     },
-              ),
-            ),
-            Container(
-              margin: EdgeInsets.fromLTRB(
-                16,
-                0,
-                16,
-                22 + mq.padding.bottom * .6,
-              ),
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: whiteA(.12),
-                borderRadius: BorderRadius.circular(30),
-              ),
-              child: Row(
-                children: <Widget>[
-                  ctl('minus', () => c.zoomBy(-20)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      '${c.zoom}%',
-                      textAlign: TextAlign.center,
-                      style: ts(16, w: w800, c: Colors.white),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  ctl('plus', () => c.zoomBy(20)),
-                  const SizedBox(width: 10),
-                  ctl('download', () => c.downloadDoc(d)),
-                ],
               ),
             ),
           ],

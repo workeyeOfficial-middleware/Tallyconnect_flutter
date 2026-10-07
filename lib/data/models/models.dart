@@ -157,8 +157,13 @@ class Party {
     this.opening,
     this.closing,
     this.lastDate,
+    this.search = '',
   });
   final String name;
+
+  /// Lower-case search text built once when the list is loaded (empty for
+  /// sample data → the name is used).
+  final String search;
 
   /// `c` customer | `s` supplier | `o` any other ledger (bank, cash,
   /// expense, …) — `o` is never guessed into customer / supplier.
@@ -193,8 +198,16 @@ class Item {
     this.hsn,
     this.gst,
     this.group,
+    this.openingQty,
+    this.openingValue,
+    this.search = '',
   });
   final String name;
+
+  /// Lower-case search text built once when the list is loaded.
+  final String search;
+
+  /// Closing quantity (Tally stock summary).
   final num stock;
   final String unit;
   final num rate;
@@ -207,9 +220,20 @@ class Item {
   final num? value;
   final String? hsn;
   final num? gst;
+
+  /// Tally stock group (parent) of the item.
   final String? group;
 
+  /// Opening quantity / value from the Tally stock-item master.
+  final num? openingQty, openingValue;
+
   num get worth => value ?? stock * rate;
+
+  /// Opening rate = opening value ÷ opening quantity (null when unknown).
+  num? get openingRate =>
+      (openingQty == null || openingQty == 0 || openingValue == null)
+      ? null
+      : openingValue! / openingQty!;
 }
 
 /// Stock summary row (`/inventory`).
@@ -382,15 +406,25 @@ class Line {
     this.gst, {
     this.guid,
     this.hsn,
+    this.group,
   });
   final String name;
   final num rate;
   final int qty;
   final String unit;
   final num gst;
-  final String? guid, hsn;
 
-  Line withQty(int q) => Line(name, rate, q, unit, gst, guid: guid, hsn: hsn);
+  /// Tally stock group — required by the sync agent to create a new item.
+  final String? guid, hsn, group;
+
+  Line withQty(int q) =>
+      Line(name, rate, q, unit, gst, guid: guid, hsn: hsn, group: group);
+
+  /// This voucher line's own rate / GST (the item master is not changed).
+  Line withRate(num r) =>
+      Line(name, r, qty, unit, gst, guid: guid, hsn: hsn, group: group);
+  Line withGst(num g) =>
+      Line(name, rate, qty, unit, g, guid: guid, hsn: hsn, group: group);
 }
 
 /// Journal line (`state.jl`). side: Dr | Cr.
@@ -442,6 +476,7 @@ class PdfInfo {
     required this.city,
     this.recv,
     this.lines = const <BillLine>[],
+    this.ledger = const <LedgerLine>[],
   });
   final String party, no, date, due;
   final num total;
@@ -450,6 +485,9 @@ class PdfInfo {
 
   /// Real item lines (empty when the server sent none).
   final List<BillLine> lines;
+
+  /// Real Dr / Cr ledger lines of a voucher (empty when not known).
+  final List<LedgerLine> ledger;
 }
 
 // ------------------------------------------------------------ session
@@ -646,6 +684,7 @@ class Reminder {
     required this.kind,
     required this.amount,
     required this.date,
+    this.time = '',
     this.note = '',
   });
   final String id, company, billKey, party, billNo;
@@ -656,9 +695,22 @@ class Reminder {
 
   /// `YYYY-MM-DD`
   final String date;
+
+  /// `HH:mm` (24 h); empty for reminders saved before times existed.
+  final String time;
   final String note;
 
   DateTime? get day => DateTime.tryParse(date);
+
+  /// Date + time of the reminder (start of day when no time was set).
+  DateTime? get at {
+    final DateTime? d = day;
+    if (d == null) return null;
+    final List<String> p = time.split(':');
+    final int h = p.length == 2 ? (int.tryParse(p[0]) ?? 0) : 0;
+    final int m = p.length == 2 ? (int.tryParse(p[1]) ?? 0) : 0;
+    return DateTime(d.year, d.month, d.day, h, m);
+  }
 
   Map<String, Object?> toJson() => <String, Object?>{
     'id': id,
@@ -669,6 +721,7 @@ class Reminder {
     'kind': kind,
     'amount': amount,
     'date': date,
+    'time': time,
     'note': note,
   };
 
@@ -683,6 +736,7 @@ class Reminder {
       kind: o['kind'] == 'pay' ? 'pay' : 'recv',
       amount: o['amount'] is num ? o['amount'] as num : 0,
       date: o['date'] as String,
+      time: o['time'] is String ? o['time'] as String : '',
       note: '${o['note'] ?? ''}',
     );
   }

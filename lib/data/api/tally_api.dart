@@ -36,6 +36,10 @@ class TallyApi {
 
   // ------------------------------------------------------- company (§4)
   Future<Object?> companiesSelected() => http.get('/company/selected');
+
+  /// GET /company — every company of the admin (also the ones not synced
+  /// yet); the same list the sync agent shows as "All companies".
+  Future<Object?> companiesAll() => http.get('/company');
   Future<Object?> companyActive() => http.get('/company/active');
   Future<Object?> setActiveCompany(String guid) => http.post(
     '/company/set-active',
@@ -111,7 +115,72 @@ class TallyApi {
   );
 
   // ---------------------------------------------------------- team (§17)
+  /// GET /users — every user of the admin with their layout permissions
+  /// (`ledger_permissions`, `vouchers_permissions`, `orders_permissions`,
+  /// `inventory_permissions`; each `{ columns: { <field>: bool } }`).
   Future<Object?> users() => http.get('/users');
+
+  /// DELETE /users/:id
+  Future<Object?> deleteUser(String id) =>
+      http.delete('/users/${Uri.encodeComponent(id)}');
+
+  /// POST /send-invite — emails the user their login.
+  Future<Object?> sendInvite(String email, String username) => http.post(
+    '/send-invite',
+    body: <String, Object?>{'email': email, 'username': username},
+  );
+
+  /// PUT /users/:id/{ledger|voucher|orders|inventory}-permissions — the
+  /// whole permission object (stored as sent).
+  Future<Object?> saveLayoutPermissions(
+    String id,
+    String route,
+    Map<String, Object?> body,
+  ) => http.put('/users/${Uri.encodeComponent(id)}/$route', body: body);
+
+  /// GET /users/:id/ledgers → `[ { ledger_guid } ]`
+  Future<Object?> userLedgers(String id) =>
+      http.get('/users/${Uri.encodeComponent(id)}/ledgers');
+
+  /// POST /ledger/user-ledgers `{ userId, ledgers: [guid] }` (replaces).
+  Future<Object?> saveUserLedgers(int id, List<String> guids) => http.post(
+    '/ledger/user-ledgers',
+    body: <String, Object?>{'userId': id, 'ledgers': guids},
+  );
+
+  /// GET /voucher-entry/user-vouchers/:id → `{ vouchers: [guid] }`
+  Future<Object?> userVouchers(String id) =>
+      http.get('/voucher-entry/user-vouchers/${Uri.encodeComponent(id)}');
+
+  /// POST /voucher-entry/user-vouchers `{ userId, vouchers }` (replaces).
+  Future<Object?> saveUserVouchers(int id, List<String> guids) => http.post(
+    '/voucher-entry/user-vouchers',
+    body: <String, Object?>{'userId': id, 'vouchers': guids},
+  );
+
+  /// GET /orders — the active company's order book (admin: all orders).
+  Future<Object?> orders() => http.get('/orders');
+
+  /// GET /orders/user-orders/:id → `{ orders: [guid] }`
+  Future<Object?> userOrders(String id) =>
+      http.get('/orders/user-orders/${Uri.encodeComponent(id)}');
+
+  /// POST /orders/user-orders `{ userId, orders }` (replaces).
+  Future<Object?> saveUserOrders(int id, List<String> guids) => http.post(
+    '/orders/user-orders',
+    body: <String, Object?>{'userId': id, 'orders': guids},
+  );
+
+  /// GET /inventory/user-inventory/:id → `[ { item_name } ]`
+  Future<Object?> userInventory(String id) =>
+      http.get('/inventory/user-inventory/${Uri.encodeComponent(id)}');
+
+  /// POST /inventory/user-inventory `{ userId, items: [item_name] }`
+  /// (replaces).
+  Future<Object?> saveUserInventory(int id, List<String> items) => http.post(
+    '/inventory/user-inventory',
+    body: <String, Object?>{'userId': id, 'items': items},
+  );
 
   // ------------------------------------------------- notifications (§19)
   Future<Object?> notifications() => http.get('/api/mobile/notifications');
@@ -121,4 +190,46 @@ class TallyApi {
       http.get('/api/mobile/notifications/config');
   Future<Object?> saveNotificationConfig(Map<String, bool> cfg) =>
       http.put('/api/mobile/notifications/config', body: cfg);
+
+  // ------------------------------------------- raw JSON text (big lists)
+  // Same endpoints and parameters as above, returned undecoded so the app
+  // parses them in a background isolate and can cache the text as is.
+
+  Future<String> meText() => http.getText('/users/me');
+  Future<String> ledgersText() => http.getText('/ledger');
+  Future<String> billsText() => http.getText('/bill');
+  Future<String> inventoryMobileText() => http.getText('/inventory/mobile');
+  Future<String> inventoryText() => http.getText('/inventory');
+  Future<String> usersText() => http.getText('/users');
+  Future<String> notificationsText() =>
+      http.getText('/api/mobile/notifications');
+  Future<String> notificationConfigText() =>
+      http.getText('/api/mobile/notifications/config');
+  Future<String> queueActivityText(String companyGuid) => http.getText(
+    '/api/mobile-sync-queue/activity',
+    query: <String, Object?>{'company_guid': companyGuid},
+  );
+
+  /// GET /voucher-entry/paged (page, limit ≤ 200, type, search, year,
+  /// month, sort_by) as raw text.
+  Future<String> vouchersPagedText({
+    int page = 1,
+    int limit = 100,
+    int? year,
+    int? month,
+    String? type,
+    String? search,
+    String sortBy = 'date_desc',
+  }) => http.getText(
+    '/voucher-entry/paged',
+    query: <String, Object?>{
+      'page': page,
+      'limit': limit,
+      'year': year,
+      'month': month,
+      'type': type,
+      'search': search,
+      'sort_by': sortBy,
+    },
+  );
 }

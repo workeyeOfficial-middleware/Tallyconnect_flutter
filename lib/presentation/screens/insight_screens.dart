@@ -19,6 +19,7 @@ import '../../data/models/models.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../widgets/common.dart';
 import '../widgets/report_chart.dart';
+import '../widgets/tab_bar.dart' show PillFilter;
 import 'stock_party_screens.dart' show StatBox;
 import 'voucher_screens.dart' show monthSums;
 
@@ -40,10 +41,14 @@ class ReportsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    final Map<String, String> rv = <String, String>{
-      for (final Report r in c.repo.reports())
-        r.id: reportData(c.repo, r.id).card,
-    };
+    final Map<String, String> rv = c.memo<Map<String, String>>(
+      'reports-cards',
+      '${c.repo.version}',
+      () => <String, String>{
+        for (final Report r in c.repo.reports())
+          r.id: reportData(c.repo, r.id).card,
+      },
+    );
     final ({List<Report> rows, int hidden, VoidCallback unhide}) v = c
         .listView<Report>(
           'reports',
@@ -150,7 +155,11 @@ class ReportScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    final ReportData d = reportData(c.repo, c.report);
+    final ReportData d = c.memo<ReportData>(
+      'report-data',
+      '${c.repo.version}|${c.report}',
+      () => reportData(c.repo, c.report),
+    );
     final Report r0 = d.report;
     final List<Color> av = <Color>[
       p.navy2,
@@ -203,38 +212,25 @@ class ReportScreen extends ConsumerWidget {
             Text(d.total, style: amtStyle(context, size: 22)),
           ],
         ),
-        GlassList(
+        lazyList<int>(
           margin: const EdgeInsets.only(top: 12),
-          children: <Widget>[
-            for (int i = 0; i < d.rows.length; i++)
-              RowX(
-                children: <Widget>[
-                  Av(
-                    d.rows[i].n,
-                    size: Av.sm,
-                    gradient: LinearGradient(
-                      colors: <Color>[av[i % av.length], av[i % av.length]],
-                    ),
-                  ),
-                  Expanded(child: RTx(d.rows[i].t, d.rows[i].s, ell: true)),
-                  Text(
-                    d.rows[i].v,
-                    style: amtStyle(context, cls: d.rows[i].cls),
-                  ),
-                ],
-              ),
-            if (d.rows.isEmpty)
-              Padding(
-                padding: const EdgeInsets.all(18),
-                child: Text(
-                  d.note.isNotEmpty
-                      ? d.note
-                      : c.emptyText(DataSet.vouchers, 'Nothing to show.'),
-                  textAlign: TextAlign.center,
-                  style: rsStyle(context, 15),
+          rows: List<int>.generate(d.rows.length, (int i) => i),
+          row: (BuildContext context, int i) => RowX(
+            children: <Widget>[
+              Av(
+                d.rows[i].n,
+                size: Av.sm,
+                gradient: LinearGradient(
+                  colors: <Color>[av[i % av.length], av[i % av.length]],
                 ),
               ),
-          ],
+              Expanded(child: RTx(d.rows[i].t, d.rows[i].s, ell: true)),
+              Text(d.rows[i].v, style: amtStyle(context, cls: d.rows[i].cls)),
+            ],
+          ),
+          empty: d.note.isNotEmpty
+              ? d.note
+              : c.emptyText(DataSet.vouchers, 'Nothing to show.'),
         ),
       ],
     );
@@ -337,110 +333,96 @@ class ActivityScreen extends ConsumerWidget {
             ],
           ),
         ),
-        Chips(
-          margin: const EdgeInsets.only(top: 4, bottom: 14),
-          children: <Widget>[
-            for (final (String, String) x in af)
-              ChipBtn(
-                x.$2,
-                on: c.actFilter == x.$1,
-                onTap: () => c.update(() => c.actFilter = x.$1),
-              ),
-          ],
+        // Liquid-glass filter (same active lens as the tab bar); adapts to
+        // any number of voucher types.
+        PillFilter(
+          items: af,
+          selected: c.actFilter,
+          onPick: (String k) => c.update(() => c.actFilter = k),
         ),
-        GlassList(
-          children: <Widget>[
-            for (final Act a in v.rows)
-              LRow(
-                list: 'acts',
-                lk: a.id,
-                child: RowX(
-                  cross: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Ico(
-                      kKinds[a.kind]!.ic,
-                      size: IcoSize.xs,
-                      color: p.cat(kKinds[a.kind]!.c),
-                      icon: IcSize.s,
-                    ),
-                    Expanded(
-                      child: Tap(
-                        onTap: () {
-                          if (c.guardTap('acts', a.id)) {
-                            c.go('actDetail', <String, Object?>{'act': a.id});
-                          }
-                        },
-                        radius: 12,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+        lazyList<Act>(
+          rows: v.rows,
+          row: (BuildContext context, Act a) => LRow(
+            list: 'acts',
+            lk: a.id,
+            child: RowX(
+              cross: CrossAxisAlignment.start,
+              children: <Widget>[
+                Ico(
+                  kKinds[a.kind]!.ic,
+                  size: IcoSize.xs,
+                  color: p.cat(kKinds[a.kind]!.c),
+                  icon: IcSize.s,
+                ),
+                Expanded(
+                  child: Tap(
+                    onTap: () {
+                      if (c.guardTap('acts', a.id)) {
+                        c.go('actDetail', <String, Object?>{'act': a.id});
+                      }
+                    },
+                    radius: 12,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Row(
                           children: <Widget>[
-                            Row(
-                              children: <Widget>[
-                                Expanded(
-                                  child: Text(
-                                    '${kKinds[a.kind]!.t} · ${a.no}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: rtStyle(context),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Text(a.time, style: rsStyle(context)),
-                              ],
+                            Expanded(
+                              child: Text(
+                                '${kKinds[a.kind]!.t} · ${a.no}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: rtStyle(context),
+                              ),
                             ),
-                            const SizedBox(height: 2),
+                            const SizedBox(width: 10),
+                            Text(a.time, style: rsStyle(context)),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${a.party} · ${inr(a.amt)}',
+                          style: rsStyle(context),
+                        ),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: <Widget>[
+                            Bdg(
+                              kStMeta[a.status]!.$1,
+                              kind: kStMeta[a.status]!.$2,
+                              dot: true,
+                            ),
                             Text(
-                              '${a.party} · ${inr(a.amt)}',
-                              style: rsStyle(context),
-                            ),
-                            const SizedBox(height: 6),
-                            Wrap(
-                              spacing: 6,
-                              runSpacing: 4,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: <Widget>[
-                                Bdg(
-                                  kStMeta[a.status]!.$1,
-                                  kind: kStMeta[a.status]!.$2,
-                                  dot: true,
-                                ),
-                                Text(
-                                  a.note.isNotEmpty
-                                      ? a.note
-                                      : (a.status == 'wait'
-                                            ? 'Waiting for Tally to open'
-                                            : ''),
-                                  style: rsStyle(context, 12.5),
-                                ),
-                              ],
+                              a.note.isNotEmpty
+                                  ? a.note
+                                  : (a.status == 'wait'
+                                        ? 'Waiting for Tally to open'
+                                        : ''),
+                              style: rsStyle(context, 12.5),
                             ),
                           ],
                         ),
-                      ),
+                      ],
                     ),
-                    if (a.status == 'fail')
-                      ChipBtn(
-                        'Try again',
-                        height: 38,
-                        fontSize: 13.5,
-                        color: p.navy,
-                        onTap: () => c.retry(a.id),
-                      ),
-                  ],
+                  ),
                 ),
-              ),
-            if (v.hidden > 0)
-              HidRow('${v.hidden} hidden · Unhide', onTap: v.unhide),
-            if (v.rows.isEmpty)
-              Padding(
-                padding: const EdgeInsets.all(18),
-                child: Text(
-                  c.emptyText(DataSet.activity, 'Nothing here.'),
-                  textAlign: TextAlign.center,
-                  style: rsStyle(context, 15),
-                ),
-              ),
-          ],
+                if (a.status == 'fail')
+                  ChipBtn(
+                    'Try again',
+                    height: 38,
+                    fontSize: 13.5,
+                    color: p.navy,
+                    onTap: () => c.retry(a.id),
+                  ),
+              ],
+            ),
+          ),
+          hidden: v.hidden,
+          unhide: v.unhide,
+          empty: c.emptyText(DataSet.activity, 'Nothing here.'),
         ),
       ],
     );
@@ -585,7 +567,61 @@ class ActDetailScreen extends ConsumerWidget {
               ? 'check'
               : (a0.status == 'fail' ? 'xCircle' : 'sync'),
         ),
-        const Sec('Entry details', margin: EdgeInsets.fromLTRB(8, 0, 8, 8)),
+        // Share / PDF of this entry (same exporter as bills and reports).
+        Grid(
+          cols: 3,
+          gap: 10,
+          children: <Widget>[
+            for (final (String, String, String, VoidCallback) t
+                in <(String, String, String, VoidCallback)>[
+                  (
+                    'share',
+                    'sales',
+                    'Share',
+                    () => c.shareDoc(docAct(a0, c.companyName)),
+                  ),
+                  (
+                    'file',
+                    'navy',
+                    'Preview PDF',
+                    () => c.previewDoc(docAct(a0, c.companyName)),
+                  ),
+                  (
+                    'download',
+                    'purchase',
+                    'Download PDF',
+                    () => c.downloadDoc(docAct(a0, c.companyName)),
+                  ),
+                ])
+              Tap(
+                onTap: t.$4,
+                child: Glass(
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 92),
+                    padding: const EdgeInsets.fromLTRB(6, 14, 6, 12),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: <Widget>[
+                        Ico(
+                          t.$1,
+                          size: IcoSize.xs,
+                          color: p.cat(t.$2),
+                          icon: IcSize.s,
+                        ),
+                        const SizedBox(height: 8),
+                        AmtText(
+                          t.$3,
+                          align: Alignment.center,
+                          style: rtStyle(context, 13.5),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const Sec('Entry details'),
         KvList(rows),
         if (a0.items.isNotEmpty) ...<Widget>[
           Sec(a0.kind == 'journal' ? 'Accounts' : 'Items'),

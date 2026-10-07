@@ -17,6 +17,7 @@ import '../../data/accounting.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
+import '../../data/repositories/tally_repository.dart' show HistoryTotals;
 import '../widgets/common.dart';
 
 /// `.tot.stat` (centred column) / `.glass.stat` (left).
@@ -127,20 +128,43 @@ class ItemsScreen extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
     final List<Item> all = c.repo.items();
-    final String q = c.f('itemQ').toLowerCase();
-    final List<Item> rows = all
-        .where(
-          (Item x) =>
-              (c.itemsFilter == 'all' || x.st == c.itemsFilter) &&
-              (q.isEmpty || x.name.toLowerCase().contains(q)),
-        )
-        .toList();
+    // Debounced search over the search text built once per item; filtered
+    // and ordered once per data / filter / search change.
+    final String q = c.q('itemQ').toLowerCase();
+    final String mk =
+        '${c.repo.version}|${all.length}|${c.itemsFilter}|$q|${c.prefsVersion}';
+    final List<Item> rows = c.memo<List<Item>>(
+      'items-rows',
+      mk,
+      () => all
+          .where(
+            (Item x) =>
+                (c.itemsFilter == 'all' || x.st == c.itemsFilter) &&
+                (q.isEmpty ||
+                    (x.search.isNotEmpty ? x.search : x.name.toLowerCase())
+                        .contains(q)),
+          )
+          .toList(),
+    );
     final ({List<Item> rows, int hidden, VoidCallback unhide}) v = c
-        .listView<Item>('items', rows, (Item x) => x.name);
+        .memo<({List<Item> rows, int hidden, VoidCallback unhide})>(
+          'items-view',
+          mk,
+          () => c.listView<Item>('items', rows, (Item x) => x.name),
+        );
+    final (num, int, int) stats = c.memo<(num, int, int)>(
+      'items-stats',
+      '${c.repo.version}|${all.length}',
+      () => (
+        all.fold<num>(0, (num s, Item x) => s + x.worth),
+        all.where((Item x) => x.st == 'low').length,
+        all.where((Item x) => x.st == 'out').length,
+      ),
+    );
     final List<(String, String)> segs = <(String, String)>[
       ('all', 'All (${all.length})'),
-      ('low', 'Low (${all.where((Item x) => x.st == 'low').length})'),
-      ('out', 'Finished (${all.where((Item x) => x.st == 'out').length})'),
+      ('low', 'Low (${stats.$2})'),
+      ('out', 'Finished (${stats.$3})'),
     ];
     return Scr(
       children: <Widget>[
@@ -173,8 +197,9 @@ class ItemsScreen extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         Text('Total stock value', style: rsStyle(context)),
-                        Text(
-                          inr(all.fold<num>(0, (num s, Item x) => s + x.worth)),
+                        AmtText(
+                          inr(stats.$1),
+                          align: Alignment.centerLeft,
                           style: amtStyle(context, size: 26),
                         ),
                       ],
@@ -188,16 +213,8 @@ class ItemsScreen extends ConsumerWidget {
                 gap: 10,
                 children: <Widget>[
                   StatBox('${all.length}', 'Items'),
-                  StatBox(
-                    '${all.where((Item x) => x.st == 'low').length}',
-                    'Running low',
-                    kind: 'b',
-                  ),
-                  StatBox(
-                    '${all.where((Item x) => x.st == 'out').length}',
-                    'Finished',
-                    kind: 'n',
-                  ),
+                  StatBox('${stats.$2}', 'Running low', kind: 'b'),
+                  StatBox('${stats.$3}', 'Finished', kind: 'n'),
                 ],
               ),
             ],
@@ -213,7 +230,7 @@ class ItemsScreen extends ConsumerWidget {
         ),
         SearchRow(
           value: c.f('itemQ'),
-          onChanged: (String s) => c.setF('itemQ', s),
+          onChanged: (String s) => c.setQuery('itemQ', s),
           placeholder: 'Search item name',
           icon: 'scan',
           onAction: () => c.say(
@@ -222,78 +239,69 @@ class ItemsScreen extends ConsumerWidget {
                 : 'Point the camera at a barcode',
           ),
         ),
-        GlassList(
-          children: <Widget>[
-            for (final Item x in v.rows)
-              LRow(
-                list: 'items',
-                lk: x.name,
-                child: RowX(
-                  onTap: () {
-                    if (c.guardTap('items', x.name)) c.openItem(x.name);
-                  },
-                  children: <Widget>[
-                    Ico(
-                      'box',
-                      size: IcoSize.xs,
-                      color: p.cat('items'),
-                      icon: IcSize.s,
-                    ),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+        lazyList<Item>(
+          rows: v.rows,
+          row: (BuildContext context, Item x) => LRow(
+            list: 'items',
+            lk: x.name,
+            child: RowX(
+              onTap: () {
+                if (c.guardTap('items', x.name)) c.openItem(x.name);
+              },
+              children: <Widget>[
+                Ico(
+                  'box',
+                  size: IcoSize.xs,
+                  color: p.cat('items'),
+                  icon: IcSize.s,
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        x.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: rtStyle(context),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
                         children: <Widget>[
-                          Text(
-                            x.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: rtStyle(context),
+                          Bdg(
+                            stockLabel(x),
+                            kind: x.st == 'ok'
+                                ? BadgeKind.ok
+                                : (x.st == 'low'
+                                      ? BadgeKind.warn
+                                      : BadgeKind.bad),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
                           ),
-                          const SizedBox(height: 2),
-                          Row(
-                            children: <Widget>[
-                              Bdg(
-                                x.stock > 0
-                                    ? '${qty(x.stock)} ${x.unit}'
-                                    : 'Finished',
-                                kind: x.st == 'ok'
-                                    ? BadgeKind.ok
-                                    : (x.st == 'low'
-                                          ? BadgeKind.warn
-                                          : BadgeKind.bad),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 2,
-                                ),
-                              ),
-                              Flexible(
-                                child: Text(
-                                  ' ${inr(x.rate)} / ${x.unit}',
-                                  maxLines: 1,
-                                  style: rsStyle(context),
-                                ),
-                              ),
-                            ],
+                          Flexible(
+                            child: Text(
+                              ' ${rateLabel(x)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: rsStyle(context),
+                            ),
                           ),
                         ],
                       ),
-                    ),
-                    Text(inr(x.worth), style: amtStyle(context)),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            if (v.hidden > 0)
-              HidRow('${v.hidden} hidden · Unhide', onTap: v.unhide),
-            if (rows.isEmpty)
-              Padding(
-                padding: const EdgeInsets.all(18),
-                child: Text(
-                  c.emptyText(DataSet.items, 'No item found.'),
-                  textAlign: TextAlign.center,
-                  style: rsStyle(context, 15),
-                ),
-              ),
-          ],
+                Text(inr(x.worth), style: amtStyle(context)),
+              ],
+            ),
+          ),
+          hidden: v.hidden,
+          unhide: v.unhide,
+          empty: rows.isEmpty
+              ? c.emptyText(DataSet.items, 'No item found.')
+              : null,
         ),
       ],
     );
@@ -307,24 +315,45 @@ class PartyScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final List<Party> pool = c.partyPool();
-    final String q = c.f('partyQ').toLowerCase();
-    final List<Party> rows = pool
-        .where(
-          (Party x) =>
-              (c.partyFilter == 'all' || x.type == c.partyFilter) &&
-              (q.isEmpty || x.name.toLowerCase().contains(q)),
-        )
-        .toList();
-    if (c.partySort == 'amt') {
-      rows.sort((Party a, Party b) => b.bal.abs().compareTo(a.bal.abs()));
-    } else {
-      rows.sort(
-        (Party a, Party b) =>
-            a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-      );
-    }
+    // 16K+ parties: debounced search over the text built once per party;
+    // filtered, sorted and ordered once per data / filter / search change.
+    final String q = c.q('partyQ').toLowerCase();
+    final String mk =
+        '${c.repo.version}|${pool.length}|${c.partyFilter}|${c.partySort}|$q|${c.prefsVersion}';
+    final List<Party> rows = c.memo<List<Party>>('party-rows', mk, () {
+      final List<Party> r = pool
+          .where(
+            (Party x) =>
+                (c.partyFilter == 'all' || x.type == c.partyFilter) &&
+                (q.isEmpty ||
+                    (x.search.isNotEmpty ? x.search : x.name.toLowerCase())
+                        .contains(q)),
+          )
+          .toList();
+      if (c.partySort == 'amt') {
+        r.sort((Party a, Party b) => b.bal.abs().compareTo(a.bal.abs()));
+      } else {
+        r.sort(
+          (Party a, Party b) =>
+              a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+        );
+      }
+      return r;
+    });
     final ({List<Party> rows, int hidden, VoidCallback unhide}) v = c
-        .listView<Party>('party', rows, (Party x) => x.name);
+        .memo<({List<Party> rows, int hidden, VoidCallback unhide})>(
+          'party-view',
+          mk,
+          () => c.listView<Party>('party', rows, (Party x) => x.name),
+        );
+    final (int, int) pc = c.memo<(int, int)>(
+      'party-counts',
+      '${c.repo.version}|${pool.length}',
+      () => (
+        pool.where((Party x) => x.type == 'c').length,
+        pool.where((Party x) => x.type == 's').length,
+      ),
+    );
     const List<(String, String)> segs = <(String, String)>[
       ('all', 'All'),
       ('c', 'Customers'),
@@ -352,16 +381,8 @@ class PartyScreen extends ConsumerWidget {
           gap: 10,
           children: <Widget>[
             StatBox('${pool.length}', 'All', glass: true),
-            StatBox(
-              '${pool.where((Party x) => x.type == 'c').length}',
-              'Customers',
-              glass: true,
-            ),
-            StatBox(
-              '${pool.where((Party x) => x.type == 's').length}',
-              'Suppliers',
-              glass: true,
-            ),
+            StatBox('${pc.$1}', 'Customers', glass: true),
+            StatBox('${pc.$2}', 'Suppliers', glass: true),
           ],
         ),
         const SizedBox(height: 18),
@@ -374,7 +395,7 @@ class PartyScreen extends ConsumerWidget {
         ),
         SearchRow(
           value: c.f('partyQ'),
-          onChanged: (String s) => c.setF('partyQ', s),
+          onChanged: (String s) => c.setQuery('partyQ', s),
           placeholder: 'Search party name',
           icon: 'sort',
           onAction: () =>
@@ -384,72 +405,98 @@ class PartyScreen extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
           child: Text(sortLabel, style: rsStyle(context)),
         ),
-        GlassList(
-          children: <Widget>[
-            for (final Party x in v.rows)
-              LRow(
-                list: 'party',
-                lk: x.name,
-                child: RowX(
-                  onTap: () {
-                    if (c.guardTap('party', x.name)) {
-                      c.go('partyDetail', <String, Object?>{
-                        'party': x.name,
-                        'partyTab': 'summary',
-                      });
-                    }
-                  },
-                  children: <Widget>[
-                    Av(initials(x.name)),
-                    Expanded(
-                      child: RTx(
-                        x.name,
-                        '${x.kindLabel} · ${x.city.isNotEmpty ? x.city : (x.group ?? '')}',
-                        ell: true,
-                      ),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: <Widget>[
-                        Text(
-                          inr(x.bal.abs()),
-                          style: amtStyle(
-                            context,
-                            cls: x.bal == 0
-                                ? ''
-                                : (x.type == 'c' || (x.type == 'o' && x.bal > 0)
-                                      ? 'in'
-                                      : 'out'),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          x.bal == 0
-                              ? (c.repo.isRemote
-                                    ? 'No pending bills'
-                                    : 'Settled')
-                              : (x.type == 'c' || (x.type == 'o' && x.bal > 0)
-                                    ? 'They owe you'
-                                    : 'You owe'),
-                          style: rsStyle(context, 12),
-                        ),
-                      ],
-                    ),
-                  ],
+        lazyList<Party>(
+          rows: v.rows,
+          row: (BuildContext context, Party x) => LRow(
+            list: 'party',
+            lk: x.name,
+            // The pin is part of the row layout (beside the amount), so it
+            // stays inside the card and never covers name or balance.
+            pinOverlay: false,
+            child: RowX(
+              onTap: () {
+                if (c.guardTap('party', x.name)) {
+                  c.go('partyDetail', <String, Object?>{
+                    'party': x.name,
+                    'partyTab': 'summary',
+                  });
+                }
+              },
+              children: <Widget>[
+                Av(initials(x.name)),
+                Expanded(
+                  child: RTx(
+                    x.name,
+                    '${x.kindLabel} · ${x.city.isNotEmpty ? x.city : (x.group ?? '')}',
+                    ell: true,
+                  ),
                 ),
-              ),
-            if (v.hidden > 0)
-              HidRow('${v.hidden} hidden · Unhide', onTap: v.unhide),
-            if (rows.isEmpty)
-              Padding(
-                padding: const EdgeInsets.all(18),
-                child: Text(
-                  c.emptyText(DataSet.ledgers, 'No party found.'),
-                  textAlign: TextAlign.center,
-                  style: rsStyle(context, 15),
+                if (c.isPinned('party', x.name)) ...<Widget>[
+                  const PinBadge(),
+                  const SizedBox(width: 8),
+                ],
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.sizeOf(context).width * .38,
+                  ),
+                  child: x.bal == 0 && c.repo.isRemote
+                      // No pending bills: the ledger's Tally opening balance
+                      // (`/ledger` opening_balance; size only — the server
+                      // sends no Dr/Cr).
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: <Widget>[
+                            Text(
+                              'Opening Balance',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: rsStyle(context, 12),
+                            ),
+                            const SizedBox(height: 4),
+                            AmtText(
+                              x.opening == null ? '—' : inr(x.opening!.abs()),
+                              style: amtStyle(context),
+                            ),
+                          ],
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: <Widget>[
+                            AmtText(
+                              inr(x.bal.abs()),
+                              style: amtStyle(
+                                context,
+                                cls: x.bal == 0
+                                    ? ''
+                                    : (x.type == 'c' ||
+                                              (x.type == 'o' && x.bal > 0)
+                                          ? 'in'
+                                          : 'out'),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              x.bal == 0
+                                  ? 'Settled'
+                                  : (x.type == 'c' ||
+                                            (x.type == 'o' && x.bal > 0)
+                                        ? 'They owe you'
+                                        : 'You owe'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: rsStyle(context, 12),
+                            ),
+                          ],
+                        ),
                 ),
-              ),
-          ],
+              ],
+            ),
+          ),
+          hidden: v.hidden,
+          unhide: v.unhide,
+          empty: rows.isEmpty
+              ? c.emptyText(DataSet.ledgers, 'No party found.')
+              : null,
         ),
       ],
     );
@@ -534,28 +581,10 @@ class PartyDetailScreen extends ConsumerWidget {
         ? (det?.items ?? const <BillLine>[])
         : (sbt ? c.repo.billLines('Sales 9') : const <BillLine>[]);
     final String loadingText = c.emptyText(DataSet.party, '');
-    Widget empty(String t) => Padding(
-      padding: const EdgeInsets.all(18),
-      child: Text(t, textAlign: TextAlign.center, style: rsStyle(context, 15)),
-    );
     return FlowScr(
       foot: <Widget>[
+        // No WhatsApp backend: bill reminders live in Outstanding.
         Expanded(
-          flex: 10,
-          child: Btn(
-            label: 'Remind',
-            icon: 'bell',
-            kind: BtnKind.g,
-            color: p.acc,
-            onTap: () => c.say(
-              remote
-                  ? 'WhatsApp reminders are not available yet on the server'
-                  : 'Reminder sent on WhatsApp to ${p0.name}',
-            ),
-          ),
-        ),
-        Expanded(
-          flex: 17,
           child: Btn(
             label: other ? 'New Entry' : (pc ? 'New Sale' : 'New Purchase'),
             icon: 'plus',
@@ -631,10 +660,11 @@ class PartyDetailScreen extends ConsumerWidget {
                       '${remote ? 'Outstanding (pending bills)' : 'Balance'} · as on ${dmy(c.today)}',
                       style: rsStyle(context),
                     ),
-                    Text(
+                    AmtText(
                       remote
                           ? inr(p0.bal.abs())
                           : '${inr(p0.bal)}${p0.bal != 0 ? (pc ? ' Dr' : ' Cr') : ''}',
+                      align: Alignment.centerLeft,
                       style: amtStyle(
                         context,
                         cls: owesYou ? 'big in' : 'big out',
@@ -655,81 +685,65 @@ class PartyDetailScreen extends ConsumerWidget {
         if (c.partyTab == 'summary')
           KvList(rows, margin: const EdgeInsets.only(top: 12)),
         if (c.partyTab == 'items')
-          GlassList(
+          lazyList<BillLine>(
             margin: const EdgeInsets.only(top: 12),
-            children: <Widget>[
-              for (final BillLine l in items)
-                RowX(
-                  children: <Widget>[
-                    Ico(
-                      'box',
-                      size: IcoSize.xs,
-                      color: p.cat('items'),
-                      icon: IcSize.s,
-                    ),
-                    Expanded(
-                      child: RTx(
-                        l.name,
-                        <String>[
-                          l.qty,
-                          l.rate,
-                        ].where((String x) => x.isNotEmpty).join(' · '),
-                      ),
-                    ),
-                    Text(inr(l.amt), style: amtStyle(context)),
-                  ],
+            rows: items,
+            row: (BuildContext context, BillLine l) => RowX(
+              children: <Widget>[
+                Ico(
+                  'box',
+                  size: IcoSize.xs,
+                  color: p.cat('items'),
+                  icon: IcSize.s,
                 ),
-              if (items.isEmpty)
-                empty(
-                  loadingText.isNotEmpty
-                      ? loadingText
-                      : (remote
-                            ? 'No items bought or sold by this party.'
-                            : 'No item details in sample data.'),
+                Expanded(
+                  child: RTx(
+                    l.name,
+                    <String>[
+                      l.qty,
+                      l.rate,
+                    ].where((String x) => x.isNotEmpty).join(' · '),
+                  ),
                 ),
-            ],
+                Text(inr(l.amt), style: amtStyle(context)),
+              ],
+            ),
+            empty: loadingText.isNotEmpty
+                ? loadingText
+                : (remote
+                      ? 'No items bought or sold by this party.'
+                      : 'No item details in sample data.'),
           ),
         if (c.partyTab == 'vouchers')
-          GlassList(
+          lazyList<Voucher>(
             margin: const EdgeInsets.only(top: 12),
-            children: <Widget>[
-              for (final Voucher v in pv)
-                RowX(
-                  onTap: () => c.go('entryDetail', <String, Object?>{
-                    'entry':
-                        c.repo
-                            .vouchers()
-                            .where(
-                              (Voucher x) => x.guid != null && x.guid == v.guid,
-                            )
-                            .firstOrNull ??
-                        v,
-                  }),
-                  children: <Widget>[
-                    Ico(
-                      kKinds[v.kind]!.ic,
-                      size: IcoSize.xs,
-                      color: p.cat(kKinds[v.kind]!.c),
-                      icon: IcSize.s,
-                    ),
-                    Expanded(
-                      child: RTx(
-                        '${v.type ?? kKinds[v.kind]!.t} · ${v.no}',
-                        vDate(v),
-                      ),
-                    ),
-                    Text(inr(v.amt), style: amtStyle(context)),
-                  ],
+            rows: pv,
+            row: (BuildContext context, Voucher v) => RowX(
+              onTap: () => c.go('entryDetail', <String, Object?>{
+                'entry':
+                    (v.guid == null ? null : c.repo.voucherByKey(v.key)) ?? v,
+              }),
+              children: <Widget>[
+                Ico(
+                  kKinds[v.kind]!.ic,
+                  size: IcoSize.xs,
+                  color: p.cat(kKinds[v.kind]!.c),
+                  icon: IcSize.s,
                 ),
-              if (pv.isEmpty)
-                empty(
-                  loadingText.isNotEmpty
-                      ? loadingText
-                      : (remote
-                            ? 'No entries for this party.'
-                            : 'No entries this month.'),
+                Expanded(
+                  child: RTx(
+                    '${v.type ?? kKinds[v.kind]!.t} · ${v.no}',
+                    vDate(v),
+                  ),
                 ),
-            ],
+                Text(inr(v.amt), style: amtStyle(context)),
+              ],
+            ),
+            empty: loadingText.isNotEmpty
+                ? loadingText
+                : (remote
+                      ? 'No entries for this party.'
+                      : 'No entries this month.'),
           ),
       ],
     );
@@ -758,13 +772,17 @@ class ItemDetailScreen extends ConsumerWidget {
         ],
       );
     }
-    final List<Voucher> vs = c.repo.vouchers();
-    final ItemTrade sales = itemTrade(vs, it.name, 'sales');
-    final ItemTrade purch = itemTrade(vs, it.name, 'purchase');
+    // Sales / purchase summary from the whole voucher history, streamed on
+    // opening this screen (never at startup); figures show once read.
+    final HistoryTotals? h = c.repo.historyTotals;
+    final bool scanned = h != null && h.done;
+    final ItemTrade sales = h?.itemTrade(it.name, 'sales') ?? ItemAcc().trade;
+    final ItemTrade purch =
+        h?.itemTrade(it.name, 'purchase') ?? ItemAcc().trade;
     final ItemDetail? det = c.repo.itemDetail(it.name);
-    final bool complete = c.repo.vouchersComplete;
+    final bool complete = h != null && h.complete;
     String rate(num? v) => v == null ? '—' : inr(v);
-    String q(num v) => '${qty(v)} ${it.unit}';
+    String q(num v) => it.unit.isEmpty ? qty(v) : '${qty(v)} ${it.unit}';
     List<(String, String, bool)> trade(
       ItemTrade t,
       bool sale,
@@ -801,45 +819,42 @@ class ItemDetailScreen extends ConsumerWidget {
               : 'No supplier has sold this item to you yet.',
         );
       }
-      return GlassList(
-        children: <Widget>[
-          for (final ItemParty x in list)
-            RowX(
-              cross: CrossAxisAlignment.start,
+      return lazyList<ItemParty>(
+        rows: list,
+        row: (BuildContext context, ItemParty x) => RowX(
+          cross: CrossAxisAlignment.start,
+          children: <Widget>[
+            Av(initials(x.name), size: Av.sm),
+            Expanded(
+              child: RTx(
+                x.name,
+                <String>[
+                  if (x.lastDate != null)
+                    '${sale ? 'Last sold' : 'Last bought'}: ${dmy(x.lastDate)}',
+                  if (x.avgRate != null) 'Avg rate ${inr(paise(x.avgRate!))}',
+                  if (x.invoices != null)
+                    '${x.invoices} ${x.invoices == 1 ? 'voucher' : 'vouchers'}',
+                ].join(' · '),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: <Widget>[
-                Av(initials(x.name), size: Av.sm),
-                Expanded(
-                  child: RTx(
-                    x.name,
-                    <String>[
-                      if (x.lastDate != null)
-                        '${sale ? 'Last sold' : 'Last bought'}: ${dmy(x.lastDate)}',
-                      if (x.avgRate != null)
-                        'Avg rate ${inr(paise(x.avgRate!))}',
-                      if (x.invoices != null)
-                        '${x.invoices} ${x.invoices == 1 ? 'voucher' : 'vouchers'}',
-                    ].join(' · '),
-                  ),
+                Text('Total qty', style: rsStyle(context, 12)),
+                Text(
+                  x.qty == null ? '—' : q(x.qty!),
+                  style: rtStyle(context, 15),
                 ),
-                const SizedBox(width: 10),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: <Widget>[
-                    Text('Total qty', style: rsStyle(context, 12)),
-                    Text(
-                      x.qty == null ? '—' : q(x.qty!),
-                      style: rtStyle(context, 15),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      x.amount == null ? '—' : inr(x.amount),
-                      style: amtStyle(context, size: 14.5),
-                    ),
-                  ],
+                const SizedBox(height: 2),
+                Text(
+                  x.amount == null ? '—' : inr(x.amount),
+                  style: amtStyle(context, size: 14.5),
                 ),
               ],
             ),
-        ],
+          ],
+        ),
       );
     }
 
@@ -870,7 +885,7 @@ class ItemDetailScreen extends ConsumerWidget {
                       it.name,
                       <String>[
                         if ((it.group ?? '').isNotEmpty) it.group!,
-                        'Unit: ${it.unit}',
+                        'Unit: ${it.unit.isEmpty ? 'not set' : it.unit}',
                       ].join(' · '),
                       titleSize: 19,
                     ),
@@ -887,19 +902,29 @@ class ItemDetailScreen extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
                           Text('Closing stock', style: rsStyle(context)),
-                          Text(
-                            it.stock > 0 ? q(it.stock) : 'Finished',
+                          AmtText(
+                            stockLabel(it),
+                            align: Alignment.centerLeft,
                             style: amtStyle(context, size: 20),
                           ),
                         ],
                       ),
                     ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: <Widget>[
-                        Text('Stock value', style: rsStyle(context)),
-                        Text(inr(it.worth), style: amtStyle(context, size: 20)),
-                      ],
+                    const SizedBox(width: 10),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: MediaQuery.sizeOf(context).width * .45,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: <Widget>[
+                          Text('Stock value', style: rsStyle(context)),
+                          AmtText(
+                            inr(it.worth),
+                            style: amtStyle(context, size: 20),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -924,18 +949,43 @@ class ItemDetailScreen extends ConsumerWidget {
               it.gst == null ? 'Not set in Tally' : '${qty(it.gst!)}%',
               false,
             ),
-            ('Stock rate (Tally)', inr(it.rate), false),
+            ('Stock rate (Tally)', rateLabel(it), false),
+            (
+              'Opening stock',
+              it.openingQty == null ? '—' : q(it.openingQty!),
+              false,
+            ),
+            (
+              'Opening value',
+              it.openingValue == null ? '—' : inr(it.openingValue),
+              false,
+            ),
+            ('Closing stock', stockLabel(it), false),
+            ('Closing value', it.value == null ? '—' : inr(it.value), false),
           ]),
-          if (!complete)
+          // Sales / purchase summary: read from the voucher history when
+          // this item opens (with progress).
+          if (!scanned)
+            InfoBox(
+              h == null || h.running
+                  ? 'Reading sales and purchases'
+                        '${h == null ? '' : ' · ${h.scanned}${h.total == null ? '' : ' of ${h.total}'} vouchers'}…'
+                  : (h.error ?? 'Reading sales and purchases…'),
+              icon: 'info',
+              margin: const EdgeInsets.only(top: 14),
+            ),
+          if (scanned && !complete)
             const InfoBox(
               'The voucher history could not be read in full, so these totals may be incomplete.',
               icon: 'info',
               margin: EdgeInsets.only(top: 14),
             ),
-          const Sec('Sales summary'),
-          KvList(trade(sales, true)),
-          const Sec('Purchase summary'),
-          KvList(trade(purch, false)),
+          if (scanned) ...<Widget>[
+            const Sec('Sales summary'),
+            KvList(trade(sales, true)),
+            const Sec('Purchase summary'),
+            KvList(trade(purch, false)),
+          ],
           Padding(
             padding: const EdgeInsets.fromLTRB(6, 10, 6, 0),
             child: Text(

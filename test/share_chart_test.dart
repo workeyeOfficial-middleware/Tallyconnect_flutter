@@ -209,7 +209,7 @@ void main() {
         ),
         docReport(reportData(repo, 'day'), 'GI'),
         docItems(kItems, 'GI'),
-        docEntry(kVouchers.last, 'GI'),
+        docVoucher(kVouchers.last, 'GI'),
       ]) {
         final Uint8List b = await buildPdf(
           d,

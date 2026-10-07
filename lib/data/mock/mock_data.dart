@@ -25,6 +25,9 @@ const List<String> kNoTab = <String>[
   'actDetail',
   'entryDetail',
   'newEntry',
+  'teamUser',
+  'teamLayout',
+  'teamSelect',
 ];
 
 const Map<String, String> kTitles = <String, String>{
@@ -49,6 +52,9 @@ const Map<String, String> kTitles = <String, String>{
   'activity': 'Activity',
   'actDetail': 'Activity',
   'team': 'Team',
+  'teamUser': 'Configure User',
+  'teamLayout': 'Configure User',
+  'teamSelect': 'Configure User',
   'settings': 'Settings',
   'companies': 'Companies',
   'billing': 'Plans',
@@ -511,7 +517,7 @@ const Map<String, FlowType> kFlowTypes = <String, FlowType>{
     accLabel: 'Paid from',
   ),
   'journal': FlowType(
-    title: 'Adjustment',
+    title: 'Journal',
     sub: 'Journal entry',
     ic: 'book',
     c: 'journal',

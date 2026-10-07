@@ -63,74 +63,57 @@ class NotifsScreen extends ConsumerWidget {
             ),
           ],
         ),
-        GlassList(
+        lazyList<Notif>(
           margin: const EdgeInsets.only(top: 18),
-          children: <Widget>[
-            for (final Notif n in v.rows)
-              LRow(
-                list: 'notifs',
-                lk: n.id,
-                child: RowX(
-                  onTap: () {
-                    if (c.guardTap('notifs', n.id)) c.openNotif(n);
-                  },
-                  cross: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Ico(
-                      n.ic,
-                      size: IcoSize.xs,
-                      color: p.cat(n.c),
-                      icon: IcSize.s,
-                    ),
-                    Expanded(
-                      child: Column(
+          rows: v.rows,
+          row: (BuildContext context, Notif n) => LRow(
+            list: 'notifs',
+            lk: n.id,
+            child: RowX(
+              onTap: () {
+                if (c.guardTap('notifs', n.id)) c.openNotif(n);
+              },
+              cross: CrossAxisAlignment.start,
+              children: <Widget>[
+                Ico(n.ic, size: IcoSize.xs, color: p.cat(n.c), icon: IcSize.s),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: <Widget>[
-                              Expanded(
-                                child: Text(n.t, style: rtStyle(context)),
-                              ),
-                              const SizedBox(width: 10),
-                              Text(n.time, style: rsStyle(context)),
-                            ],
-                          ),
-                          const SizedBox(height: 2),
-                          Text(n.b, style: ts(14.5, h: 1.3, c: p.ink2)),
+                          Expanded(child: Text(n.t, style: rtStyle(context))),
+                          const SizedBox(width: 10),
+                          Text(n.time, style: rsStyle(context)),
                         ],
                       ),
-                    ),
-                    if (n.unread)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            color: p.neg,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            if (v.hidden > 0)
-              HidRow('${v.hidden} hidden · Unhide', onTap: v.unhide),
-            if (v.rows.isEmpty)
-              Padding(
-                padding: const EdgeInsets.all(18),
-                child: Text(
-                  c.emptyText(
-                    DataSet.notifications,
-                    'You have read everything.',
+                      const SizedBox(height: 2),
+                      Text(n.b, style: ts(14.5, h: 1.3, c: p.ink2)),
+                    ],
                   ),
-                  textAlign: TextAlign.center,
-                  style: rsStyle(context, 15),
                 ),
-              ),
-          ],
+                if (n.unread)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: p.neg,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          hidden: v.hidden,
+          unhide: v.unhide,
+          empty: c.emptyText(
+            DataSet.notifications,
+            'You have read everything.',
+          ),
         ),
       ],
     );
@@ -452,6 +435,8 @@ class NewEntryScreen extends ConsumerWidget {
           ('Purchase', 'You bought goods', 'cart', 'purchase', 'purchase'),
           ('Receipt', 'Money received', 'in', 'receipt', 'receipt'),
           ('Payment', 'Money paid', 'out', 'payment', 'payment'),
+          ('Journal', 'Between accounts', 'book', 'journal', 'journal'),
+          ('Contra', 'Bank ↔ Cash', 'swap', 'contra', 'contra'),
         ];
     return Scr(
       children: <Widget>[
@@ -463,7 +448,14 @@ class NewEntryScreen extends ConsumerWidget {
           children: <Widget>[
             for (final (String, String, String, String, String) e in tiles)
               Tap(
-                onTap: () => c.startFlow(e.$5),
+                // Contra: the server has no Contra entry (its create routes
+                // take Sales, Purchase, Receipt, Payment and Journal only),
+                // so nothing is posted under another voucher type.
+                onTap: e.$5 == 'contra'
+                    ? () => c.say(
+                        'Contra (Bank ↔ Cash) cannot be sent to Tally yet. The server does not accept Contra entries.',
+                      )
+                    : () => c.startFlow(e.$5),
                 child: Glass(
                   child: Container(
                     constraints: const BoxConstraints(minHeight: 168),
@@ -498,20 +490,6 @@ class NewEntryScreen extends ConsumerWidget {
                   ),
                 ),
               ),
-          ],
-        ),
-        GlassRow(
-          margin: const EdgeInsets.only(top: 12),
-          onTap: () => c.startFlow('journal'),
-          children: <Widget>[
-            Ico('book', size: IcoSize.sm, color: p.cat('journal')),
-            const Expanded(
-              child: RTx(
-                'Adjustment',
-                'Journal entry · move money between accounts',
-              ),
-            ),
-            chevR(),
           ],
         ),
         const InfoBox(

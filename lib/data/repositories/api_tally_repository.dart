@@ -7,6 +7,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import '../../core/network/api_client.dart';
 import '../../core/storage/session_store.dart';
@@ -14,10 +15,13 @@ import '../../core/storage/snapshot_cache.dart';
 import '../../core/utils/format.dart';
 import '../accounting.dart';
 import '../api/adapters.dart';
+import '../api/set_parsers.dart';
 import '../api/tally_api.dart';
 import '../mock/mock_data.dart';
 import '../models/models.dart';
 import 'tally_repository.dart';
+import 'team_admin.dart';
+import 'voucher_pager.dart';
 
 /// Data-set names used with [TallyRepository.status].
 abstract final class DataSet {
@@ -94,9 +98,6 @@ class ApiTallyRepository extends TallyRepository {
       <String, List<LedgerLine>>{};
   final Map<String, DataStatus> _status = <String, DataStatus>{};
 
-  /// Last good raw payload per data set (what the snapshot cache stores).
-  final Map<String, Object?> _payloads = <String, Object?>{};
-
   /// Sets that hold real data (from the server or the snapshot cache).
   final Set<String> _loaded = <String>{};
 
@@ -106,6 +107,28 @@ class ApiTallyRepository extends TallyRepository {
   Future<void>? _refreshing;
   DateTime? _lastFull;
   bool _disposed = false;
+
+  /// Bumped whenever a data set changes (lets the UI cache derived values).
+  int _version = 0;
+
+  /// Voucher lists by filter (most recently used last; at most 10 kept).
+  final Map<String, VoucherPager> _pagers = <String, VoucherPager>{};
+
+  /// All-history item sales / purchase totals, streamed when an item's
+  /// detail opens.
+  HistoryTotals? _history;
+
+  /// Exact voucher counts per period, and periods to recount after a
+  /// refresh (old counts stay on screen until the new ones arrive).
+  final Map<String, VoucherCounts> _counts = <String, VoucherCounts>{};
+  final Set<String> _countsStale = <String>{};
+  VoucherCounts? _monthCounts;
+  int _monthCountsV = -1;
+
+  MonthTotals? _monthMemo;
+  int _monthMemoV = -1;
+  final Map<bool, (String, OutstandingSummary)> _outMemo =
+      <bool, (String, OutstandingSummary)>{};
 
   static const List<String> _order = <String>[
     DataSet.companies,
@@ -119,6 +142,20 @@ class ApiTallyRepository extends TallyRepository {
     DataSet.notifications,
     DataSet.alerts,
     DataSet.team,
+  ];
+
+  /// Loaded at startup: what Home and the tab screens need. Items, stock,
+  /// team and (for an admin) ledgers load when a screen first needs them;
+  /// the voucher history is paged per list. A USER's ledgers load first
+  /// because bills are filtered to the parties they may see.
+  List<String> get _startup => <String>[
+    DataSet.profile,
+    if (!(_user?.isAdmin ?? false)) DataSet.ledgers,
+    DataSet.bills,
+    DataSet.vouchers,
+    DataSet.activity,
+    DataSet.notifications,
+    DataSet.alerts,
   ];
 
   String get _cacheKey => 'u${_user?.id ?? 0}';
@@ -136,6 +173,9 @@ class ApiTallyRepository extends TallyRepository {
 
   @override
   bool get isRemote => true;
+
+  @override
+  int get version => _version;
 
   @override
   DateTime get today {
@@ -223,12 +263,21 @@ class ApiTallyRepository extends TallyRepository {
     _itemDetail.clear();
     _voucherLines.clear();
     _detailAt.clear();
-    _payloads.removeWhere(
-      (String k, _) => !(keepCompanies && k == DataSet.companies),
-    );
+    _dropPagers();
+    _history = null;
+    _counts.clear();
+    _countsStale.clear();
     _loaded.removeWhere(
       (String k) => !(keepCompanies && k == DataSet.companies),
     );
+    _version++;
+  }
+
+  void _dropPagers() {
+    for (final VoucherPager p in _pagers.values) {
+      p.detach();
+    }
+    _pagers.clear();
   }
 
   @override
@@ -239,32 +288,26 @@ class ApiTallyRepository extends TallyRepository {
   // ------------------------------------------------------- snapshot cache
 
   /// Shows the last saved real data at once (before the network answers).
+  /// Each set is a separate file of server JSON, parsed off the UI thread.
   Future<void> _hydrate() async {
-    final Map<String, Object?>? c = await _cache.read(_cacheKey);
-    final Object? sets = c?['sets'];
-    if (sets is! Map) return;
     for (final String set in _order) {
-      final Object? payload = sets[set];
-      if (payload == null || _loaded.contains(set)) continue;
+      if (_loaded.contains(set)) continue;
+      final String? raw = await _cache.read(_cacheKey, set);
+      if (raw == null) continue;
       try {
-        _apply(set, payload);
-        _payloads[set] = payload;
+        _applyParsed(set, await parseSet(_in(set, raw)));
         _loaded.add(set);
       } catch (_) {
         // A corrupt entry is skipped; the next load replaces it.
       }
     }
     _rebuild();
+    _version++;
     _notify();
   }
 
-  Future<void> _persist() async {
-    if (_user == null || _payloads.isEmpty) return;
-    await _cache.write(_cacheKey, <String, Object?>{
-      'saved': _clock().toIso8601String(),
-      'sets': Map<String, Object?>.of(_payloads),
-    });
-  }
+  ParseIn _in(String set, String raw) =>
+      ParseIn(set, raw, _active, today, _clock());
 
   // ------------------------------------------------------------ loading
   @override
@@ -305,12 +348,7 @@ class ApiTallyRepository extends TallyRepository {
       await body();
       _status[set] = const DataStatus(LoadState.ready);
     } on ApiException catch (e) {
-      if (e.kind == ApiErrorKind.unauthorized) {
-        _expired = true;
-        _client.token = null;
-        await _sessions.clear();
-        await _cache.clear(_cacheKey);
-      }
+      if (e.kind == ApiErrorKind.unauthorized) await _endSession();
       _status[set] = DataStatus(LoadState.error, e.userMessage);
     } on FormatException catch (e) {
       _status[set] = DataStatus(
@@ -323,17 +361,49 @@ class ApiTallyRepository extends TallyRepository {
     _notify();
   }
 
+  Future<void> _endSession() async {
+    _expired = true;
+    _client.token = null;
+    await _sessions.clear();
+    await _cache.clear(_cacheKey);
+  }
+
   /// Fetches one data set and, only when it fully succeeds, swaps it in.
+  /// The server text is parsed (in an isolate when large), written to the
+  /// snapshot cache as is, and not kept in memory.
+  @override
+  late final TeamAdmin teamAdmin = TeamAdmin(_api, () async {
+    await _load(DataSet.team);
+    _notify();
+  });
+
   Future<void> _load(String set) => _once(
     set,
     () => _track(set, () async {
-      final Object? payload = await _fetch(set);
-      _apply(set, payload);
-      _payloads[set] = payload;
+      if (set == DataSet.vouchers) {
+        await _loadMonth();
+      } else {
+        final String raw = await _fetchText(set);
+        _applyParsed(set, await parseSet(_in(set, raw)));
+        unawaited(_cache.write(_cacheKey, set, raw));
+      }
       _loaded.add(set);
       if (set == DataSet.ledgers || set == DataSet.bills) _rebuild();
+      _version++;
     }),
   );
+
+  /// Loads [set] if it has no data yet (screens call this when they open).
+  @override
+  Future<void> ensure(String set) {
+    if (_client.token == null || _loaded.contains(set)) {
+      return Future<void>.value();
+    }
+    if (set == DataSet.team && !(_user?.isAdmin ?? false)) {
+      return Future<void>.value();
+    }
+    return _load(set);
+  }
 
   @override
   Future<void> refreshAll({bool force = false}) {
@@ -344,48 +414,61 @@ class ApiTallyRepository extends TallyRepository {
     if (!force && last != null && _clock().difference(last) < kFreshFor) {
       return Future<void>.value();
     }
-    final Future<void> f = _refreshAll().whenComplete(() {
+    final Future<void> f = _refreshAll(force).whenComplete(() {
       _refreshing = null;
     });
     _refreshing = f;
     return f;
   }
 
-  Future<void> _refreshAll() async {
+  /// Reloads the startup sets plus every set already on screen (stale data
+  /// stays visible until the fresh data replaces it). A forced refresh also
+  /// restarts the voucher lists from page 1.
+  Future<void> _refreshAll(bool force) async {
+    // Counts are recounted when next shown (old ones stay until then).
+    _countsStale.addAll(_counts.keys);
+    if (force) {
+      // Lists restart from page 1 now (not after the other sets reload), so
+      // a list opened during a long refresh is never blanked at its end.
+      _dropPagers();
+      _history = null;
+      _notify();
+    }
     await _load(DataSet.companies);
     if (_expired) return;
-    await Future.wait(<Future<void>>[
-      for (final String set in _order.skip(1))
-        if (set != DataSet.team || (_user?.isAdmin ?? false)) _load(set),
-    ]);
+    final Set<String> sets = <String>{..._startup, ..._loaded}
+      ..remove(DataSet.companies);
+    if (!(_user?.isAdmin ?? false)) sets.remove(DataSet.team);
+    await Future.wait(<Future<void>>[for (final String s in sets) _load(s)]);
     _rebuild();
     _lastFull = _clock();
+    _version++;
     _notify();
-    if (!_expired) await _persist();
   }
 
   @override
-  Future<void> refreshActivity() async {
-    await _load(DataSet.activity);
-    await _persist();
-  }
+  Future<void> refreshActivity() => _load(DataSet.activity);
 
   @override
-  Future<void> refreshNotifications() async {
-    await _load(DataSet.notifications);
-    await _persist();
-  }
+  Future<void> refreshNotifications() => _load(DataSet.notifications);
 
-  /// Network part of a data set: the raw, JSON-serialisable payload.
-  Future<Object?> _fetch(String set) async {
+  /// Server JSON text of one data set (small composites are encoded here).
+  Future<String> _fetchText(String set) async {
     switch (set) {
       case DataSet.companies:
+        // `/company/selected` only has companies with a sync-start row, so
+        // a company the agent registered but has not synced yet was missing.
+        // The list comes from `/company` (all of the admin's companies);
+        // `/company/selected` still supplies each one's sync start month.
         final List<Object?> r = await Future.wait(<Future<Object?>>[
           _api.companiesSelected(),
           _api.companyActive(),
+          _api.companiesAll(),
         ]);
         final Set<String> ids = <String>{
           for (final Map<String, Object?> m in rows(r[0]))
+            str(m['company_guid']),
+          for (final Map<String, Object?> m in rows(r[2]))
             str(m['company_guid']),
           if (r[1] is Map && (r[1]! as Map)['company_guid'] is String)
             (r[1]! as Map)['company_guid'] as String,
@@ -406,90 +489,125 @@ class ApiTallyRepository extends TallyRepository {
                   },
                 ),
         ]);
-        return <String, Object?>{
+        return jsonEncode(<String, Object?>{
           'selected': r[0],
           'active': r[1],
+          'all': r[2],
           'sync': sync,
-        };
+        });
       case DataSet.profile:
-        return _api.me();
+        return _api.meText();
       case DataSet.ledgers:
-        return _api.ledgers();
+        return _api.ledgersText();
       case DataSet.bills:
-        final Object? bills = await _api.bills();
+        final String bills = await _api.billsText();
         Object? summary;
         if ((_user?.isAdmin ?? false) && _active != null) {
           summary = await _api.dashboardSummary(_active!);
         }
-        return <String, Object?>{'bills': bills, 'summary': summary};
-      case DataSet.vouchers:
-        return _fetchVouchers();
+        // Concatenated, not re-encoded: the bill list stays server text.
+        return '{"bills":$bills,"summary":${jsonEncode(summary)}}';
       case DataSet.items:
-        return _api.inventoryMobile();
+        return _api.inventoryMobileText();
       case DataSet.stock:
-        return _api.inventory();
+        return _api.inventoryText();
       case DataSet.activity:
-        if (_active == null) return const <Object?>[];
-        return _api.queueActivity(_active!);
+        if (_active == null) return '[]';
+        return _api.queueActivityText(_active!);
       case DataSet.notifications:
-        return _api.notifications();
+        return _api.notificationsText();
       case DataSet.alerts:
-        return _api.notificationConfig();
+        return _api.notificationConfigText();
       case DataSet.team:
-        return _api.users();
+        return _api.usersText();
     }
     throw ArgumentError(set);
   }
 
-  /// The complete voucher history of the active company (no year / month
-  /// filter), page by page until the server says there is no more. The
-  /// server limits rows to the active company and, for a USER, to the
-  /// allowed vouchers. Duplicates (rows shifting between pages) are removed
-  /// by GUID; server order (newest first) is kept. Marked complete only when
-  /// every row of `meta.total` arrived.
-  Future<Map<String, Object?>> _fetchVouchers() async {
-    final List<Map<String, Object?>> out = <Map<String, Object?>>[];
+  /// The current month's vouchers (needed for the month totals on Home,
+  /// Vouchers and Reports) — never the whole history. Pages of 200, each
+  /// parsed off the UI thread; complete only when every row of
+  /// `meta.total` arrived. Cached as the pages' own text.
+  Future<void> _loadMonth() async {
+    final DateTime t = today;
+    final List<String> pages = <String>[];
+    final List<Voucher> out = <Voucher>[];
     final Set<String> seen = <String>{};
     int page = 1;
     int? expected;
     bool complete = true;
     while (true) {
-      final Object? body = await _api.vouchersPaged(page: page);
-      final List<Map<String, Object?>> rs = rows(body);
-      final Object? meta = body is Map ? body['meta'] : null;
-      if (meta is Map && meta['total'] is num && expected == null) {
-        expected = (meta['total']! as num).toInt();
-      }
+      final String raw = await _api.vouchersPagedText(
+        page: page,
+        limit: 200,
+        year: t.year,
+        month: t.month,
+      );
+      final VoucherPageParsed p = await parseVoucherPage(raw);
+      pages.add(raw);
+      expected ??= p.total;
       int fresh = 0;
-      for (final Map<String, Object?> m in rs) {
-        final String g = str(m['voucher_guid']);
-        if (g.isNotEmpty && !seen.add(g)) continue; // duplicate
-        fresh++;
-        out.add(m);
+      for (final String g in p.guids) {
+        if (g.isEmpty || seen.add(g)) fresh++;
       }
-      final bool more = meta is Map && meta['hasMore'] == true;
-      if (!more) break;
-      if (rs.isEmpty || fresh == 0) {
-        // Server claims more but sends nothing new: stop, never loop.
-        complete = false;
+      out.addAll(p.rows);
+      if (!p.hasMore) break;
+      if (p.guids.isEmpty || fresh == 0) {
+        complete = false; // server claims more but sends nothing new
         break;
       }
       page++;
     }
     if (expected != null && seen.length < expected) complete = false;
-    return <String, Object?>{'rows': out, 'complete': complete};
+    // Rows that shifted across pages appear twice: keep the first.
+    final Set<String> once = <String>{};
+    _vouchers = <Voucher>[
+      for (final Voucher v in out)
+        if ((v.guid ?? '').isEmpty || once.add(v.guid!)) v,
+    ];
+    _vouchersComplete = complete;
+    unawaited(
+      _cache.write(
+        _cacheKey,
+        DataSet.vouchers,
+        '{"year":${t.year},"month":${t.month},"complete":$complete,'
+        '"pages":[${pages.join(',')}]}',
+      ),
+    );
   }
 
-  /// Parses a payload into the snapshot. Each branch builds locals first and
-  /// assigns at the end, so a parse error never leaves half-applied data.
-  void _apply(String set, Object? payload) {
-    final DateTime now = _clock();
+  /// Puts a parsed data set into the snapshot.
+  void _applyParsed(String set, Object? parsed) {
     switch (set) {
       case DataSet.companies:
-        final Map<Object?, Object?> m = payload is Map
-            ? payload
+        final Map<Object?, Object?> m = parsed is Map
+            ? parsed
             : const <Object?, Object?>{};
-        List<Company> cos = rows(m['selected']).map(companyFrom).toList();
+        // Every company of the admin (sync status never filters the list);
+        // the sync start month comes from the selected-companies rows.
+        final Map<String, Map<String, Object?>> selected =
+            <String, Map<String, Object?>>{
+              for (final Map<String, Object?> s in rows(m['selected']))
+                str(s['company_guid']): s,
+            };
+        final List<Map<String, Object?>> allRows = rows(m['all']);
+        List<Company> cos = <Company>[
+          for (final Map<String, Object?> c in allRows)
+            if (str(c['company_guid']).isNotEmpty)
+              companyFrom(<String, Object?>{
+                ...c,
+                'starting_from':
+                    selected[str(c['company_guid'])]?['starting_from'],
+              }),
+          // Selected companies `/company` did not return (older cache) are
+          // kept as before.
+          for (final Map<String, Object?> s in selected.values)
+            if (!allRows.any(
+              (Map<String, Object?> c) =>
+                  str(c['company_guid']) == str(s['company_guid']),
+            ))
+              companyFrom(s),
+        ];
         final Object? a = m['active'];
         final String? active = a is Map && a['company_guid'] is String
             ? a['company_guid'] as String
@@ -505,71 +623,46 @@ class ApiTallyRepository extends TallyRepository {
         };
         // The admin switched company elsewhere: other sets belong to the
         // previous company, so they are dropped before the new ones load.
-        if (_active != null && active != _active) _clearData();
+        if (_active != null && active != _active) {
+          _clearData();
+          unawaited(_cache.clear(_cacheKey));
+        }
         _companies = cos;
         _active = active;
         _sync
           ..clear()
           ..addAll(sync);
       case DataSet.profile:
-        _profile = profileFrom(payload);
+        _profile = parsed! as Profile;
       case DataSet.ledgers:
-        _ledgers = rows(payload).map(ledgerFrom).toList();
+        _ledgers = parsed! as List<LedgerRow>;
       case DataSet.bills:
-        // `GET /bill` returns every company of the admin: keep the active
-        // company's pending bills only.
-        final Map<Object?, Object?> m = payload is Map
-            ? payload
-            : const <Object?, Object?>{};
-        final List<Bill> recv = <Bill>[], pay = <Bill>[];
-        for (final Map<String, Object?> b in rows(m['bills'])) {
-          if (_active == null || str(b['company_guid']) != _active) continue;
-          final Bill? x = billFrom(b, today);
-          if (x == null) continue;
-          (x.kind == 'pay' ? pay : recv).add(x);
-        }
-        int byDue(Bill a, Bill b) => (a.dueDate ?? DateTime(9999)).compareTo(
-          b.dueDate ?? DateTime(9999),
-        );
-        final Object? s = m['summary'];
-        _recvAll = recv..sort(byDue);
-        _payAll = pay..sort(byDue);
-        _serverRecv = s is Map ? toNum(s['receivables']) : null;
-        _serverPay = s is Map ? toNum(s['payables']) : null;
+        final BillsParsed b = parsed! as BillsParsed;
+        _recvAll = b.recv;
+        _payAll = b.pay;
+        _serverRecv = b.serverRecv;
+        _serverPay = b.serverPay;
       case DataSet.vouchers:
-        final Map<Object?, Object?> m = payload is Map
-            ? payload
-            : const <Object?, Object?>{};
-        final List<Voucher> vs = <Voucher?>[
-          if (m['rows'] is List)
-            for (final Object? r in m['rows']! as List)
-              if (r is Map) voucherFrom(r.cast<String, Object?>()),
-        ].whereType<Voucher>().toList();
-        _vouchers = vs;
-        _vouchersComplete = m['complete'] != false;
+        // Cached month set: only used while it is still this month.
+        final MonthParsed mp = parsed! as MonthParsed;
+        final DateTime t = today;
+        if (mp.year != t.year || mp.month != t.month) {
+          throw const FormatException('cached month is over');
+        }
+        _vouchers = mp.rows;
+        _vouchersComplete = mp.complete;
       case DataSet.items:
-        _items = rows(payload, 'items').map(itemFrom).toList();
+        _items = parsed! as List<Item>;
       case DataSet.stock:
-        _stock = rows(payload).map(stockFrom).toList();
+        _stock = parsed! as List<StockRow>;
       case DataSet.activity:
-        _acts = rows(
-          payload,
-        ).map((Map<String, Object?> m) => actFrom(m, now)).toList();
+        _acts = parsed! as List<Act>;
       case DataSet.notifications:
-        _notifs = rows(
-          payload,
-          'notifications',
-        ).map((Map<String, Object?> m) => notifFrom(m, now)).toList();
+        _notifs = parsed! as List<Notif>;
       case DataSet.alerts:
-        final Object? c = payload is Map ? payload['config'] : null;
-        _alerts = c is Map
-            ? <String, bool>{
-                for (final MapEntry<Object?, Object?> e in c.entries)
-                  '${e.key}': e.value == true,
-              }
-            : null;
+        _alerts = parsed as Map<String, bool>?;
       case DataSet.team:
-        _team = rows(payload).map(memberFrom).toList();
+        _team = parsed! as List<Member>;
     }
   }
 
@@ -625,10 +718,273 @@ class ApiTallyRepository extends TallyRepository {
           opening: l.opening,
           closing: l.closing,
           lastDate: l.lastDate,
+          search: l.search,
         ),
       );
     }
     _parties = out;
+  }
+
+  // ------------------------------------------------------ voucher paging
+
+  /// The paged list for [q] (cached: reopening a list never re-requests the
+  /// pages it already has).
+  @override
+  VoucherPager voucherPager(VoucherQuery q) {
+    final VoucherPager p =
+        _pagers.remove(q.key) ?? VoucherPager(q, _fetchPage, today);
+    _pagers[q.key] = p;
+    while (_pagers.length > 10) {
+      _pagers.remove(_pagers.keys.first)!.detach();
+    }
+    return p;
+  }
+
+  /// One `/voucher-entry/paged` page of 100 for a list. `month` uses the
+  /// server's year / month filter; week / today read newest-first pages and
+  /// the pager stops at the cut-off date.
+  Future<FetchedPage> _fetchPage(int page, VoucherQuery q, DateTime t) async {
+    try {
+      final String raw = await _api.vouchersPagedText(
+        page: page,
+        year: q.period == 'month' ? t.year : null,
+        month: q.period == 'month' ? t.month : null,
+        type: q.serverType,
+      );
+      final VoucherPageParsed p = await parseVoucherPage(raw);
+      return FetchedPage(p.rows, p.guids, p.hasMore);
+    } on ApiException catch (e) {
+      if (e.kind == ApiErrorKind.unauthorized) {
+        await _endSession();
+        _notify();
+      }
+      rethrow;
+    }
+  }
+
+  // ------------------------------------------------------ voucher counts
+
+  @override
+  VoucherCounts? voucherCounts(String period) {
+    if (period == 'month') {
+      // The complete month set the This-month list shows (same filter).
+      if (!hasData(DataSet.vouchers)) return null;
+      if (_monthCounts == null || _monthCountsV != _version) {
+        final DateTime t = today;
+        _monthCounts = VoucherCounts.of(
+          _vouchers.where((Voucher v) => voucherInPeriod(v, 'month', t)),
+        )..complete = _vouchersComplete;
+        _monthCountsV = _version;
+      }
+      return _monthCounts;
+    }
+    return _counts[period];
+  }
+
+  @override
+  Future<void> loadVoucherCounts(String period) {
+    if (period == 'month' || _client.token == null) {
+      return Future<void>.value();
+    }
+    final VoucherCounts? have = _counts[period];
+    if (have != null && have.error == null && !_countsStale.contains(period)) {
+      return Future<void>.value();
+    }
+    return _once('counts|$period', () async {
+      final VoucherCounts c;
+      try {
+        c = period == 'all'
+            ? await _serverCounts()
+            : await _periodCounts(period);
+      } on ApiException catch (e) {
+        if (e.kind == ApiErrorKind.unauthorized) await _endSession();
+        _counts[period] = (_counts[period] ?? VoucherCounts())
+          ..error = e.userMessage;
+        _notify();
+        return;
+      } catch (e) {
+        _counts[period] = (_counts[period] ?? VoucherCounts())
+          ..error = 'Could not count: $e';
+        _notify();
+        return;
+      }
+      _counts[period] = c;
+      _countsStale.remove(period);
+      _notify();
+    });
+  }
+
+  /// All history, counted by the server (`meta.total` of
+  /// `/voucher-entry/paged`, one row per call — nothing is downloaded).
+  /// The server's `type` filter is a loose `ILIKE '%type%'`, so each
+  /// listed type is counted and the exact per-type counts are solved from
+  /// them ([exactTypeCounts]); kinds are the sums of their types.
+  Future<VoucherCounts> _serverCounts() async {
+    Map<Object?, Object?> meta(String raw) {
+      final Object? b = jsonDecode(raw);
+      final Object? m = b is Map ? b['meta'] : null;
+      return m is Map ? m : const <Object?, Object?>{};
+    }
+
+    int count(Map<Object?, Object?> m) =>
+        m['total'] is num ? (m['total']! as num).toInt() : 0;
+    num sum(Map<Object?, Object?> m) => toNum(m['totalAmount']) ?? 0;
+    final Map<Object?, Object?> m0 = meta(
+      await _api.vouchersPagedText(limit: 1),
+    );
+    final int total = count(m0);
+    final num totalSum = sum(m0);
+    final List<String> types = <String>[
+      if (m0['types'] is List)
+        for (final Object? t in m0['types']! as List<Object?>)
+          if (t != null && '$t'.trim().isNotEmpty) '$t'.trim(),
+    ];
+    final Map<String, int> ilike = <String, int>{};
+    final Map<String, num> ilikeSum = <String, num>{};
+    // A few at a time, not one burst per type. Each answer carries the
+    // filter's count and its amount total (`meta.totalAmount`).
+    for (int i = 0; i < types.length; i += 4) {
+      await Future.wait(<Future<void>>[
+        for (final String t in types.skip(i).take(4))
+          _api.vouchersPagedText(limit: 1, type: t).then((String raw) {
+            final Map<Object?, Object?> m = meta(raw);
+            ilike[t] = count(m);
+            ilikeSum[t] = sum(m);
+          }),
+      ]);
+    }
+    final Map<String, int> exact = exactTypeCounts(ilike);
+    final Map<String, num> exactSum = exactTypeSums(ilikeSum);
+    final VoucherCounts c = VoucherCounts(
+      total: total,
+      type: exact,
+      totalAmt: 0,
+      complete: true,
+    );
+    // Voucher values are positive in the app (the server stores Dr / Cr
+    // signs): each type's server total, as a size.
+    num typedSum = 0;
+    for (final MapEntry<String, num> e in exactSum.entries) {
+      typedSum += e.value;
+      final num v = e.value.abs();
+      c.typeAmt[e.key] = v;
+      c.totalAmt = c.totalAmt! + v;
+      final String k = voucherKind(e.key);
+      c.kindAmt[k] = (c.kindAmt[k] ?? 0) + v;
+    }
+    for (final String t in types) {
+      c.names[t.toLowerCase()] ??= t;
+    }
+    int typed = 0;
+    for (final MapEntry<String, int> e in exact.entries) {
+      typed += e.value;
+      final String k = voucherKind(e.key);
+      c.kind[k] = (c.kind[k] ?? 0) + e.value;
+    }
+    // Vouchers with no type name are counted as other vouchers.
+    if (total > typed) {
+      c.kind['other'] = (c.kind['other'] ?? 0) + total - typed;
+      c.type[''] = total - typed;
+      final num rest = (totalSum - typedSum).abs();
+      c.typeAmt[''] = rest;
+      c.kindAmt['other'] = (c.kindAmt['other'] ?? 0) + rest;
+      c.totalAmt = c.totalAmt! + rest;
+    }
+    return c;
+  }
+
+  /// Last 7 days / Today: the server cannot filter by day, so the list's own
+  /// pager (same date and type rules, newest first, stops at the cut-off)
+  /// is run to its end; only that period's pages are read.
+  Future<VoucherCounts> _periodCounts(String period) async {
+    final VoucherPager pg = VoucherPager(
+      VoucherQuery(period: period),
+      _fetchPage,
+      today,
+    );
+    try {
+      while (pg.hasMore && pg.error == null) {
+        await pg.loadMore(minNew: 1 << 30);
+      }
+      if (pg.error != null) {
+        throw ApiException(ApiErrorKind.server, pg.error!);
+      }
+      return VoucherCounts.of(pg.rows);
+    } finally {
+      pg.dispose();
+    }
+  }
+
+  /// Server-side voucher search (`search` matches party, reference no.,
+  /// type and date) — first 25 matches.
+  @override
+  Future<List<Voucher>> searchVouchers(String query) async {
+    final String raw = await _api.vouchersPagedText(limit: 25, search: query);
+    return (await parseVoucherPage(raw)).rows;
+  }
+
+  /// Finds a voucher already on the phone (this month or any loaded page).
+  @override
+  Voucher? voucherByKey(String key) {
+    for (final Voucher v in _vouchers) {
+      if (v.key == key) return v;
+    }
+    for (final VoucherPager p in _pagers.values) {
+      for (final Voucher v in p.rows) {
+        if (v.key == key) return v;
+      }
+    }
+    return null;
+  }
+
+  @override
+  HistoryTotals? get historyTotals => _history;
+
+  /// Streams the complete voucher history once (pages of 200, parsed off
+  /// the UI thread) into [HistoryTotals] without storing the rows. Only run
+  /// when the user asks for all-history figures (Vouchers hub, item detail).
+  @override
+  Future<void> scanHistory() {
+    final HistoryTotals? h0 = _history;
+    if (h0 != null && (h0.running || h0.complete)) return Future<void>.value();
+    return _once('history', () async {
+      final HistoryTotals h = HistoryTotals()..running = true;
+      _history = h;
+      _notify();
+      int page = 1;
+      try {
+        while (true) {
+          final String raw = await _api.vouchersPagedText(
+            page: page,
+            limit: 200,
+          );
+          if (_history != h) return; // company changed / refreshed
+          final VoucherPageParsed p = await parseVoucherPage(raw);
+          h.total ??= p.total;
+          final int before = h.scanned;
+          h.add(FetchedPage(p.rows, p.guids, p.hasMore));
+          _notify();
+          if (!p.hasMore) break;
+          if (p.guids.isEmpty || h.scanned == before) {
+            h.error = 'The server list ended early';
+            break;
+          }
+          page++;
+        }
+        h.done = true;
+        if (h.total != null && h.scanned < h.total! && h.error == null) {
+          h.error = 'Read ${h.scanned} of ${h.total} vouchers';
+        }
+      } on ApiException catch (e) {
+        if (e.kind == ApiErrorKind.unauthorized) await _endSession();
+        h.error = e.userMessage;
+      } catch (e) {
+        h.error = 'Could not read the history: $e';
+      } finally {
+        h.running = false;
+        _notify();
+      }
+    });
   }
 
   // ---------------------------------------------------------- snapshots
@@ -650,6 +1006,7 @@ class ApiTallyRepository extends TallyRepository {
     await refreshAll(force: true);
   }
 
+  /// This month's vouchers (complete; drives the month totals).
   @override
   List<Voucher> vouchers() => _vouchers;
   @override
@@ -658,15 +1015,33 @@ class ApiTallyRepository extends TallyRepository {
   List<Bill> payables() => _pay;
 
   @override
-  OutstandingSummary outstanding(bool recv) => summarise(
-    recv ? _recv : _pay,
-    today,
-    serverTotal: recv ? _serverRecv : _serverPay,
-  );
+  OutstandingSummary outstanding(bool recv) {
+    // Same summary, computed once per data change / day, not per rebuild.
+    final DateTime t = today;
+    final List<Bill> bl = recv ? _recv : _pay;
+    final String k =
+        '$_version|${identityHashCode(bl)}|${t.year}-${t.month}-${t.day}';
+    final (String, OutstandingSummary)? m = _outMemo[recv];
+    if (m != null && m.$1 == k) return m.$2;
+    final OutstandingSummary r = summarise(
+      bl,
+      t,
+      serverTotal: recv ? _serverRecv : _serverPay,
+    );
+    _outMemo[recv] = (k, r);
+    return r;
+  }
 
+  /// This month's totals (same calculation as before), computed once per
+  /// data change instead of on every screen rebuild.
   @override
-  MonthTotals monthTotals() =>
-      computeMonth(_vouchers, today, complete: _vouchersComplete);
+  MonthTotals monthTotals() {
+    if (_monthMemoV != _version || _monthMemo == null) {
+      _monthMemo = computeMonth(_vouchers, today, complete: _vouchersComplete);
+      _monthMemoV = _version;
+    }
+    return _monthMemo!;
+  }
 
   @override
   List<Party> parties() => _parties;
@@ -674,6 +1049,9 @@ class ApiTallyRepository extends TallyRepository {
   List<Item> items() => _items;
   @override
   List<StockRow> stockRows() => _stock;
+
+  @override
+  List<String> stockGroups() => groupsOf(_items);
 
   @override
   List<BillLine> billLines(String billNo) =>
@@ -951,15 +1329,20 @@ Map<String, Object?> salesBody(EntryDraft d) {
     final num gst = paise(amount * l.gst / 100);
     sub += amount;
     tax += gst;
+    // Field names are the sync agent's contract (agent.cjs:
+    // processMobileVoucherCommands / buildVoucherXML): item_name, quantity,
+    // rate, unit, hsn_code, gst_rate, group (group creates a new item under
+    // that Tally stock group). The backend passes items[] through as is.
     items.add(
       _clean(<String, Object?>{
-        'name': l.name,
+        'item_name': l.name,
         'item_guid': l.guid,
-        'qty': l.qty,
-        'unit': l.unit,
+        'quantity': l.qty,
         'rate': l.rate,
-        'gst': l.gst,
-        'hsn': l.hsn,
+        'unit': l.unit.trim().isEmpty ? null : l.unit,
+        'hsn_code': (l.hsn ?? '').trim().isEmpty ? null : l.hsn,
+        'gst_rate': l.gst,
+        'group': (l.group ?? '').trim().isEmpty ? null : l.group,
         'amount': amount,
         'gst_amount': gst,
       }),

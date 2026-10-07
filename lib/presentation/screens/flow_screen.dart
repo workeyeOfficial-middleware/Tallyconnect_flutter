@@ -160,9 +160,11 @@ class _Steps extends StatelessWidget {
                             ),
                     ),
                     const SizedBox(height: 6),
-                    Text(
+                    // Shrinks on narrow phones instead of wrapping into the
+                    // neighbouring step label.
+                    AmtText(
                       steps[i],
-                      textAlign: TextAlign.center,
+                      align: Alignment.center,
                       style: ts(
                         12.5,
                         w: w700,
@@ -223,146 +225,151 @@ class _Details extends ConsumerWidget {
     final String pf = cfg.p;
     final String type = c.flowType;
     final bool journal = type == 'journal';
+    // Same 12 px gap below the step bar as every other step's card (this
+    // card had none, so it sat under the step bar's edge and shadow).
     return Rise(
-      child: Glass(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Expanded(
-                  child: Fld(
-                    label: cfg.noLabel,
-                    icon: 'hash',
-                    child: Inp(
-                      value: c.f('${pf}No'),
-                      onChanged: (String v) => c.setF('${pf}No', v),
+      child: Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: Glass(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Expanded(
+                    child: Fld(
+                      label: cfg.noLabel,
+                      icon: 'hash',
+                      child: Inp(
+                        value: c.f('${pf}No'),
+                        onChanged: (String v) => c.setF('${pf}No', v),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Fld(
-                    label: 'Date',
-                    icon: 'calendar',
-                    req: true,
-                    child: DateInp(
-                      value: c.f('${pf}Date'),
-                      onChanged: (String v) => c.setF('${pf}Date', v),
-                      fontSize: 15,
-                      hPad: 10,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Fld(
+                      label: 'Date',
+                      icon: 'calendar',
+                      req: true,
+                      child: DateInp(
+                        value: c.f('${pf}Date'),
+                        onChanged: (String v) => c.setF('${pf}Date', v),
+                        fontSize: 15,
+                        hPad: 10,
+                      ),
                     ),
+                  ),
+                ],
+              ),
+              Fld(
+                label: cfg.partyLabel,
+                req: true,
+                child: Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: SelBtn(
+                        leading: Av(initials(c.f('${pf}Party')), size: Av.sm),
+                        text: c.f('${pf}Party'),
+                        onTap: () {
+                          if (journal) {
+                            c.openPick(
+                              'Choose account',
+                              'jParty',
+                              c.repo.ledgers(),
+                            );
+                          } else {
+                            c.openPick(
+                              'Choose ${cfg.list == 'c' ? 'customer' : 'supplier'}',
+                              '${pf}Party',
+                              c
+                                  .partyPool()
+                                  .where((Party x) => x.type == cfg.list)
+                                  .map(
+                                    (Party x) => Opt(
+                                      x.name,
+                                      '${x.type == 'c' ? 'Customer' : 'Supplier'} · ${x.city.isNotEmpty ? x.city : (x.group ?? '')}',
+                                    ),
+                                  )
+                                  .toList(),
+                            );
+                          }
+                        },
+                      ),
+                    ),
+                    if (!journal) ...<Widget>[
+                      const SizedBox(width: 10),
+                      CBtn(
+                        'plus',
+                        size: 56,
+                        radius: 16,
+                        color: p.navy,
+                        onTap: () => c.openNewParty(
+                          key: '${pf}Party',
+                          type: cfg.list ?? 'c',
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (type == 'purchase')
+                Fld(
+                  label: "Seller's bill no.",
+                  icon: 'hash',
+                  child: Inp(
+                    value: c.f('pSupInv'),
+                    onChanged: (String v) => c.setF('pSupInv', v),
+                  ),
+                ),
+              if (!cfg.items && !journal) ...<Widget>[
+                Fld(
+                  label: cfg.amtLabel,
+                  req: true,
+                  child: Inp(
+                    value: c.f('${pf}Amt'),
+                    onChanged: (String v) => c.setF('${pf}Amt', v),
+                    prefix: _rupee(context),
+                    keyboard: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    formatters: kDecimal,
+                    fontSize: 20,
+                    fontWeight: w800,
+                  ),
+                ),
+                Fld(
+                  label: 'Against which bill? (optional)',
+                  icon: 'hash',
+                  child: Inp(
+                    value: c.f('${pf}Ref'),
+                    onChanged: (String v) => c.setF('${pf}Ref', v),
                   ),
                 ),
               ],
-            ),
-            Fld(
-              label: cfg.partyLabel,
-              req: true,
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: SelBtn(
-                      leading: Av(initials(c.f('${pf}Party')), size: Av.sm),
-                      text: c.f('${pf}Party'),
-                      onTap: () {
-                        if (journal) {
-                          c.openPick(
-                            'Choose account',
-                            'jParty',
-                            c.repo.ledgers(),
-                          );
-                        } else {
-                          c.openPick(
-                            'Choose ${cfg.list == 'c' ? 'customer' : 'supplier'}',
-                            '${pf}Party',
-                            c
-                                .partyPool()
-                                .where((Party x) => x.type == cfg.list)
-                                .map(
-                                  (Party x) => Opt(
-                                    x.name,
-                                    '${x.type == 'c' ? 'Customer' : 'Supplier'} · ${x.city.isNotEmpty ? x.city : (x.group ?? '')}',
-                                  ),
-                                )
-                                .toList(),
-                          );
-                        }
-                      },
-                    ),
+              if (cfg.items)
+                Fld(
+                  label: 'Pay by date',
+                  icon: 'calendar',
+                  child: DateInp(
+                    value: c.f('${pf}Due'),
+                    onChanged: (String v) => c.setF('${pf}Due', v),
                   ),
-                  if (!journal) ...<Widget>[
-                    const SizedBox(width: 10),
-                    CBtn(
-                      'plus',
-                      size: 56,
-                      radius: 16,
-                      color: p.navy,
-                      onTap: () => c.openNewParty(
-                        key: '${pf}Party',
-                        type: cfg.list ?? 'c',
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            if (type == 'purchase')
-              Fld(
-                label: "Seller's bill no.",
-                icon: 'hash',
-                child: Inp(
-                  value: c.f('pSupInv'),
-                  onChanged: (String v) => c.setF('pSupInv', v),
                 ),
-              ),
-            if (!cfg.items && !journal) ...<Widget>[
               Fld(
-                label: cfg.amtLabel,
-                req: true,
+                label: 'Note (optional)',
+                icon: 'note',
+                margin: EdgeInsets.zero,
                 child: Inp(
-                  value: c.f('${pf}Amt'),
-                  onChanged: (String v) => c.setF('${pf}Amt', v),
-                  prefix: _rupee(context),
-                  keyboard: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  formatters: kDecimal,
-                  fontSize: 20,
-                  fontWeight: w800,
-                ),
-              ),
-              Fld(
-                label: 'Against which bill? (optional)',
-                icon: 'hash',
-                child: Inp(
-                  value: c.f('${pf}Ref'),
-                  onChanged: (String v) => c.setF('${pf}Ref', v),
+                  value: c.f('${pf}Note'),
+                  onChanged: (String v) => c.setF('${pf}Note', v),
+                  textarea: true,
                 ),
               ),
             ],
-            if (cfg.items)
-              Fld(
-                label: 'Pay by date',
-                icon: 'calendar',
-                child: DateInp(
-                  value: c.f('${pf}Due'),
-                  onChanged: (String v) => c.setF('${pf}Due', v),
-                ),
-              ),
-            Fld(
-              label: 'Note (optional)',
-              icon: 'note',
-              margin: EdgeInsets.zero,
-              child: Inp(
-                value: c.f('${pf}Note'),
-                onChanged: (String v) => c.setF('${pf}Note', v),
-                textarea: true,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -429,9 +436,47 @@ class _Items extends ConsumerWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: <Widget>[
                               Expanded(
-                                child: RTx(
-                                  lines[i].name,
-                                  '${inr(lines[i].rate)} × ${lines[i].qty} ${lines[i].unit} · GST ${qty(lines[i].gst)}%',
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    RTx(
+                                      lines[i].name,
+                                      '${inr(lines[i].rate)} × ${lines[i].qty} ${lines[i].unit} · GST ${qty(lines[i].gst)}%',
+                                    ),
+                                    // This line's rate / GST (this bill only).
+                                    Tap(
+                                      onTap: () => c.openLineEdit(i),
+                                      radius: 8,
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 6,
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: <Widget>[
+                                            Ic(
+                                              'edit',
+                                              size: IcSize.xs,
+                                              color: Tc.of(context).acc,
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Flexible(
+                                              child: Text(
+                                                'Edit rate / GST',
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: ts(
+                                                  13.5,
+                                                  w: w700,
+                                                  c: Tc.of(context).acc,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                               const SizedBox(width: 10),
@@ -552,9 +597,13 @@ class _Modes extends ConsumerWidget {
     children: <Widget>[
       Ic(m.ic, color: c),
       const SizedBox(height: 5),
-      Text(
-        m.t,
-        style: ts(13, w: w700, c: c),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: AmtText(
+          m.t,
+          align: Alignment.center,
+          style: ts(13, w: w700, c: c),
+        ),
       ),
     ],
   );
@@ -762,7 +811,11 @@ class _Ledgers extends ConsumerWidget {
                             'Goes to (Dr)',
                             style: ts(13.5, w: w700, c: p.pos),
                           ),
-                          Text(inr(dr), style: amtStyle(context, size: 19)),
+                          AmtText(
+                            inr(dr),
+                            align: Alignment.centerLeft,
+                            style: amtStyle(context, size: 19),
+                          ),
                         ],
                       ),
                     ),
@@ -778,7 +831,11 @@ class _Ledgers extends ConsumerWidget {
                             'Comes from (Cr)',
                             style: ts(13.5, w: w700, c: p.navy),
                           ),
-                          Text(inr(cr), style: amtStyle(context, size: 19)),
+                          AmtText(
+                            inr(cr),
+                            align: Alignment.centerLeft,
+                            style: amtStyle(context, size: 19),
+                          ),
                         ],
                       ),
                     ),
@@ -1086,16 +1143,21 @@ class _Summary extends ConsumerWidget {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: <Widget>[
-                          Text('Total', style: rsStyle(context)),
-                          const SizedBox(height: 4),
-                          Text(
-                            inr(heroAmt),
-                            style: amtStyle(context, size: 22),
-                          ),
-                        ],
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: MediaQuery.sizeOf(context).width * .42,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: <Widget>[
+                            Text('Total', style: rsStyle(context)),
+                            const SizedBox(height: 4),
+                            AmtText(
+                              inr(heroAmt),
+                              style: amtStyle(context, size: 22),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),

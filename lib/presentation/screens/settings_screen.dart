@@ -160,13 +160,6 @@ class _Alerts extends ConsumerWidget {
         'payment',
       ),
       ('team', 'Team updates', 'Invites and new members', 'team', 'team'),
-      (
-        'wa',
-        'WhatsApp reminders',
-        'Send reminders to customers',
-        'chat',
-        'sales',
-      ),
     ];
     return Rise(
       child: GlassList(
@@ -812,12 +805,14 @@ class _BackgroundLevels extends ConsumerWidget {
             _LevelSlider(
               title: 'Background opacity',
               sub: 'How strongly the wallpaper shows',
-              valueText: '${c.bgOpacity.round()}%',
+              valueText: c.bgOpacity.round() == 0
+                  ? 'Hidden'
+                  : '${c.bgOpacity.round()}%',
               value: c.bgOpacity,
-              min: 20,
+              min: 0,
               max: 100,
               onChanged: c.setBgOpacity,
-              ends: const ('Faint', 'Full'),
+              ends: const ('Hidden', 'Full'),
             ),
             const SizedBox(height: 18),
             _LevelSlider(

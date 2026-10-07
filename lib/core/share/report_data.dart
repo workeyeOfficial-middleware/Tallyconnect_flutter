@@ -8,6 +8,7 @@ import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/tally_repository.dart';
 import '../utils/format.dart';
+import 'share_doc.dart' show rateLabel, stockLabel;
 
 class ReportRow {
   const ReportRow(this.n, this.t, this.s, this.v, this.cls, [this.value]);
@@ -277,7 +278,7 @@ ReportData reportData(TallyRepository repo, String id) {
           ReportRow(
             initials(x.name),
             x.name,
-            '${x.stock} ${x.unit} × ${inr(x.rate)}',
+            '${stockLabel(x)} · ${rateLabel(x)}',
             inr(x.worth),
             '',
             x.worth,

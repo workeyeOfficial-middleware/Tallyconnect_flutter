@@ -30,6 +30,11 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
+  # Launch splash image (Earth at night).
+  assets:
+    - assets/images/splash_globe.jpg
+    - assets/images/splash_logo.png
+
   # Figtree (SIL OFL 1.1, github.com/erikdkennedy/figtree) — the prototype's
   # only typeface, bundled so the app never depends on a network font.
   fonts:

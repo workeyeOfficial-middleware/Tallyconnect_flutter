@@ -66,7 +66,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         // ---- pager
         Positioned(
           top: homePagerTop(context),
-          bottom: homePagerBottom(context),
+          // Runs under the glass tab bar: the wallpaper stays one continuous
+          // layer and content scrolls behind the translucent navigation.
+          bottom: 0,
           left: 0,
           right: 0,
           child: PageView.builder(
@@ -198,55 +200,56 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
           ),
         ),
-        // ---- page dots
-        // `.dots`: the glass capsule is always there; dots only with 2+ pages.
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: barBottom(context) + 76,
-          height: 24,
-          child: Center(
-            child: Glass(
-              radius: 12,
-              blur: true,
-              height: 24,
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  for (
-                    int i = 0;
-                    i < (pages.length < 2 ? 0 : pages.length);
-                    i++
-                  ) ...<Widget>[
-                    if (i > 0) const SizedBox(width: 2),
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => c.scrollToPage(i),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 450),
-                        curve: const Cubic(.3, 1.5, .5, 1),
-                        width: i == c.page ? 32 : 22,
-                        height: 24,
-                        alignment: Alignment.center,
+        // ---- page dots (only with 2+ pages: an empty capsule sat on top of
+        // the last row of shortcut cards).
+        if (pages.length > 1)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: barBottom(context) + 76,
+            height: 24,
+            child: Center(
+              child: Glass(
+                radius: 12,
+                blur: true,
+                height: 24,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    for (
+                      int i = 0;
+                      i < (pages.length < 2 ? 0 : pages.length);
+                      i++
+                    ) ...<Widget>[
+                      if (i > 0) const SizedBox(width: 2),
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => c.scrollToPage(i),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 450),
                           curve: const Cubic(.3, 1.5, .5, 1),
-                          width: i == c.page ? 20 : 7,
-                          height: 7,
-                          decoration: BoxDecoration(
-                            color: i == c.page ? p.acc : navyA(.25),
-                            borderRadius: BorderRadius.circular(4),
+                          width: i == c.page ? 32 : 22,
+                          height: 24,
+                          alignment: Alignment.center,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 450),
+                            curve: const Cubic(.3, 1.5, .5, 1),
+                            width: i == c.page ? 20 : 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: i == c.page ? p.acc : navyA(.25),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
                           ),
                         ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),
-        ),
         // ---- drag: edges + ghost
         if (drag != null) ...<Widget>[
           _Edge(left: true, on: c.edge == 'l'),
@@ -431,7 +434,9 @@ class _Page extends ConsumerWidget {
 
     final Widget page = SingleChildScrollView(
       physics: scrollPhysics(c),
-      padding: const EdgeInsets.fromLTRB(16, 2, 16, 22),
+      // Same card positions; the extra bottom space only lets the last row
+      // scroll clear of the navigation bar.
+      padding: EdgeInsets.fromLTRB(16, 2, 16, 22 + homePagerBottom(context)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
@@ -479,9 +484,9 @@ class _Page extends ConsumerWidget {
         ],
       ),
     );
+    // Top edge fade only — no fade / veil towards the navigation bar.
     return fadeMask(
       top: 10,
-      bottom: 18,
       c.repo.isRemote
           // Pull down to reload; cards keep their values meanwhile.
           ? RefreshIndicator(
@@ -535,15 +540,19 @@ class _Card extends ConsumerWidget {
               children: <Widget>[
                 Ico(t.ic, color: p.cat(t.c), icon: IcSize.l),
                 const SizedBox(height: 9),
-                Text(
+                // Long labels shrink to the card width instead of wrapping
+                // into the next line or overflowing.
+                AmtText(
                   t.t,
-                  textAlign: TextAlign.center,
+                  align: Alignment.center,
                   style: ts(16, w: w800, h: 1.1, c: p.ink),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   t.s,
                   textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: ts(12.5, c: p.ink3),
                 ),
               ],
@@ -739,11 +748,9 @@ class _EntryHero extends ConsumerWidget {
                             child: Ic(quick[i].$2, color: p.acc),
                           ),
                           const SizedBox(height: 7),
-                          Text(
+                          AmtText(
                             quick[i].$1,
-                            maxLines: 1,
-                            overflow: TextOverflow.visible,
-                            softWrap: false,
+                            align: Alignment.center,
                             style: ts(12.5, w: w700, c: p.ink),
                           ),
                         ],
@@ -809,11 +816,24 @@ class _MoneyCard extends ConsumerWidget {
                             icon: IcSize.s,
                           ),
                           const SizedBox(height: 8),
-                          Text(sums[k]!.t, style: rtStyle(context, 15)),
-                          Text(sums[k]!.s, style: rsStyle(context, 12.5)),
-                          const SizedBox(height: 6),
                           Text(
+                            sums[k]!.t,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: rtStyle(context, 15),
+                          ),
+                          Text(
+                            sums[k]!.s,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: rsStyle(context, 12.5),
+                          ),
+                          const SizedBox(height: 6),
+                          // Large amounts shrink to the card instead of
+                          // wrapping mid-number.
+                          AmtText(
                             sums[k]!.v == null ? '—' : inr(sums[k]!.v),
+                            align: Alignment.centerLeft,
                             style: amtStyle(
                               context,
                               size: 19,

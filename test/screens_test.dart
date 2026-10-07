@@ -106,7 +106,6 @@ void main() {
       'invite',
       'newUser',
       'member',
-      'pdf',
       'hiddenPanel',
     ]) {
       c.openOverlay(o);

@@ -27,6 +27,9 @@ String _group(String s) {
   return rest.isNotEmpty ? '$rest,$last3' : last3;
 }
 
+/// A count with Indian digit grouping: `grouped(46438)` → `46,438`.
+String grouped(int n) => n < 0 ? '−${_group('${-n}')}' : _group('$n');
+
 /// Two decimals with Indian grouping: `inr2(1234.5)` → `₹1,234.50`.
 String inr2(num? value) {
   num n = value ?? 0;

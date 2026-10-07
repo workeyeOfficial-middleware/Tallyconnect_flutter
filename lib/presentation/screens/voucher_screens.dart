@@ -1,6 +1,8 @@
 // VOUCHERS HUB (869–889), VOUCHER LIST (891–925), ENTRY DETAIL (927–944).
 library;
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -11,32 +13,23 @@ import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
 import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
-import '../../data/accounting.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
+import '../../data/repositories/tally_repository.dart'
+    show VoucherCounts, VoucherPager, VoucherQuery;
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../widgets/common.dart';
 
-/// `vsum` (2501): the four totals shared by Vouchers and Reports, summed
-/// from the loaded vouchers of each type (null → `—`). Reports use this
-/// month; the Vouchers hub uses [allTime] so its totals match the lists,
-/// which open on all history.
+/// `vsum` (2501): the four totals shared by Vouchers and Reports, for
+/// [period] (This month by default) from [AppController.periodAmount]
+/// (null → `—` while loading). A card opens its list with the same period.
 List<Widget> monthSums(
   BuildContext context,
   AppController c, {
-  bool allTime = false,
+  String period = 'month',
 }) {
   final TcPalette p = Tc.of(context);
-  final MonthTotals mt = allTime
-      ? kindTotals(c.repo.vouchers(), complete: c.repo.vouchersComplete)
-      : c.repo.monthTotals();
-  final bool ready =
-      !c.repo.isRemote ||
-      // Last good data stays visible while a refresh runs.
-      (c.repo.hasData(DataSet.vouchers) &&
-          // Incomplete lists report no amounts → show `—`.
-          (mt.amount.isNotEmpty || mt.count.isEmpty));
-  num? a(String k) => ready ? (mt.amount[k] ?? 0) : null;
+  num? a(String k) => c.periodAmount(period, k);
   final List<(String, num?, Color, String, String)> v =
       <(String, num?, Color, String, String)>[
         ('Sales', a('sales'), mix(p.acc, .09), 'sales', ''),
@@ -49,7 +42,7 @@ List<Widget> monthSums(
       Tap(
         onTap: () => c.go('vList', <String, Object?>{
           'vFilter': m.$4,
-          'vPeriod': allTime ? 'all' : 'month',
+          'vPeriod': period,
         }),
         radius: 16,
         child: Tot(
@@ -59,8 +52,9 @@ List<Widget> monthSums(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Text(m.$1, style: rsStyle(context)),
-              Text(
+              AmtText(
                 m.$2 == null ? '—' : inr(m.$2),
+                align: Alignment.centerLeft,
                 style: amtStyle(context, size: 18, cls: m.$5),
               ),
             ],
@@ -77,17 +71,15 @@ class VHubScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    final List<Voucher> all = c.repo.vouchers();
-    // Other Tally voucher types found in the data get their own tile too.
-    final List<String> otherTypes =
-        all
-            .where(
-              (Voucher v) => v.kind == 'other' && (v.type ?? '').isNotEmpty,
-            )
-            .map((Voucher v) => v.type!)
-            .toSet()
-            .toList()
-          ..sort();
+    // Tile counts: the complete matching data of the selected period
+    // (All time = the whole history, counted by the server).
+    final String period = c.vPeriod;
+    if (c.repo.isRemote) {
+      Future<void>.microtask(() => c.repo.loadVoucherCounts(period));
+    }
+    final VoucherCounts? vc = c.repo.voucherCounts(period);
+    // Other Tally voucher types present in the period get their own tile.
+    final List<String> otherTypes = vc?.otherTypes ?? const <String>[];
     final List<(String, String, String, String)> tiles =
         <(String, String, String, String)>[
           ('all', 'All', 'receipt', 'vouchers'),
@@ -100,21 +92,39 @@ class VHubScreen extends ConsumerWidget {
           for (final String t in otherTypes)
             ('type:$t', t, 'receipt', 'vouchers'),
         ];
-    // Counts over the complete loaded history (same data as the lists).
-    int count(String k) {
-      if (k == 'all') return all.length;
-      if (k.startsWith('type:')) {
-        final String t = k.substring(5);
-        return all.where((Voucher v) => v.type == t).length;
-      }
-      return all.where((Voucher v) => v.kind == k).length;
+    final String unit = switch (period) {
+      'month' => 'this month',
+      'week' => 'in 7 days',
+      'today' => 'today',
+      _ => 'total',
+    };
+    String countText(String k) {
+      final int? n = vc?.forFilter(k);
+      if (n != null) return '$n $unit';
+      return vc?.error != null ? 'Count unavailable' : 'Counting…';
     }
+
+    const List<(String, String)> periods = <(String, String)>[
+      ('all', 'All time'),
+      ('month', 'This month'),
+      ('week', 'Last 7 days'),
+      ('today', 'Today'),
+    ];
 
     return Scr(
       children: <Widget>[
         const BackNav(),
         const H1('Vouchers', afterNav: true),
         const Sub('Entries you have already saved'),
+        // One period for the summary amounts and the tile counts below.
+        Seg(
+          margin: const EdgeInsets.only(bottom: 14),
+          items: periods.map(((String, String) e) => e.$2).toList(),
+          selected: periods
+              .indexWhere(((String, String) e) => e.$1 == period)
+              .clamp(0, periods.length - 1),
+          onPick: (int i) => c.update(() => c.vPeriod = periods[i].$1),
+        ),
         Glass(
           padding: const EdgeInsets.all(18),
           child: Column(
@@ -122,20 +132,29 @@ class VHubScreen extends ConsumerWidget {
             children: <Widget>[
               LtBadge(
                 Text(
-                  c.repo.isRemote
-                      ? 'All history · ${c.companyName}'
-                      : '${monthYear(c.today)} · ${c.companyName}',
+                  '${c.periodLabel(period)} · ${c.companyName}',
                   style: ts(13.5, w: w700, c: p.ink3),
                 ),
               ),
-              Grid(
-                cols: 2,
-                children: monthSums(context, c, allTime: c.repo.isRemote),
-              ),
+              // Amounts follow the same period as the tile counts.
+              Grid(cols: 2, children: monthSums(context, c, period: period)),
             ],
           ),
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 14),
+        if (vc?.error != null)
+          GlassRow(
+            margin: const EdgeInsets.only(bottom: 12),
+            onTap: () => c.repo.loadVoucherCounts(period),
+            children: <Widget>[
+              Ico('sync', size: IcoSize.xs, color: p.neg, icon: IcSize.s),
+              Expanded(child: RTx('Could not count vouchers', vc!.error!)),
+              Text(
+                'Retry',
+                style: ts(14, w: w700, c: p.acc),
+              ),
+            ],
+          ),
         Grid(
           cols: 3,
           children: <Widget>[
@@ -143,7 +162,7 @@ class VHubScreen extends ConsumerWidget {
               Tap(
                 onTap: () => c.go('vList', <String, Object?>{
                   'vFilter': t.$1,
-                  'vPeriod': 'all',
+                  'vPeriod': period,
                 }),
                 child: Glass(
                   child: Container(
@@ -163,10 +182,10 @@ class VHubScreen extends ConsumerWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          c.repo.isRemote
-                              ? '${count(t.$1)} ${count(t.$1) == 1 ? 'entry' : 'entries'}'
-                              : '${count(t.$1)} this month',
+                          countText(t.$1),
                           textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: ts(12.5, c: p.ink3),
                         ),
                       ],
@@ -191,50 +210,135 @@ const List<(String, String)> kVF = <(String, String)>[
   ('contra', 'Bank ↔ Cash'),
 ];
 
+/// One voucher row (shared by the list and reports).
+Widget voucherRow(BuildContext context, AppController c, Voucher x) {
+  final TcPalette p = Tc.of(context);
+  return LRow(
+    list: 'vouchers',
+    lk: x.key,
+    child: RowX(
+      onTap: () {
+        if (c.guardTap('vouchers', x.key)) {
+          c.go('entryDetail', <String, Object?>{'entry': x});
+        }
+      },
+      children: <Widget>[
+        Ico(
+          kKinds[x.kind]!.ic,
+          size: IcoSize.xs,
+          color: p.cat(kKinds[x.kind]!.c),
+          icon: IcSize.s,
+        ),
+        Expanded(child: RTx(x.party, '${x.no} · ${vDay(x)}', ell: true)),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: <Widget>[
+            Text(
+              '${x.kind == 'receipt' ? '+' : (x.kind == 'payment' ? '−' : '')}${inr(x.amt)}',
+              style: amtStyle(
+                context,
+                cls: x.kind == 'receipt'
+                    ? 'in'
+                    : (x.kind == 'payment' ? 'out' : ''),
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Bdg(
+              'Synced',
+              kind: BadgeKind.ok,
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              fontSize: 11,
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+/// Voucher list. "This month" shows the month's vouchers already on the
+/// phone (complete, exact totals); All time / Last 7 days / Today page
+/// through `/voucher-entry/paged` (100 per page, next page near the end).
 class VListScreen extends ConsumerWidget {
   const VListScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
+    final bool month = c.vPeriod == 'month' || !c.repo.isRemote;
+    if (month) return _VList(c: c, pager: null);
+    final VoucherPager pager = c.repo.voucherPager(
+      VoucherQuery(filter: c.vFilter, period: c.vPeriod),
+    );
+    return ListenableBuilder(
+      listenable: pager,
+      builder: (BuildContext context, _) => _VList(c: c, pager: pager),
+    );
+  }
+}
+
+class _VList extends StatelessWidget {
+  const _VList({required this.c, required this.pager});
+  final AppController c;
+  final VoucherPager? pager;
+
+  @override
+  Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
     final DateTime today = c.today;
-    // `all` = the complete history loaded from the server (default).
-    bool inPeriod(Voucher v) {
-      if (c.vPeriod == 'all') return true;
-      final DateTime? d = v.date;
-      if (d == null) return false;
-      if (c.vPeriod == 'today') return dayDiff(d, today) == 0;
-      if (c.vPeriod == 'week') {
-        final int n = dayDiff(d, today);
-        return n >= 0 && n <= 6;
-      }
-      return d.year == today.year && d.month == today.month;
+    final VoucherPager? pg = pager;
+    if (pg != null &&
+        pg.rows.isEmpty &&
+        pg.hasMore &&
+        !pg.loading &&
+        pg.error == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => pg.loadMore());
     }
-
-    final List<Voucher> all = c.repo.vouchers();
-    // Tally voucher types that are not one of the main kinds (orders,
-    // notes, returns …) each get their own filter: `type:<name>`.
-    final List<String> otherTypes =
-        all
-            .where(
-              (Voucher v) => v.kind == 'other' && (v.type ?? '').isNotEmpty,
-            )
-            .map((Voucher v) => v.type!)
-            .toSet()
-            .toList()
-          ..sort();
     final bool byType = c.vFilter.startsWith('type:');
     final String typeName = byType ? c.vFilter.substring(5) : '';
-    bool inFilter(Voucher v) {
-      if (c.vFilter == 'all') return true;
-      if (byType) return v.type == typeName;
-      return v.kind == c.vFilter;
+    final VoucherQuery q = VoucherQuery(filter: c.vFilter, period: c.vPeriod);
+    // Rows: this month's set (filtered once per data change) or the pages.
+    final List<Voucher> vrows = pg != null
+        ? pg.rows
+        : c.memo<List<Voucher>>(
+            'vlist-month',
+            '${c.repo.version}|${q.key}',
+            () => c.repo.vouchers().where((Voucher v) {
+              if (!q.matches(v)) return false;
+              final DateTime? d = v.date;
+              if (c.vPeriod == 'today') {
+                return d != null && dayDiff(d, today) == 0;
+              }
+              if (c.vPeriod == 'week') {
+                if (d == null) return false;
+                final int n = dayDiff(d, today);
+                return n >= 0 && n <= 6;
+              }
+              if (c.vPeriod == 'month') {
+                return d != null &&
+                    d.year == today.year &&
+                    d.month == today.month;
+              }
+              return true;
+            }).toList(),
+          );
+    // Exact counts of the complete matching data for this period (the
+    // pages on screen are only what has been read so far).
+    if (pg != null) {
+      Future<void>.microtask(() => c.repo.loadVoucherCounts(c.vPeriod));
     }
-
-    final List<Voucher> vrows = all
-        .where((Voucher v) => inFilter(v) && inPeriod(v))
-        .toList();
+    final VoucherCounts? vc = pg == null
+        ? null
+        : c.repo.voucherCounts(c.vPeriod);
+    final List<String> otherTypes = c.memo<List<String>>(
+      'vlist-other',
+      '${c.repo.version}|${pg?.rows.length}|${identityHashCode(vc)}',
+      () => <String>{
+        for (final Voucher v in <Voucher>[...c.repo.vouchers(), ...?pg?.rows])
+          if (v.kind == 'other' && (v.type ?? '').isNotEmpty) v.type!,
+        ...?vc?.otherTypes,
+      }.toList()..sort(),
+    );
     final Kind? fk = byType ? kKinds['other'] : kKinds[c.vFilter];
     final String ic = fk?.ic ?? 'receipt';
     final String cc = fk?.c ?? 'vouchers';
@@ -248,7 +352,11 @@ class VListScreen extends ConsumerWidget {
                         ?.$2 ??
                     'Vouchers');
     final ({List<Voucher> rows, int hidden, VoidCallback unhide}) v = c
-        .listView<Voucher>('vouchers', vrows, (Voucher x) => x.key);
+        .memo<({List<Voucher> rows, int hidden, VoidCallback unhide})>(
+          'vlist-view',
+          '${identityHashCode(vrows)}|${vrows.length}|${c.prefsVersion}',
+          () => c.listView<Voucher>('vouchers', vrows, (Voucher x) => x.key),
+        );
     const List<(String, String)> periods = <(String, String)>[
       ('all', 'All time'),
       ('month', 'This month'),
@@ -261,12 +369,45 @@ class VListScreen extends ConsumerWidget {
             .firstOrNull
             ?.$2 ??
         'All time';
+    // Count / total: of the complete matching data for the period and
+    // filter — the list's own rows once fully loaded, else the period's
+    // exact totals (never the rows loaded so far).
+    String countText;
+    String totalText;
+    // Page 1 not answered yet: loading, never "0" / "₹0".
+    final bool waiting =
+        pg != null && vrows.isEmpty && !pg.complete && pg.error == null;
+    final int? exact = vc?.forFilter(c.vFilter);
+    final num? exactAmt = vc?.amountFor(c.vFilter);
+    if (pg == null || pg.complete) {
+      // Every matching row is loaded: count and total of exactly the rows
+      // the list shows.
+      countText = grouped(vrows.length);
+      totalText = inr(
+        paise(vrows.fold<num>(0, (num s, Voucher x) => s + x.amt)),
+      );
+    } else if (exact != null) {
+      // Still paging: the complete matching count and total value.
+      countText = grouped(exact);
+      totalText = exactAmt == null ? '—' : inr(exactAmt);
+    } else {
+      countText = vc?.error != null ? '—' : '…';
+      totalText = vc?.error != null ? '—' : '…';
+    }
     final String scope = c.vPeriod == 'all'
-        ? (c.repo.vouchersComplete
-              ? 'All history'
-              : 'History incomplete — server list could not be read in full')
-        : monthYear(today);
+        ? 'All history'
+        : (c.vPeriod == 'month' ? monthYear(today) : periodLabel);
+    final bool more =
+        pg != null && (pg.hasMore || pg.loading || pg.error != null);
+    final int extra = (v.hidden > 0 ? 1 : 0) + (more || vrows.isEmpty ? 1 : 0);
     return Scr(
+      // Next page near the end; after a failed page only Retry reloads (no
+      // automatic hammering of the server).
+      onNearEnd: pg == null
+          ? null
+          : () {
+              if (pg.error == null) pg.loadMore();
+            },
       children: <Widget>[
         BackNav(
           actions: <Widget>[
@@ -280,7 +421,9 @@ class VListScreen extends ConsumerWidget {
                   title,
                   vrows,
                   c.companyName,
-                  periodLabel,
+                  pg == null || pg.complete
+                      ? periodLabel
+                      : '$periodLabel · first ${vrows.length} loaded',
                   c.vPeriod == 'all' ? 'All history' : monthYear(today),
                 ),
               ),
@@ -289,31 +432,11 @@ class VListScreen extends ConsumerWidget {
         ),
         H1(title, afterNav: true),
         Sub('${c.companyName} · $scope'),
-        GlassRow(
-          minHeight: 72,
-          children: <Widget>[
-            Ico(ic, size: IcoSize.sm, color: p.cat(cc)),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text('Entries', style: rsStyle(context)),
-                  Text('${vrows.length}', style: rtStyle(context, 22)),
-                ],
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: <Widget>[
-                Text('Total value', style: rsStyle(context)),
-                const SizedBox(height: 4),
-                Text(
-                  inr(vrows.fold<num>(0, (num s, Voucher x) => s + x.amt)),
-                  style: amtStyle(context, size: 22),
-                ),
-              ],
-            ),
-          ],
+        VoucherSummaryRow(
+          icon: ic,
+          color: p.cat(cc),
+          count: countText,
+          total: totalText,
         ),
         Chips(
           margin: const EdgeInsets.only(top: 4, bottom: 14),
@@ -339,71 +462,101 @@ class VListScreen extends ConsumerWidget {
           ),
           onPick: (int i) => c.update(() => c.vPeriod = periods[i].$1),
         ),
-        GlassList(
-          children: <Widget>[
-            for (final Voucher x in v.rows)
-              LRow(
-                list: 'vouchers',
-                lk: x.key,
-                child: RowX(
-                  onTap: () {
-                    if (c.guardTap('vouchers', x.key)) {
-                      c.go('entryDetail', <String, Object?>{'entry': x});
-                    }
-                  },
-                  children: <Widget>[
-                    Ico(
-                      kKinds[x.kind]!.ic,
-                      size: IcoSize.xs,
-                      color: p.cat(kKinds[x.kind]!.c),
-                      icon: IcSize.s,
-                    ),
-                    Expanded(
-                      child: RTx(x.party, '${x.no} · ${vDay(x)}', ell: true),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: <Widget>[
-                        Text(
-                          '${x.kind == 'receipt' ? '+' : (x.kind == 'payment' ? '−' : '')}${inr(x.amt)}',
-                          style: amtStyle(
-                            context,
-                            cls: x.kind == 'receipt'
-                                ? 'in'
-                                : (x.kind == 'payment' ? 'out' : ''),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        const Bdg(
-                          'Synced',
-                          kind: BadgeKind.ok,
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
-                          ),
-                          fontSize: 11,
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            if (v.hidden > 0)
-              HidRow('${v.hidden} hidden · Unhide', onTap: v.unhide),
-            if (vrows.isEmpty)
-              Padding(
-                padding: const EdgeInsets.all(18),
-                child: Text(
-                  c.emptyText(DataSet.vouchers, 'No entries in this time.'),
-                  textAlign: TextAlign.center,
-                  style: rsStyle(context, 15),
-                ),
-              ),
-          ],
+        // Rows are built only while on screen.
+        SliverGlassList(
+          itemCount: v.rows.length + extra,
+          itemBuilder: (BuildContext context, int i) {
+            if (i < v.rows.length) return voucherRow(context, c, v.rows[i]);
+            int k = i - v.rows.length;
+            if (v.hidden > 0) {
+              if (k == 0) {
+                return HidRow('${v.hidden} hidden · Unhide', onTap: v.unhide);
+              }
+              k--;
+            }
+            return PageFooterRow(
+              loading: (pg?.loading ?? false) || waiting,
+              error: pg?.error,
+              onRetry: pg == null ? null : () => pg.loadMore(),
+              // "No entries" only once the server said there are none.
+              text: vrows.isEmpty && (pg == null || pg.complete)
+                  ? c.emptyText(DataSet.vouchers, 'No entries in this time.')
+                  : '',
+            );
+          },
         ),
       ],
     );
   }
+}
+
+/// The list's Entries / Total value card. Count and value share the row in
+/// proportion to their own length (same font size), always keep a gap, and
+/// each shrinks to fit only when both together are wider than the row — so
+/// they never overlap or clip, however large the numbers grow.
+class VoucherSummaryRow extends StatelessWidget {
+  const VoucherSummaryRow({
+    super.key,
+    required this.icon,
+    required this.color,
+    required this.count,
+    required this.total,
+  });
+  final String icon, count, total;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => GlassRow(
+    minHeight: 72,
+    children: <Widget>[
+      Ico(icon, size: IcoSize.sm, color: color),
+      Expanded(
+        child: Row(
+          // Count at the left edge, value at the right edge (as before).
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: <Widget>[
+            Flexible(
+              flex: math.max(count.length, 3),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    'Entries',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: rsStyle(context),
+                  ),
+                  AmtText(
+                    count,
+                    align: Alignment.centerLeft,
+                    style: rtStyle(context, 22),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+            Flexible(
+              flex: math.max(total.length, 3),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: <Widget>[
+                  Text(
+                    'Total value',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: rsStyle(context),
+                  ),
+                  const SizedBox(height: 4),
+                  AmtText(total, style: amtStyle(context, size: 22)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
 }
 
 class EntryDetailScreen extends ConsumerWidget {
@@ -424,7 +577,8 @@ class EntryDetailScreen extends ConsumerWidget {
     final List<LedgerLine>? lines = e.guid == null
         ? null
         : c.repo.voucherLines(e.guid!);
-    void share() => c.shareDoc(docEntry(e, c.companyName, lines));
+    // Share, See bill PDF and Download: the voucher's one complete document.
+    void share() => c.shareVoucher(e);
     return FlowScr(
       foot: <Widget>[
         Expanded(
@@ -441,34 +595,7 @@ class EntryDetailScreen extends ConsumerWidget {
           child: Btn(
             label: 'See bill PDF',
             icon: 'file',
-            onTap: () => c.openPdf(
-              PdfInfo(
-                party: e.party,
-                no: e.no,
-                date: vDate(e),
-                due: '—',
-                total: e.amt,
-                kind: e.type ?? k.t,
-                recv: e.kind == 'purchase' ? false : null,
-                city:
-                    c.repo
-                        .parties()
-                        .where((Party x) => x.name == e.party)
-                        .firstOrNull
-                        ?.city ??
-                    '',
-                lines: <BillLine>[
-                  for (final VoucherItem i in e.items)
-                    BillLine(
-                      i.name,
-                      '',
-                      i.qty == null ? '' : qty(i.qty!),
-                      i.rate == null ? '' : inr(i.rate),
-                      i.amt ?? 0,
-                    ),
-                ],
-              ),
-            ),
+            onTap: () => c.openVoucherPdf(e),
           ),
         ),
       ],
@@ -516,6 +643,35 @@ class EntryDetailScreen extends ConsumerWidget {
           ('Amount', inr(e.amt), false),
           ('Company', c.companyName, false),
         ], margin: const EdgeInsets.only(top: 12)),
+        // Item lines — only when this voucher has them.
+        if (e.items.isNotEmpty) ...<Widget>[
+          const Sec('Items'),
+          GlassList(
+            children: <Widget>[
+              for (int i = 0; i < e.items.length; i++)
+                RowX(
+                  children: <Widget>[
+                    Expanded(
+                      child: RTx(
+                        '${i + 1}. ${e.items[i].name}',
+                        <String>[
+                          if (e.items[i].qty != null)
+                            'Qty ${qty(e.items[i].qty!)}',
+                          if (e.items[i].rate != null)
+                            'Rate ${inr(e.items[i].rate)}',
+                        ].join(' · '),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      e.items[i].amt == null ? '—' : inr(e.items[i].amt),
+                      style: amtStyle(context),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        ],
         if (c.repo.isRemote && e.guid != null) ...<Widget>[
           const Sec('Accounts in this entry (Dr / Cr)'),
           if (lines == null)

@@ -325,7 +325,7 @@ class DateInp extends StatelessWidget {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () async {
-        final DateTime init = DateTime.tryParse(value) ?? DateTime(2026, 9, 26);
+        final DateTime init = DateTime.tryParse(value) ?? DateTime.now();
         final DateTime? d = await showDatePicker(
           context: context,
           initialDate: init,
@@ -367,6 +367,87 @@ class DateInp extends StatelessWidget {
               ),
             ),
             Ic('calendar', size: IcSize.s, color: p.ink),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// `<input type=time>` — value `HH:mm` (24 h), shown as `10:30 AM`; opens
+/// the platform time picker.
+class TimeInp extends StatelessWidget {
+  const TimeInp({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.fontSize = 17,
+    this.hPad = 16,
+  });
+  final String value;
+  final ValueChanged<String> onChanged;
+  final double fontSize;
+  final double hPad;
+
+  static TimeOfDay? parse(String v) {
+    final List<String> p = v.split(':');
+    if (p.length != 2) return null;
+    final int? h = int.tryParse(p[0]), m = int.tryParse(p[1]);
+    if (h == null || m == null || h < 0 || h > 23 || m < 0 || m > 59) {
+      return null;
+    }
+    return TimeOfDay(hour: h, minute: m);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    final TimeOfDay? t = parse(value);
+    final String shown = t == null
+        ? '--:--'
+        : '${t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod}:${t.minute.toString().padLeft(2, '0')} ${t.period == DayPeriod.am ? 'AM' : 'PM'}';
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () async {
+        final TimeOfDay? picked = await showTimePicker(
+          context: context,
+          initialTime: t ?? TimeOfDay.now(),
+          builder: (BuildContext c, Widget? child) => Theme(
+            data: Theme.of(c).copyWith(
+              colorScheme: ColorScheme.light(
+                primary: p.navy,
+                onPrimary: Colors.white,
+                onSurface: p.ink,
+              ),
+            ),
+            child: child!,
+          ),
+        );
+        if (picked != null) {
+          onChanged(
+            '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}',
+          );
+        }
+      },
+      child: Container(
+        height: 56,
+        padding: EdgeInsets.symmetric(horizontal: hPad),
+        decoration: BoxDecoration(
+          color: whiteA(.88),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: navyA(.13)),
+        ),
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                shown,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: ts(fontSize, c: p.ink),
+              ),
+            ),
+            Ic('clock', size: IcSize.s, color: p.ink),
           ],
         ),
       ),

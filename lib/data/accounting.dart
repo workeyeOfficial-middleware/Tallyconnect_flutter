@@ -140,16 +140,17 @@ MonthTotals kindTotals(List<Voucher> vouchers, {bool complete = true}) {
   );
 }
 
-/// Sales (`kind` = sales) or purchase summary of one item from the item
-/// lines of [vouchers] (newest first). Item names match case-insensitively.
-ItemTrade itemTrade(List<Voucher> vouchers, String item, String kind) {
-  final String key = item.trim().toLowerCase();
+/// Running sales / purchase summary of one item (the [itemTrade] rules,
+/// fed one voucher at a time so a long history can be streamed page by
+/// page without keeping it in memory).
+class ItemAcc {
   num amount = 0, qty = 0;
   int count = 0;
   DateTime? last;
   num? lastRate, minRate, maxRate;
-  for (final Voucher v in vouchers) {
-    if (v.kind != kind) continue;
+
+  /// Adds the lines of [v] that belong to the item [key] (lower-case name).
+  void add(Voucher v, String key) {
     bool hit = false;
     for (final VoucherItem i in v.items) {
       if (i.name.trim().toLowerCase() != key) continue;
@@ -158,20 +159,21 @@ ItemTrade itemTrade(List<Voucher> vouchers, String item, String kind) {
       qty += i.qty ?? 0;
       final num? r = i.rate;
       if (r != null) {
-        minRate = minRate == null || r < minRate ? r : minRate;
-        maxRate = maxRate == null || r > maxRate ? r : maxRate;
+        minRate = minRate == null || r < minRate! ? r : minRate;
+        maxRate = maxRate == null || r > maxRate! ? r : maxRate;
         final DateTime? d = v.date;
         if (lastRate == null ||
-            (d != null && (last == null || d.isAfter(last)))) {
+            (d != null && (last == null || d.isAfter(last!)))) {
           lastRate = r;
         }
       }
       final DateTime? d = v.date;
-      if (d != null && (last == null || d.isAfter(last))) last = d;
+      if (d != null && (last == null || d.isAfter(last!))) last = d;
     }
     if (hit) count++;
   }
-  return ItemTrade(
+
+  ItemTrade get trade => ItemTrade(
     amount: paise(amount),
     qty: qty,
     vouchers: count,
@@ -180,4 +182,15 @@ ItemTrade itemTrade(List<Voucher> vouchers, String item, String kind) {
     minRate: minRate,
     maxRate: maxRate,
   );
+}
+
+/// Sales (`kind` = sales) or purchase summary of one item from the item
+/// lines of [vouchers] (newest first). Item names match case-insensitively.
+ItemTrade itemTrade(List<Voucher> vouchers, String item, String kind) {
+  final String key = item.trim().toLowerCase();
+  final ItemAcc acc = ItemAcc();
+  for (final Voucher v in vouchers) {
+    if (v.kind == kind) acc.add(v, key);
+  }
+  return acc.trade;
 }

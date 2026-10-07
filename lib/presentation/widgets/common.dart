@@ -6,6 +6,7 @@ library;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderProxyBox;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/app_state.dart';
@@ -233,8 +234,14 @@ ScrollPhysics scrollPhysics(AppController c) => c.scrollLock
 /// `.scr` (padding 28 16 36) or `.scr.wt` on tab-bar screens (stops 100 px
 /// above the bottom with an 18 px fade).
 class Scr extends ConsumerStatefulWidget {
-  const Scr({super.key, required this.children});
+  const Scr({super.key, required this.children, this.onNearEnd});
+
+  /// Plain widgets lay out as before; [ScrSliver]s (e.g. [SliverGlassList])
+  /// build their rows lazily, only while on screen.
   final List<Widget> children;
+
+  /// Called when the user scrolls near the end (load the next page).
+  final VoidCallback? onNearEnd;
 
   @override
   ConsumerState<Scr> createState() => _ScrState();
@@ -268,21 +275,53 @@ class _ScrState extends ConsumerState<Scr> {
     c.reg.screenScroll = _sc;
     c.reg.screenViewport = _vp;
     final bool wt = c.showTabs;
-    Widget scroll = SingleChildScrollView(
+    // There is no Scaffold, so the keyboard must be made room for here:
+    // fields near the bottom stay reachable above it.
+    final double kb = MediaQuery.viewInsetsOf(context).bottom;
+    Widget scroll = CustomScrollView(
       key: _vp,
       controller: _sc,
       physics: scrollPhysics(c),
-      padding: EdgeInsets.fromLTRB(
-        16,
-        topIn(context),
-        16,
-        wt ? 20 : 36 + MediaQuery.paddingOf(context).bottom,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: widget.children,
-      ),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      slivers: <Widget>[
+        SliverPadding(
+          // The scroll view runs to the bottom of the screen (under the
+          // glass tab bar, like Home), so cards are never cut at a line above
+          // the bar; this padding lets the last card rest fully above it.
+          padding: EdgeInsets.fromLTRB(
+            16,
+            topIn(context),
+            16,
+            (wt
+                    ? wtBottom(context) + 20
+                    : 36 + MediaQuery.paddingOf(context).bottom) +
+                kb,
+          ),
+          sliver: SliverMainAxisGroup(slivers: toSlivers(widget.children)),
+        ),
+      ],
     );
+    if (widget.onNearEnd != null) {
+      // Also after each build: rows that do not fill the screen, or a page
+      // that arrives while the user is already at the end, load the next
+      // page without waiting for another scroll.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_sc.hasClients) return;
+        final ScrollPosition pos = _sc.position;
+        if (pos.hasContentDimensions && pos.extentAfter < 900) {
+          widget.onNearEnd?.call();
+        }
+      });
+      scroll = NotificationListener<ScrollNotification>(
+        onNotification: (ScrollNotification n) {
+          if (n.metrics.axis == Axis.vertical && n.metrics.extentAfter < 900) {
+            widget.onNearEnd!();
+          }
+          return false;
+        },
+        child: scroll,
+      );
+    }
     if (c.repo.isRemote && c.loggedIn) {
       // Pull down to reload; the current data stays until fresh data arrives.
       scroll = RefreshIndicator(
@@ -292,10 +331,38 @@ class _ScrState extends ConsumerState<Scr> {
         child: scroll,
       );
     }
-    return Padding(
-      padding: EdgeInsets.only(bottom: wt ? wtBottom(context) : 0),
-      child: wt ? fadeMask(scroll, bottom: 18) : scroll,
-    );
+    // No bottom cut-off or fade: the wallpaper and the content continue
+    // behind the translucent tab bar.
+    return scroll;
+  }
+}
+
+/// Reports its child's laid-out height (after the frame) when it changes.
+class _MeasureHeight extends SingleChildRenderObjectWidget {
+  const _MeasureHeight({required this.onHeight, required super.child});
+  final ValueChanged<double> onHeight;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderMeasureHeight(onHeight);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderMeasureHeight r) =>
+      r.onHeight = onHeight;
+}
+
+class _RenderMeasureHeight extends RenderProxyBox {
+  _RenderMeasureHeight(this.onHeight);
+  ValueChanged<double> onHeight;
+  double? _last;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    final double h = size.height;
+    if (h == _last) return;
+    _last = h;
+    WidgetsBinding.instance.addPostFrameCallback((_) => onHeight(h));
   }
 }
 
@@ -326,37 +393,274 @@ Widget fadeMask(Widget child, {double top = 0, double bottom = 0}) =>
     );
 
 /// `.scr.flowscr`: scrolling `.fbody` + fixed `.foot`.
-class FlowScr extends ConsumerWidget {
+class FlowScr extends ConsumerStatefulWidget {
   const FlowScr({super.key, required this.children, this.foot});
+
+  /// Plain widgets and lazily built [ScrSliver]s (see [Scr]).
   final List<Widget> children;
   final List<Widget>? foot;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<FlowScr> createState() => _FlowScrState();
+}
+
+class _FlowScrState extends ConsumerState<FlowScr> {
+  /// The footer's measured height (room left under the content).
+  final ValueNotifier<double> _footH = ValueNotifier<double>(0);
+
+  @override
+  void dispose() {
+    _footH.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final AppController c = ref.watch(appProvider);
-    return Column(
-      children: <Widget>[
-        Expanded(
-          child: SingleChildScrollView(
-            physics: scrollPhysics(c),
-            padding: EdgeInsets.fromLTRB(16, topIn(context), 16, 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: children,
+    final List<Widget> children = widget.children;
+    final List<Widget>? foot = widget.foot;
+    // No Scaffold resizes this screen for the keyboard: the body shrinks by
+    // the keyboard height so the form scrolls and the footer buttons sit
+    // above the keyboard instead of under it.
+    final double kb = MediaQuery.viewInsetsOf(context).bottom;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: kb),
+      child: Stack(
+        children: <Widget>[
+          // The content runs under the see-through glass footer (it blurs
+          // what scrolls behind it) instead of stopping at its edge.
+          Positioned.fill(
+            child: CustomScrollView(
+              physics: scrollPhysics(c),
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              slivers: <Widget>[
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(16, topIn(context), 16, 24),
+                  sliver: SliverMainAxisGroup(slivers: toSlivers(children)),
+                ),
+                // Room for the footer at the end: exactly its measured
+                // height, so the last content rests fully above it.
+                if (foot != null)
+                  SliverToBoxAdapter(
+                    child: ValueListenableBuilder<double>(
+                      valueListenable: _footH,
+                      builder: (BuildContext context, double h, _) =>
+                          SizedBox(height: h),
+                    ),
+                  ),
+              ],
             ),
           ),
-        ),
-        if (foot != null) Foot(children: foot!),
-      ],
+          if (foot != null)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _MeasureHeight(
+                onHeight: (double h) => _footH.value = h,
+                // With the keyboard up the system-bar inset is already
+                // covered.
+                child: Foot(compact: kb > 0, children: foot),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
 
+/// Wraps plain widgets for a sliver scroll view; [ScrSliver]s pass through.
+List<Widget> toSlivers(List<Widget> children) => <Widget>[
+  for (final Widget w in children)
+    w is ScrSliver ? w : SliverToBoxAdapter(child: w),
+];
+
+/// A child of [Scr] / [FlowScr] that is itself a sliver (built lazily).
+abstract class ScrSliver extends StatelessWidget {
+  const ScrSliver({super.key});
+}
+
+/// [GlassList]'s look (one glass card, 1 px dividers, rounded ends) for a
+/// long list whose rows are built only while they are on screen — the
+/// screen never builds thousands of rows at once.
+class SliverGlassList extends ScrSliver {
+  const SliverGlassList({
+    super.key,
+    required this.itemCount,
+    required this.itemBuilder,
+    this.margin = EdgeInsets.zero,
+    this.divider = true,
+    this.radius = 22,
+  });
+  final int itemCount;
+  final IndexedWidgetBuilder itemBuilder;
+  final EdgeInsets margin;
+  final bool divider;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    if (itemCount == 0) return const SliverToBoxAdapter(child: SizedBox());
+    final TcPalette p = Tc.of(context);
+    return SliverPadding(
+      padding: margin,
+      sliver: DecoratedSliver(
+        decoration: GlassDecoration(
+          fill: p.glassFill,
+          radius: radius,
+          shadows: glassShadows(),
+        ),
+        sliver: SliverPadding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          sliver: SliverList.builder(
+            itemCount: itemCount,
+            itemBuilder: (BuildContext context, int i) {
+              Widget w = itemBuilder(context, i);
+              if (i > 0 && divider && w is! HidRow) {
+                w = Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[listDivider(), w],
+                );
+              }
+              // Same rounded clipping as [GlassList] at both ends.
+              if (i == 0 || i == itemCount - 1) {
+                w = ClipRRect(
+                  borderRadius: BorderRadius.vertical(
+                    top: Radius.circular(i == 0 ? radius : 0),
+                    bottom: Radius.circular(i == itemCount - 1 ? radius : 0),
+                  ),
+                  child: w,
+                );
+              }
+              return w;
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// [GlassList] replacement for long lists: [rows] built lazily with the
+/// same look, then the "N hidden · Unhide" row and the empty text.
+SliverGlassList lazyList<T>({
+  required List<T> rows,
+  required Widget Function(BuildContext context, T row) row,
+  int hidden = 0,
+  VoidCallback? unhide,
+  String? empty,
+  EdgeInsets margin = EdgeInsets.zero,
+}) {
+  final bool showEmpty = rows.isEmpty && empty != null;
+  return SliverGlassList(
+    margin: margin,
+    itemCount: rows.length + (hidden > 0 ? 1 : 0) + (showEmpty ? 1 : 0),
+    itemBuilder: (BuildContext context, int i) {
+      if (i < rows.length) return row(context, rows[i]);
+      if (hidden > 0 && i == rows.length) {
+        return HidRow('$hidden hidden · Unhide', onTap: unhide);
+      }
+      return Padding(
+        padding: const EdgeInsets.all(18),
+        child: Text(
+          empty ?? '',
+          textAlign: TextAlign.center,
+          style: rsStyle(context, 15),
+        ),
+      );
+    },
+  );
+}
+
+/// Last row of a paged list: loading / retry / end text.
+class PageFooterRow extends StatelessWidget {
+  const PageFooterRow({
+    super.key,
+    required this.loading,
+    this.error,
+    this.onRetry,
+    this.text = '',
+  });
+  final bool loading;
+  final String? error;
+  final VoidCallback? onRetry;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    if (loading) {
+      return Padding(
+        padding: const EdgeInsets.all(18),
+        child: Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2.4, color: p.acc),
+          ),
+        ),
+      );
+    }
+    if (error != null) {
+      return RowX(
+        onTap: onRetry,
+        children: <Widget>[
+          Ico('sync', size: IcoSize.xs, color: p.neg, icon: IcSize.s),
+          Expanded(child: RTx('Could not load more', error!)),
+          Text(
+            'Retry',
+            style: ts(14, w: w700, c: p.acc),
+          ),
+        ],
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.all(18),
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: ts(15, c: p.ink3),
+      ),
+    );
+  }
+}
+
+/// One-line amount that shrinks to fit instead of wrapping or pushing its
+/// neighbours (large rupee values, long totals).
+class AmtText extends StatelessWidget {
+  const AmtText(
+    this.text, {
+    super.key,
+    required this.style,
+    this.align = Alignment.centerRight,
+  });
+  final String text;
+  final TextStyle style;
+  final AlignmentGeometry align;
+
+  @override
+  Widget build(BuildContext context) => FittedBox(
+    fit: BoxFit.scaleDown,
+    alignment: align,
+    child: Text(text, maxLines: 1, softWrap: false, style: style),
+  );
+}
+
 /// `.foot`: see-through glass bar with the action buttons.
 class Foot extends StatelessWidget {
-  const Foot({super.key, required this.children, this.inSheet = false});
+  const Foot({
+    super.key,
+    required this.children,
+    this.inSheet = false,
+    this.compact = false,
+  });
   final List<Widget> children;
   final bool inSheet;
+
+  /// Keyboard open: no system-bar padding below the buttons.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -369,7 +673,10 @@ class Foot extends StatelessWidget {
             16,
             12,
             16,
-            26 + (inSheet ? 0 : MediaQuery.paddingOf(context).bottom * .6),
+            compact
+                ? 12
+                : 26 +
+                      (inSheet ? 0 : MediaQuery.paddingOf(context).bottom * .6),
           ),
           decoration: BoxDecoration(
             color: p.gt.withValues(alpha: .5),
@@ -587,22 +894,60 @@ Widget chevR([IcSize s = IcSize.s]) => Ic('chevR', size: s, color: kChev);
 
 /// A customisable list row (`L()` rows with `data-lk`): long-press menu,
 /// drag reorder, pin badge and the armed / ghost / lifted states.
-class LRow extends ConsumerWidget {
+class LRow extends ConsumerStatefulWidget {
   const LRow({
     super.key,
     required this.list,
     required this.lk,
     required this.child,
     this.radius = 16,
+    this.pinOverlay = true,
   });
   final String list, lk;
   final Widget child;
   final double radius;
 
+  /// Draws the pin badge over the row's top-right corner. Rows that lay the
+  /// badge out themselves (so it never covers their text) pass false.
+  final bool pinOverlay;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<LRow> createState() => _LRowState();
+}
+
+/// Each row owns its drag / long-press key only while it is on screen and
+/// removes it when scrolled away, so long lists never hold thousands of
+/// [GlobalKey]s.
+class _LRowState extends ConsumerState<LRow> {
+  final GlobalKey _gk = GlobalKey();
+  late final AppController _ctl = ref.read(appProvider);
+  String? _slot;
+
+  void _register() {
+    final String slot = '${widget.list}|${widget.lk}';
+    if (_slot != null && _slot != slot && _ctl.reg.rows[_slot] == _gk) {
+      _ctl.reg.rows.remove(_slot);
+    }
+    _slot = slot;
+    _ctl.reg.rows[slot] = _gk;
+  }
+
+  @override
+  void dispose() {
+    if (_slot != null && _ctl.reg.rows[_slot] == _gk) {
+      _ctl.reg.rows.remove(_slot);
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final AppController c = ref.watch(appProvider);
-    final GlobalKey gk = c.reg.row(list, lk);
+    _register();
+    final String list = widget.list, lk = widget.lk;
+    final Widget child = widget.child;
+    final double radius = widget.radius;
+    final GlobalKey gk = _gk;
     final bool armed = c.armed?.matches(list, lk) ?? false;
     final bool ghost =
         c.ldrag != null && c.ldrag!.list == list && c.ldrag!.id == lk;
@@ -615,7 +960,8 @@ class LRow extends ConsumerWidget {
       clipBehavior: Clip.none,
       children: <Widget>[
         child,
-        if (pinned) const Positioned(top: 6, right: 8, child: PinBadge()),
+        if (pinned && widget.pinOverlay)
+          const Positioned(top: 6, right: 8, child: PinBadge()),
       ],
     );
     if (lift) {

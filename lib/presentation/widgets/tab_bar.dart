@@ -198,7 +198,7 @@ class TcTabBar extends ConsumerWidget {
                             transform: Matrix4.diagonal3Values(1, s, 1),
                             child: ch,
                           ),
-                      child: const _Pill(),
+                      child: const LiquidPill(),
                     ),
                   ),
                   // ---- hover bubble
@@ -238,8 +238,9 @@ class TcTabBar extends ConsumerWidget {
 }
 
 /// `.pill`: liquid glass lens with an inner accent glow and gloss strip.
-class _Pill extends StatelessWidget {
-  const _Pill();
+/// Also used as the active marker of [PillFilter].
+class LiquidPill extends StatelessWidget {
+  const LiquidPill({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -398,4 +399,177 @@ class _Ring extends CustomPainter {
 
   @override
   bool shouldRepaint(_Ring old) => old.c != c;
+}
+
+/// Filter bar in the tab bar's liquid-glass style: a glass track whose
+/// selected option sits on the same [LiquidPill] lens as the active tab,
+/// with the same press-scale. Options share the width equally when every
+/// label fits; otherwise the track scrolls sideways (no wrapping, no
+/// clipping) and keeps the selected option in view.
+class PillFilter extends StatefulWidget {
+  const PillFilter({
+    super.key,
+    required this.items,
+    required this.selected,
+    required this.onPick,
+    this.margin = const EdgeInsets.only(top: 4, bottom: 14),
+  });
+
+  /// (key, label)
+  final List<(String, String)> items;
+  final String selected;
+  final ValueChanged<String> onPick;
+  final EdgeInsets margin;
+
+  @override
+  State<PillFilter> createState() => _PillFilterState();
+}
+
+class _PillFilterState extends State<PillFilter> {
+  final ScrollController _sc = ScrollController();
+  List<double> _widths = const <double>[];
+  bool _scrolls = false;
+
+  static const double _h = 52, _pad = 5, _gap = 4;
+
+  @override
+  void dispose() {
+    _sc.dispose();
+    super.dispose();
+  }
+
+  /// Centres the selected option inside the track (scroll mode only).
+  void _reveal() {
+    if (!_scrolls || !_sc.hasClients) return;
+    final int i = widget.items.indexWhere(
+      ((String, String) e) => e.$1 == widget.selected,
+    );
+    if (i < 0) return;
+    double x = 0;
+    for (int k = 0; k < i; k++) {
+      x += _widths[k] + _gap;
+    }
+    final ScrollPosition ps = _sc.position;
+    final double target = (x - (ps.viewportDimension - _widths[i]) / 2).clamp(
+      ps.minScrollExtent,
+      ps.maxScrollExtent,
+    );
+    _sc.animateTo(
+      target,
+      duration: const Duration(milliseconds: 380),
+      curve: const Cubic(.3, 1.2, .5, 1),
+    );
+  }
+
+  @override
+  void didUpdateWidget(PillFilter old) {
+    super.didUpdateWidget(old);
+    if (old.selected != widget.selected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _reveal());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    final TextScaler sc = MediaQuery.textScalerOf(context);
+    TextStyle style(bool on) =>
+        ts(14, w: on ? w800 : w700, c: on ? p.acc : kTabInk);
+    return Padding(
+      padding: widget.margin,
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints box) {
+          final double inner = box.maxWidth - _pad * 2;
+          _widths = <double>[
+            for (final (String, String) e in widget.items)
+              (TextPainter(
+                    text: TextSpan(text: e.$2, style: style(true)),
+                    textDirection: TextDirection.ltr,
+                    textScaler: sc,
+                    maxLines: 1,
+                  )..layout()).width +
+                  30,
+          ];
+          final int n = widget.items.length;
+          final double equal = n == 0 ? inner : (inner - _gap * (n - 1)) / n;
+          _scrolls = _widths.any((double w) => w > equal);
+          Widget option(int i) {
+            final (String, String) e = widget.items[i];
+            final bool on = e.$1 == widget.selected;
+            return Tap(
+              onTap: () => widget.onPick(e.$1),
+              radius: 22,
+              scale: .9,
+              highlight: false,
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  AnimatedOpacity(
+                    duration: const Duration(milliseconds: 260),
+                    opacity: on ? 1 : 0,
+                    child: AnimatedScale(
+                      duration: const Duration(milliseconds: 520),
+                      curve: const Cubic(.26, 1.55, .44, 1),
+                      scale: on ? 1 : .82,
+                      child: const LiquidPill(),
+                    ),
+                  ),
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: AnimatedDefaultTextStyle(
+                        duration: const Duration(milliseconds: 260),
+                        style: style(on),
+                        child: Text(
+                          e.$2,
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.fade,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          final Widget row = _scrolls
+              ? SingleChildScrollView(
+                  controller: _sc,
+                  scrollDirection: Axis.horizontal,
+                  physics: const BouncingScrollPhysics(),
+                  child: Row(
+                    children: <Widget>[
+                      for (int i = 0; i < n; i++) ...<Widget>[
+                        if (i > 0) const SizedBox(width: _gap),
+                        SizedBox(width: _widths[i], child: option(i)),
+                      ],
+                    ],
+                  ),
+                )
+              : Row(
+                  children: <Widget>[
+                    for (int i = 0; i < n; i++) ...<Widget>[
+                      if (i > 0) const SizedBox(width: _gap),
+                      Expanded(child: option(i)),
+                    ],
+                  ],
+                );
+          if (_scrolls) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (_sc.hasClients && _sc.offset == 0) _reveal();
+            });
+          }
+          return Glass(
+            radius: _h / 2,
+            height: _h,
+            blur: true,
+            padding: const EdgeInsets.all(_pad),
+            child: row,
+          );
+        },
+      ),
+    );
+  }
 }

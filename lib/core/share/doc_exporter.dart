@@ -88,7 +88,7 @@ class PlatformDocExporter implements DocExporter {
   @override
   Future<List<ui.Image>> raster(Uint8List bytes) async {
     final List<ui.Image> out = <ui.Image>[];
-    await for (final PdfRaster r in Printing.raster(bytes, dpi: 144)) {
+    await for (final PdfRaster r in Printing.raster(bytes, dpi: 216)) {
       out.add(await r.toImage());
     }
     return out;

@@ -24,6 +24,7 @@ import '../data/mock/mock_data.dart';
 import '../data/models/models.dart';
 import '../data/repositories/api_tally_repository.dart' show DataSet;
 import '../data/repositories/tally_repository.dart';
+import '../data/repositories/team_admin.dart';
 import '../core/share/doc_exporter.dart';
 import '../core/share/report_data.dart';
 import '../core/share/share_doc.dart';
@@ -199,6 +200,13 @@ class AppController extends ChangeNotifier {
   /// session when the server rejects the token.
   void _onRepo() {
     if (_disposed) return;
+    if (repo.activeCompanyId != null &&
+        company.isNotEmpty &&
+        repo.activeCompanyId != company) {
+      // Company changed: on-demand sets were cleared — reload this screen's.
+      company = repo.activeCompanyId!;
+      Future<void>.microtask(reEnter);
+    }
     acts = repo.activity();
     notifs = repo.notifications();
     team = repo.team();
@@ -281,12 +289,18 @@ class AppController extends ChangeNotifier {
   String? npKey;
   String npType = 'c';
   List<Party> extraParties = <Party>[];
-  String niCat = 'General', niUnit = 'PCS';
+
+  /// New item: Tally stock group (chosen from the company's real groups;
+  /// empty until picked) and unit.
+  String niCat = '', niUnit = 'PCS';
   int niGst = 18;
 
   String vFilter = 'all', vPeriod = 'all';
   Voucher? entry;
   String outKind = 'recv', outFilter = 'all';
+
+  /// Outstanding list: `list` or `graph`; graph series `age` | `party`.
+  String outView = 'list', outChart = 'age';
   Bill? bill;
   bool autoRemind = true;
   String itemsFilter = 'all',
@@ -326,7 +340,6 @@ class AppController extends ChangeNotifier {
     'sync': true,
     'due': true,
     'team': true,
-    'wa': true,
   };
   bool yearly = true;
   int faq = 0;
@@ -339,8 +352,6 @@ class AppController extends ChangeNotifier {
 
   /// A login / save request is in flight (blocks double taps).
   bool busy = false;
-  PdfInfo? pdf;
-  int zoom = 100;
   String? toast;
   int toastSeq = 0;
 
@@ -365,6 +376,7 @@ class AppController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    teamCfg?.dispose();
     for (final Timer? t in <Timer?>[
       _t,
       _p,
@@ -379,6 +391,9 @@ class AppController extends ChangeNotifier {
       t?.cancel();
     }
     _stopRoute();
+    for (final Timer t in _qTimers.values) {
+      t.cancel();
+    }
     if (repo.isRemote) repo.removeListener(_onRepo);
     super.dispose();
   }
@@ -431,7 +446,7 @@ class AppController extends ChangeNotifier {
     bgOpacity =
         ((store.load<Object?>(LocalStorage.kBgOpacity, 100) as num?) ?? 100)
             .toDouble()
-            .clamp(20, 100);
+            .clamp(0, 100);
     bgShade = ((store.load<Object?>(LocalStorage.kBgShade, 0) as num?) ?? 0)
         .toDouble()
         .clamp(-100, 100);
@@ -508,6 +523,88 @@ class AppController extends ChangeNotifier {
   void setF(String k, String v) => _set(() => form[k] = v);
   String f(String k) => form[k] ?? '';
 
+  /// Search text actually applied to lists (set 350 ms after typing stops).
+  final Map<String, String> _applied = <String, String>{};
+  final Map<String, Timer> _qTimers = <String, Timer>{};
+
+  /// Applied (debounced) search text of a search field.
+  String q(String k) => _applied[k] ?? form[k] ?? '';
+
+  /// Search field typing: the text is kept at once (no rebuild per
+  /// keystroke); lists filter 350 ms after the user stops typing.
+  void setQuery(String k, String v) {
+    form[k] = v;
+    _qTimers[k]?.cancel();
+    _qTimers[k] = Timer(const Duration(milliseconds: 350), () {
+      _set(() => _applied[k] = v);
+      if (k == 'q') _searchVouchers(v);
+    });
+  }
+
+  /// Clears a search field immediately.
+  void clearQuery(String k) {
+    _qTimers[k]?.cancel();
+    _set(() {
+      form[k] = '';
+      _applied[k] = '';
+    });
+  }
+
+  // ------------------------------------------------------ cached derived
+  final Map<String, (String, Object?)> _memo = <String, (String, Object?)>{};
+
+  /// List-preference changes (pin / hide / order) — part of memo keys.
+  int prefsVersion = 0;
+
+  /// Returns the value cached under [slot] while [key] is unchanged, so a
+  /// heavy filter / sort over thousands of rows runs once per data change
+  /// instead of on every rebuild.
+  T memo<T>(String slot, String key, T Function() build) {
+    final (String, Object?)? e = _memo[slot];
+    if (e != null && e.$1 == key) return e.$2 as T;
+    final T v = build();
+    _memo[slot] = (key, v);
+    return v;
+  }
+
+  // ------------------------------------------------- server voucher search
+  int _vSearchSeq = 0;
+  String vSearchQuery = '';
+  List<Voucher> vSearchHits = <Voucher>[];
+  bool vSearchBusy = false;
+
+  /// Global search for vouchers uses the server's `search`; results of an
+  /// older query that arrive late are ignored.
+  Future<void> _searchVouchers(String query) async {
+    final String qq = query.trim();
+    final int seq = ++_vSearchSeq;
+    if (qq.isEmpty) {
+      _set(() {
+        vSearchQuery = '';
+        vSearchHits = <Voucher>[];
+        vSearchBusy = false;
+      });
+      return;
+    }
+    _set(() => vSearchBusy = true);
+    try {
+      final List<Voucher> r = await repo.searchVouchers(qq);
+      if (seq != _vSearchSeq) return; // a newer search started
+      _set(() {
+        vSearchQuery = qq;
+        vSearchHits = r;
+        vSearchBusy = false;
+      });
+    } catch (_) {
+      if (seq != _vSearchSeq) return;
+      _set(() {
+        vSearchQuery = qq;
+        vSearchHits = <Voucher>[];
+        vSearchBusy = false;
+      });
+    }
+  }
+
   void jump(String s) {
     final int ti = kTabs.indexWhere(
       (({String k, String t, String ic}) t) => t.k == s,
@@ -529,6 +626,7 @@ class AppController extends ChangeNotifier {
   }
 
   void selectTab(int i, [Map<String, Object?>? extra]) {
+    _onEnter(kTabs[i].k);
     final int cur = tab;
     final double a = posOf(cur).toDouble(), b = posOf(i).toDouble();
     _p?.cancel();
@@ -583,9 +681,31 @@ class AppController extends ChangeNotifier {
     _onEnter(s);
   }
 
-  /// Loads on-demand server data for detail screens.
+  /// Loads only the data the screen being opened needs (big sets such as
+  /// ledgers, items, stock and team are not loaded at startup).
   void _onEnter(String s) {
     if (!repo.isRemote) return;
+    switch (s) {
+      case 'party' || 'partyDetail' || 'flow':
+        repo.ensure(DataSet.ledgers);
+      case 'items':
+        repo.ensure(DataSet.items);
+      case 'team':
+        repo.ensure(DataSet.team);
+      case 'reports':
+        repo.ensure(DataSet.items);
+        repo.ensure(DataSet.stock);
+        repo.ensure(DataSet.ledgers);
+      case 'report':
+        if (report == 'stock') repo.ensure(DataSet.items);
+        if (report == 'inI') repo.ensure(DataSet.stock);
+        if (report == 'inC') repo.ensure(DataSet.ledgers);
+    }
+    if (s == 'flow') repo.ensure(DataSet.items);
+    if (s == 'teamSelect') {
+      if (teamKind == 'ledger') repo.ensure(DataSet.ledgers);
+      if (teamKind == 'inventory') repo.ensure(DataSet.items);
+    }
     if (s == 'partyDetail') {
       final Party? p = partyPool()
           .where((Party x) => x.name == party)
@@ -595,15 +715,63 @@ class AppController extends ChangeNotifier {
       final String? g = entry?.guid;
       if (g != null && g.isNotEmpty) repo.loadVoucherLines(g);
     } else if (s == 'itemDetail') {
+      repo.ensure(DataSet.items);
       final Item? it = repo
           .items()
           .where((Item x) => x.name == itemSel)
           .firstOrNull;
       if (it != null) repo.loadItemDetail(it);
+      // Sales / purchase summary needs the whole history: read it now, on
+      // this explicit request, with progress on screen (never at startup).
+      repo.scanHistory();
     }
   }
 
+  /// Re-runs the current screen's data needs (after a company switch the
+  /// on-demand sets were cleared).
+  void reEnter() => _onEnter(screen);
+
   void run(NavTo a) => go(a.screen, a.extra.isEmpty ? null : a.extra);
+
+  // ------------------------------------------------- period money totals
+  static const List<(String, String)> kPeriods = <(String, String)>[
+    ('all', 'All time'),
+    ('month', 'This month'),
+    ('week', 'Last 7 days'),
+    ('today', 'Today'),
+  ];
+
+  String periodLabel(String period) => switch (period) {
+    'month' => monthYear(today),
+    'week' => 'Last 7 days',
+    'today' => 'Today',
+    _ => 'All time',
+  };
+
+  /// Total value of the vouchers of [filter] (`all`, a kind or `type:X`)
+  /// in [period] — one source for every summary: This month from the
+  /// complete month set (as before); other periods from that period's exact
+  /// totals (All time: the server's sums). Null while loading.
+  num? periodAmount(String period, String filter) {
+    if (period == 'month') {
+      final MonthTotals mt = repo.monthTotals();
+      final bool ready =
+          !repo.isRemote ||
+          // Last good data stays visible while a refresh runs; an
+          // incomplete month reports no amounts → `—`.
+          (repo.hasData(DataSet.vouchers) &&
+              (mt.amount.isNotEmpty || mt.count.isEmpty));
+      if (!ready) return null;
+      if (filter == 'all') {
+        return paise(mt.amount.values.fold<num>(0, (num s, num v) => s + v));
+      }
+      return mt.amount[filter] ?? 0;
+    }
+    if (repo.isRemote) {
+      Future<void>.microtask(() => repo.loadVoucherCounts(period));
+    }
+    return repo.voucherCounts(period)?.amountFor(filter);
+  }
 
   void back() {
     if (history.isEmpty) {
@@ -661,11 +829,23 @@ class AppController extends ChangeNotifier {
           itemSel = v! as String;
         case 'itemTab':
           itemTab = v! as String;
+        case 'teamKind':
+          teamKind = v! as String;
+          // Each selection screen starts with an empty search.
+          form['tsQ'] = '';
+          _applied['tsQ'] = '';
       }
     });
   }
 
-  void openOverlay(String o) => _set(() => overlay = o);
+  void openOverlay(String o) {
+    if (repo.isRemote && (o == 'search' || o == 'picker')) {
+      repo.ensure(DataSet.items);
+      if (o == 'search') repo.ensure(DataSet.ledgers);
+    }
+    _set(() => overlay = o);
+  }
+
   void closeOv() => _set(() => overlay = null);
 
   // ---------------------------------------------------------- nav actions
@@ -860,7 +1040,22 @@ class AppController extends ChangeNotifier {
     return (sub: paise(sub), gst: paise(gst), total: paise(sub + gst));
   }
 
-  List<Party> partyPool() => <Party>[...repo.parties(), ...extraParties];
+  List<Party>? _pool;
+  List<Party>? _poolSrc, _poolExtra;
+
+  /// Tally parties plus parties added here. Built once per change of either
+  /// list (16K+ ledgers are not copied on every call).
+  List<Party> partyPool() {
+    final List<Party> src = repo.parties();
+    if (_pool == null ||
+        !identical(src, _poolSrc) ||
+        !identical(extraParties, _poolExtra)) {
+      _poolSrc = src;
+      _poolExtra = extraParties;
+      _pool = List<Party>.unmodifiable(<Party>[...src, ...extraParties]);
+    }
+    return _pool!;
+  }
 
   num get drSum => paise(
     jl
@@ -1170,17 +1365,66 @@ class AppController extends ChangeNotifier {
         ? (List<Line>.of(l)..removeAt(i))
         : <Line>[
             ...l,
+            // The item's Tally data: its rate (closing rate, else the
+            // opening rate when nothing is in stock), unit, GST; qty 1.
             Line(
               it.name,
-              it.rate,
+              it.rate > 0
+                  ? it.rate
+                  : ((it.openingRate ?? 0) > 0 ? it.openingRate! : 0),
               1,
               it.unit,
               it.gst ?? (repo.isRemote ? 0 : 18),
               guid: it.guid,
               hsn: it.hsn,
+              group: it.group,
             ),
           ];
   });
+
+  // ------------------------------------------- one voucher line's rate / GST
+  /// Line being edited (rate / GST) in the line sheet.
+  int? lineEdit;
+
+  /// Opens the rate / GST editor of line [i] of the current entry.
+  void openLineEdit(int i) {
+    final List<Line> l = lines[flowType] ?? <Line>[];
+    if (i < 0 || i >= l.length) return;
+    _set(() {
+      lineEdit = i;
+      form['leRate'] = l[i].rate == 0 ? '' : qty(paise(l[i].rate));
+      form['leGst'] = qty(l[i].gst);
+      overlay = 'lineEdit';
+    });
+  }
+
+  /// Why the line sheet's values cannot be used, or null.
+  String? get lineEditError {
+    final num? r = num.tryParse((form['leRate'] ?? '').trim());
+    final num? g = num.tryParse((form['leGst'] ?? '').trim());
+    if (r == null || r <= 0) return 'Enter a rate above zero';
+    if (g == null || g < 0 || g > 100) return 'GST must be 0 to 100%';
+    return null;
+  }
+
+  /// Applies the sheet's rate / GST to that line of THIS voucher only —
+  /// the item master (and Tally's item) is not changed.
+  void saveLineEdit() {
+    final int? i = lineEdit;
+    final List<Line> l = lines[flowType] ?? <Line>[];
+    if (i == null || i >= l.length || lineEditError != null) return;
+    final num r = paise(num.parse(form['leRate']!.trim()));
+    final num g = num.parse(form['leGst']!.trim());
+    _set(() {
+      lines[flowType] = <Line>[
+        for (int j = 0; j < l.length; j++)
+          j == i ? l[j].withRate(r).withGst(g) : l[j],
+      ];
+      lineEdit = null;
+      overlay = null;
+    });
+    say('Rate and GST updated for this bill');
+  }
 
   void stepPickItem(Item it, int d) => _set(() {
     lines[flowType] = (lines[flowType] ?? <Line>[])
@@ -1197,6 +1441,13 @@ class AppController extends ChangeNotifier {
     final num nq = numOf(form['niQty']),
         nr = numOf(form['niRate']),
         nd = numOf(form['niDisc']);
+    // Tally needs the stock group to create the item (the sync agent
+    // otherwise silently picks one), so it must be one of the real groups.
+    final String group = niCat.trim();
+    if (repo.isRemote && !repo.stockGroups().contains(group)) {
+      say('Choose the stock group from Tally');
+      return;
+    }
     _set(() {
       lines[flowType] = <Line>[
         ...(lines[flowType] ?? <Line>[]),
@@ -1209,6 +1460,7 @@ class AppController extends ChangeNotifier {
           hsn: (form['niHsn'] ?? '').trim().isEmpty
               ? null
               : form['niHsn']!.trim(),
+          group: group.isEmpty ? null : group,
         ),
       ];
       overlay = null;
@@ -1531,10 +1783,7 @@ class AppController extends ChangeNotifier {
         final Notif? n = notifs.where((Notif x) => x.id == key).firstOrNull;
         return n == null ? null : CardInfo(n.t, n.ic, n.c, () => openNotif(n));
       case 'vouchers':
-        final Voucher? v = repo
-            .vouchers()
-            .where((Voucher x) => x.key == key)
-            .firstOrNull;
+        final Voucher? v = repo.voucherByKey(key);
         if (v == null) return null;
         final Kind k = kKinds[v.kind]!;
         return CardInfo(
@@ -1646,7 +1895,86 @@ class AppController extends ChangeNotifier {
   void openMember(Member m) => _set(() {
     overlay = 'member';
     member = m.id;
+    form['memDel'] = '';
   });
+
+  // ------------------------------------------- Sales Team: configure user
+  /// The member being configured (permissions loaded when it opens).
+  TeamConfig? teamCfg;
+
+  /// Permission area of the Layout / Selection screen.
+  String teamKind = 'ledger';
+
+  /// The admin account itself is not configured / deleted from this list.
+  bool _isAdminRow(Member m) => m.role == 'Admin';
+
+  void configureMember(Member m) {
+    final TeamAdmin? admin = repo.teamAdmin;
+    if (admin == null) {
+      say('Configure User saves to your server; sample data has none');
+      return;
+    }
+    if (_isAdminRow(m)) {
+      say('The admin account always sees everything');
+      return;
+    }
+    teamCfg?.dispose();
+    teamCfg = TeamConfig(admin, m)..load();
+    overlay = null;
+    go('teamUser');
+  }
+
+  Future<void> inviteMember(Member m) async {
+    final TeamAdmin? admin = repo.teamAdmin;
+    if (admin == null) {
+      closeOv();
+      say('Invite sent again');
+      return;
+    }
+    if (m.email.isEmpty || !m.email.contains('@')) {
+      say('${m.name} has no email address');
+      return;
+    }
+    closeOv();
+    say('Sending invite…');
+    try {
+      await admin.sendInvite(m);
+      say('Invite sent to ${m.email}');
+    } catch (e) {
+      say(e is ApiException ? e.userMessage : 'Could not send the invite');
+    }
+  }
+
+  /// First tap asks to confirm (in the member sheet); the second deletes.
+  Future<void> deleteMember(Member m) async {
+    if (_isAdminRow(m)) {
+      say('The admin account cannot be deleted here');
+      return;
+    }
+    if (form['memDel'] != m.id) {
+      _set(() => form['memDel'] = m.id);
+      return;
+    }
+    final TeamAdmin? admin = repo.teamAdmin;
+    if (admin == null) {
+      _set(() {
+        overlay = null;
+        team = team.where((Member x) => x.id != m.id).toList();
+      });
+      say('${m.name} deleted');
+      return;
+    }
+    closeOv();
+    say('Deleting ${m.name}…');
+    try {
+      await admin.deleteUser(m);
+      say('${m.name} deleted');
+    } catch (e) {
+      say(e is ApiException ? e.userMessage : 'Could not delete the user');
+    }
+  }
+
+  void cancelDelete() => _set(() => form['memDel'] = '');
 
   /// `guard` / `lg`: swallow the click that follows a long-press, and clicks
   /// on an armed card.
@@ -1714,9 +2042,15 @@ class AppController extends ChangeNotifier {
     final CMenu? c = cmenu;
     if (c == null) return;
     lpFired = false;
-    final ShareDoc? d = docForCard(c.list, c.id);
+    // A voucher shares its one complete document (same as its PDF).
+    final Voucher? v = c.list == 'vouchers' ? repo.voucherByKey(c.id) : null;
+    final ShareDoc? d = v == null ? docForCard(c.list, c.id) : null;
     _set(() => cmenu = null);
-    if (d != null) shareDoc(d);
+    if (v != null) {
+      shareVoucher(v);
+    } else if (d != null) {
+      shareDoc(d);
+    }
   }
 
   void cmHide() {
@@ -1736,6 +2070,7 @@ class AppController extends ChangeNotifier {
   }
 
   void updPref(String list, void Function(ListPref) fn) {
+    prefsVersion++;
     final ListPref pr = (listPrefs[list] ?? ListPref()).copy();
     fn(pr);
     listPrefs = Map<String, ListPref>.of(listPrefs)..[list] = pr;
@@ -2572,11 +2907,38 @@ class AppController extends ChangeNotifier {
   }
 
   // ------------------------------------------------------------- pdf
-  void openPdf(PdfInfo info) => _set(() {
-    overlay = 'pdf';
-    zoom = 100;
-    pdf = info;
-  });
+  /// A bill's PDF: the real generated document (the same bytes Share and
+  /// Download use), shown in the PDF viewer.
+  void openPdf(PdfInfo info) => previewDoc(docInvoice(info, companyName));
+
+  /// One voucher's complete document — its item lines (when it has items)
+  /// and its Dr / Cr ledger lines (loaded first when not on the phone yet).
+  /// Voucher Detail's See bill PDF, Share and Download all use this.
+  Future<ShareDoc> voucherDoc(Voucher e) async {
+    final String? g = e.guid;
+    if (repo.isRemote && g != null && g.isNotEmpty) {
+      try {
+        await repo.loadVoucherLines(g);
+      } catch (_) {
+        // Shown without accounts; the detail screen shows the load error.
+      }
+    }
+    return docVoucher(
+      e,
+      companyName,
+      lines: g == null ? null : repo.voucherLines(g),
+      city:
+          partyPool().where((Party x) => x.name == e.party).firstOrNull?.city ??
+          '',
+    );
+  }
+
+  Future<void> openVoucherPdf(Voucher e) async {
+    final ShareDoc d = await voucherDoc(e);
+    if (!_disposed) previewDoc(d);
+  }
+
+  Future<void> shareVoucher(Voucher e) async => shareDoc(await voucherDoc(e));
 
   // ------------------------------------------- share / pdf (NEW feature)
   /// Document shown by the generic PDF preview (`overlay == 'doc'`).
@@ -2619,27 +2981,10 @@ class AppController extends ChangeNotifier {
   void previewDoc(ShareDoc d) => _set(() {
     docShown = d;
     _docBytes = pdfOf(d);
-    zoom = 100;
     overlay = 'doc';
   });
 
   Future<Uint8List>? get docBytes => _docBytes;
-
-  /// The bill PDF currently open in the prototype's viewer, as a document.
-  ShareDoc get pdfDoc => docInvoice(pdf ?? samplePdf, companyName);
-
-  /// The prototype's default bill (sample data only).
-  PdfInfo get samplePdf => PdfInfo(
-    party: 'Shree Balaji Traders',
-    no: 'Sales 9',
-    date: '21 Sep 2026',
-    due: '06 Oct 2026',
-    total: 112100,
-    kind: 'Sales bill',
-    city: 'Mumbai',
-    recv: true,
-    lines: repo.billLines('Sales 9'),
-  );
 
   /// Document for a long-pressed card (`list|key`).
   ShareDoc? docForCard(String list, String key) {
@@ -2696,11 +3041,14 @@ class AppController extends ChangeNotifier {
         final Notif? n = notifs.where((Notif x) => x.id == key).firstOrNull;
         return n == null ? null : docNotif(n, co);
       case 'vouchers':
-        final Voucher? v = repo
-            .vouchers()
-            .where((Voucher x) => x.key == key)
-            .firstOrNull;
-        return v == null ? null : docEntry(v, co);
+        final Voucher? v = repo.voucherByKey(key);
+        return v == null
+            ? null
+            : docVoucher(
+                v,
+                co,
+                lines: v.guid == null ? null : repo.voucherLines(v.guid!),
+              );
       case 'bills':
         final Bill? b =
             (outKind == 'recv' ? repo.receivables() : repo.payables())
@@ -2744,8 +3092,6 @@ class AppController extends ChangeNotifier {
       right: const <int>{2},
     ),
   );
-
-  void zoomBy(int d) => _set(() => zoom = (zoom + d).clamp(60, 160));
 
   // ------------------------------------------------------------ misc
   /// Refresh button: forced reload; the data on screen stays until the
@@ -2832,42 +3178,63 @@ class AppController extends ChangeNotifier {
     void add(List<SearchHit> group) => out.addAll(group.take(cap));
 
     add(<SearchHit>[
-      for (final Item x in repo.items())
-        if (hit('${x.name} ${x.group ?? ''} ${x.hsn ?? ''}'))
-          SearchHit(
-            x.name,
-            'Item · ${x.stock > 0 ? '${qty(x.stock)} ${x.unit} in stock' : 'Finished'}',
-            'box',
-            'items',
-            () => openItem(x.name),
-          ),
+      for (final Item x
+          in repo
+              .items()
+              .where(
+                (Item x) => hit(
+                  x.search.isNotEmpty
+                      ? x.search
+                      : '${x.name} ${x.group ?? ''} ${x.hsn ?? ''}',
+                ),
+              )
+              .take(cap))
+        SearchHit(
+          x.name,
+          'Item · ${x.stock > 0 ? '${qty(x.stock)} ${x.unit} in stock' : 'Finished'}',
+          'box',
+          'items',
+          () => openItem(x.name),
+        ),
     ]);
     add(<SearchHit>[
-      for (final Party x in partyPool())
-        if (hit('${x.name} ${x.group ?? ''} ${x.city} ${x.kindLabel}'))
-          SearchHit(
-            x.name,
-            '${x.kindLabel}${(x.group ?? x.city).isEmpty ? '' : ' · ${x.group ?? x.city}'}',
-            'person',
-            'party',
-            () => go('partyDetail', <String, Object?>{
-              'party': x.name,
-              'partyTab': 'summary',
-            }),
-          ),
+      for (final Party x
+          in partyPool()
+              .where(
+                (Party x) => hit(
+                  '${x.search.isNotEmpty ? x.search : '${x.name} ${x.group ?? ''} ${x.city}'} ${x.kindLabel}',
+                ),
+              )
+              .take(cap))
+        SearchHit(
+          x.name,
+          '${x.kindLabel}${(x.group ?? x.city).isEmpty ? '' : ' · ${x.group ?? x.city}'}',
+          'person',
+          'party',
+          () => go('partyDetail', <String, Object?>{
+            'party': x.name,
+            'partyTab': 'summary',
+          }),
+        ),
     ]);
+    // Vouchers: the server's search over the whole history (sample data
+    // searches locally) — never a scan of every voucher on the phone.
     add(<SearchHit>[
-      for (final Voucher v in repo.vouchers())
-        if (hit(
-          '${v.party} ${v.no} ${v.type ?? kKinds[v.kind]!.t} ${v.date == null ? '' : dmy(v.date)}',
-        ))
-          SearchHit(
-            v.party,
-            '${v.type ?? kKinds[v.kind]!.t} · ${v.no} · ${inr(v.amt)}',
-            kKinds[v.kind]!.ic,
-            kKinds[v.kind]!.c,
-            () => go('entryDetail', <String, Object?>{'entry': v}),
-          ),
+      for (final Voucher v
+          in (repo.isRemote
+              ? (vSearchQuery == query.trim() ? vSearchHits : const <Voucher>[])
+              : repo.vouchers().where(
+                  (Voucher v) => hit(
+                    '${v.party} ${v.no} ${v.type ?? kKinds[v.kind]!.t} ${v.date == null ? '' : dmy(v.date)}',
+                  ),
+                )))
+        SearchHit(
+          v.party,
+          '${v.type ?? kKinds[v.kind]!.t} · ${v.no} · ${inr(v.amt)}',
+          kKinds[v.kind]!.ic,
+          kKinds[v.kind]!.c,
+          () => go('entryDetail', <String, Object?>{'entry': v}),
+        ),
     ]);
     add(<SearchHit>[
       for (final (Bill, String) b in <(Bill, String)>[
@@ -2933,7 +3300,7 @@ class AppController extends ChangeNotifier {
 
   // ------------------------------------------------------ background look
   void setBgOpacity(double v) {
-    _set(() => bgOpacity = v.clamp(20, 100).roundToDouble());
+    _set(() => bgOpacity = v.clamp(0, 100).roundToDouble());
     store.save(LocalStorage.kBgOpacity, bgOpacity);
   }
 
@@ -2945,16 +3312,22 @@ class AppController extends ChangeNotifier {
   // ------------------------------------------------------------ reminders
   String get _reminderCompany => repo.activeCompanyId ?? company;
 
-  /// Reminders of the active company, soonest first.
+  /// Reminders of the active company, soonest first (date, then time).
   List<Reminder> get companyReminders =>
       reminders.where((Reminder r) => r.company == _reminderCompany).toList()
-        ..sort((Reminder a, Reminder b) => a.date.compareTo(b.date));
+        ..sort(
+          (Reminder a, Reminder b) =>
+              '${a.date} ${a.time}'.compareTo('${b.date} ${b.time}'),
+        );
 
-  /// Reminders due today or earlier.
-  List<Reminder> get dueReminders => companyReminders.where((Reminder r) {
-    final DateTime? d = r.day;
-    return d != null && dayDiff(d, today) >= 0;
-  }).toList();
+  /// Reminders whose date and time have arrived.
+  List<Reminder> get dueReminders {
+    final DateTime now = DateTime.now();
+    return companyReminders.where((Reminder r) {
+      final DateTime? at = r.at;
+      return at != null && !at.isAfter(now);
+    }).toList();
+  }
 
   Reminder? reminderFor(Bill b) =>
       companyReminders.where((Reminder r) => r.billKey == b.key).firstOrNull;
@@ -2965,6 +3338,7 @@ class AppController extends ChangeNotifier {
     _set(() {
       remBill = b;
       form['remDate'] = r?.date ?? ymd(today.add(const Duration(days: 1)));
+      form['remTime'] = (r?.time ?? '').isNotEmpty ? r!.time : '10:00';
       form['remNote'] = r?.note ?? '';
       overlay = 'reminder';
     });
@@ -2978,6 +3352,11 @@ class AppController extends ChangeNotifier {
       say('Pick a date for the reminder');
       return;
     }
+    final String time = (form['remTime'] ?? '').trim();
+    if (!RegExp(r'^([01]\d|2[0-3]):[0-5]\d$').hasMatch(time)) {
+      say('Pick a time for the reminder');
+      return;
+    }
     final Reminder? old = reminderFor(b);
     final Reminder r = Reminder(
       id: old?.id ?? 'r${DateTime.now().microsecondsSinceEpoch}',
@@ -2988,6 +3367,7 @@ class AppController extends ChangeNotifier {
       kind: b.kind,
       amount: b.amt,
       date: date,
+      time: time,
       note: (form['remNote'] ?? '').trim(),
     );
     _set(() {
@@ -2999,7 +3379,14 @@ class AppController extends ChangeNotifier {
       overlay = null;
     });
     _saveReminders();
-    say('Reminder set for ${fdate(date)}');
+    say('Reminder set for ${reminderWhen(r)}');
+  }
+
+  /// `06 Oct 2026 · 10:30 AM`.
+  String reminderWhen(Reminder r) {
+    final DateTime? at = r.at;
+    if (at == null) return r.date;
+    return r.time.isEmpty ? dmy(at) : '${dmy(at)} · ${clock(at)}';
   }
 
   void deleteReminder(String id) {

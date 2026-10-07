@@ -39,7 +39,8 @@ class _TcWallpaperState extends State<TcWallpaper>
   @override
   Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
-    final double op = widget.opacity.clamp(.2, 1);
+    // 1 = the wallpaper exactly as chosen, 0 = hidden (plain base colour).
+    final double op = widget.opacity.clamp(0, 1);
     final double sh = widget.shade.clamp(-1, 1);
     final Widget wall = Stack(
       fit: StackFit.expand,
@@ -61,31 +62,18 @@ class _TcWallpaperState extends State<TcWallpaper>
                   CustomPaint(painter: _OrbPainter(_c.value, p.o1, p.o2, p.o3)),
             ),
           ),
-        if (p.hasPhoto)
-          DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: p.photoDark
-                    ? const <Color>[
-                        Color.fromRGBO(255, 255, 255, .58),
-                        Color.fromRGBO(255, 255, 255, .46),
-                      ]
-                    : const <Color>[
-                        Color.fromRGBO(255, 255, 255, .34),
-                        Color.fromRGBO(255, 255, 255, .2),
-                      ],
-              ),
-            ),
-          ),
+        // No white veil over a photo: at 100 % the photo shows as chosen.
+        // Lighter / darker is the user's Background shade setting.
       ],
     );
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
         const ColoredBox(color: Color(0xFFE9EDF7)),
-        if (op >= .999) wall else Opacity(opacity: op, child: wall),
+        if (op >= .999)
+          wall
+        else if (op > .001)
+          Opacity(opacity: op, child: wall),
         // Darker: black veil up to 45 % (text stays readable on the glass);
         // lighter: white veil up to 60 %.
         if (sh > 0)

@@ -16,6 +16,7 @@ import 'core/storage/local_storage.dart';
 import 'data/repositories/api_tally_repository.dart';
 import 'data/repositories/tally_repository.dart';
 import 'presentation/shell.dart';
+import 'presentation/splash.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,16 +24,25 @@ Future<void> main() async {
     DeviceOrientation.portraitUp,
   ]);
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Color(0x00000000),
-      statusBarIconBrightness: Brightness.dark,
-      statusBarBrightness: Brightness.light,
-      systemNavigationBarColor: Color(0x00000000),
-      systemNavigationBarIconBrightness: Brightness.dark,
-      systemNavigationBarContrastEnforced: false,
-    ),
-  );
+  SystemChrome.setSystemUIOverlayStyle(kAppOverlay);
+  // The Earth and logo are decoded first (a few ms), so the splash's very
+  // first frame already shows the Earth; start-up then runs behind it.
+  final SplashArt? art = await SplashArt.load();
+  runApp(SplashBoot(boot: _boot, appOverlay: kAppOverlay, art: art));
+}
+
+/// The app's system bars (dark icons over the light glass UI).
+const SystemUiOverlayStyle kAppOverlay = SystemUiOverlayStyle(
+  statusBarColor: Color(0x00000000),
+  statusBarIconBrightness: Brightness.dark,
+  statusBarBrightness: Brightness.light,
+  systemNavigationBarColor: Color(0x00000000),
+  systemNavigationBarIconBrightness: Brightness.dark,
+  systemNavigationBarContrastEnforced: false,
+);
+
+/// Opens storage, restores the saved session and builds the app's root.
+Future<Widget> _boot() async {
   final LocalStorage store = await LocalStorage.open();
   // Real backend by default; `--dart-define=TC_MOCK=true` runs on sample data.
   final TallyRepository repo = kUseMock
@@ -52,14 +62,12 @@ Future<void> main() async {
       repo.refreshAll().then((_) => controller.afterRefresh(quietOk: true)),
     );
   }
-  runApp(
-    ProviderScope(
-      overrides: <Override>[
-        repositoryProvider.overrideWithValue(repo),
-        appProvider.overrideWith((Ref ref) => controller),
-      ],
-      child: const TallyConnectApp(),
-    ),
+  return ProviderScope(
+    overrides: <Override>[
+      repositoryProvider.overrideWithValue(repo),
+      appProvider.overrideWith((Ref ref) => controller),
+    ],
+    child: const TallyConnectApp(),
   );
 }
 

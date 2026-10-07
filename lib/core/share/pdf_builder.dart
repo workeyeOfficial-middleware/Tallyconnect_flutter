@@ -151,53 +151,94 @@ Future<Uint8List> buildPdf(
                     if (iv.city.isNotEmpty) pw.Text(iv.city, style: st(11)),
                   ],
                 ),
-                pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.end,
-                  children: <pw.Widget>[
-                    pw.Text('DUE DATE', style: st(9, c: _mute)),
-                    pw.Text(iv.due, style: st(12, f: fonts.extraBold)),
-                  ],
-                ),
+                iv.hasDue
+                    ? pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.end,
+                        children: <pw.Widget>[
+                          pw.Text('DUE DATE', style: st(9, c: _mute)),
+                          pw.Text(iv.due, style: st(12, f: fonts.extraBold)),
+                        ],
+                      )
+                    : pw.SizedBox(),
               ),
               pw.SizedBox(height: 14),
-              pw.Table(
-                columnWidths: const <int, pw.TableColumnWidth>{
-                  0: pw.FixedColumnWidth(24),
-                  1: pw.FlexColumnWidth(5),
-                  2: pw.FlexColumnWidth(1.6),
-                  3: pw.FlexColumnWidth(1.6),
-                  4: pw.FlexColumnWidth(1.8),
-                  5: pw.FlexColumnWidth(2.2),
-                },
-                children: <pw.TableRow>[
-                  pw.TableRow(
-                    decoration: const pw.BoxDecoration(color: _band),
-                    children: <pw.Widget>[
-                      cell('#', head: true),
-                      cell('Item', head: true),
-                      cell('HSN', head: true),
-                      cell('Qty', head: true, r: true),
-                      cell('Rate', head: true, r: true),
-                      cell('Amount', head: true, r: true),
-                    ],
-                  ),
-                  for (final (String, String, String, String, String, String) l
-                      in iv.lines)
+              // Item table only when the voucher has item lines.
+              if (iv.lines.isNotEmpty)
+                pw.Table(
+                  columnWidths: const <int, pw.TableColumnWidth>{
+                    0: pw.FixedColumnWidth(24),
+                    1: pw.FlexColumnWidth(5),
+                    2: pw.FlexColumnWidth(1.6),
+                    3: pw.FlexColumnWidth(1.6),
+                    4: pw.FlexColumnWidth(1.8),
+                    5: pw.FlexColumnWidth(2.2),
+                  },
+                  children: <pw.TableRow>[
                     pw.TableRow(
-                      decoration: const pw.BoxDecoration(
-                        border: pw.Border(bottom: pw.BorderSide(color: _rule)),
-                      ),
+                      decoration: const pw.BoxDecoration(color: _band),
                       children: <pw.Widget>[
-                        cell(l.$1),
-                        cell(l.$2),
-                        cell(l.$3),
-                        cell(l.$4, r: true),
-                        cell(l.$5, r: true),
-                        cell(l.$6, r: true),
+                        cell('#', head: true),
+                        cell('Item', head: true),
+                        cell('HSN', head: true),
+                        cell('Qty', head: true, r: true),
+                        cell('Rate', head: true, r: true),
+                        cell('Amount', head: true, r: true),
                       ],
                     ),
-                ],
-              ),
+                    for (final (String, String, String, String, String, String)
+                        l
+                        in iv.lines)
+                      pw.TableRow(
+                        decoration: const pw.BoxDecoration(
+                          border: pw.Border(
+                            bottom: pw.BorderSide(color: _rule),
+                          ),
+                        ),
+                        children: <pw.Widget>[
+                          cell(l.$1),
+                          cell(l.$2),
+                          cell(l.$3),
+                          cell(l.$4, r: true),
+                          cell(l.$5, r: true),
+                          cell(l.$6, r: true),
+                        ],
+                      ),
+                  ],
+                ),
+              // The voucher's accounts (Dr / Cr) when known.
+              if (iv.accounts.isNotEmpty) ...<pw.Widget>[
+                if (iv.lines.isNotEmpty) pw.SizedBox(height: 14),
+                pw.Table(
+                  columnWidths: const <int, pw.TableColumnWidth>{
+                    0: pw.FixedColumnWidth(40),
+                    1: pw.FlexColumnWidth(6),
+                    2: pw.FlexColumnWidth(2.4),
+                  },
+                  children: <pw.TableRow>[
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(color: _band),
+                      children: <pw.Widget>[
+                        cell('Dr/Cr', head: true),
+                        cell('Account', head: true),
+                        cell('Amount', head: true, r: true),
+                      ],
+                    ),
+                    for (final (String, String, String) a in iv.accounts)
+                      pw.TableRow(
+                        decoration: const pw.BoxDecoration(
+                          border: pw.Border(
+                            bottom: pw.BorderSide(color: _rule),
+                          ),
+                        ),
+                        children: <pw.Widget>[
+                          cell(a.$1),
+                          cell(a.$2),
+                          cell(a.$3, r: true),
+                        ],
+                      ),
+                  ],
+                ),
+              ],
               pw.SizedBox(height: 12),
               pw.Row(
                 children: <pw.Widget>[

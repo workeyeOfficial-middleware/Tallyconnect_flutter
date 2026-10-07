@@ -5,6 +5,7 @@ library;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -190,6 +191,53 @@ class Glass extends StatelessWidget {
         child: body,
       ),
     );
+  }
+}
+
+/// [Glass]'s look as a [Decoration] (outer shadow, fill, sheen, edge), for
+/// surfaces that are slivers — e.g. a lazily built list inside one glass
+/// card ([DecoratedSliver]) — so they look exactly like [Glass].
+class GlassDecoration extends Decoration {
+  const GlassDecoration({
+    required this.fill,
+    this.radius = 22,
+    this.shadows = const <BoxShadow>[],
+  });
+  final Color fill;
+  final double radius;
+  final List<BoxShadow> shadows;
+
+  @override
+  BoxPainter createBoxPainter([VoidCallback? onChanged]) =>
+      _GlassBoxPainter(this);
+
+  @override
+  bool operator ==(Object other) =>
+      other is GlassDecoration &&
+      other.fill == fill &&
+      other.radius == radius &&
+      listEquals(other.shadows, shadows);
+
+  @override
+  int get hashCode => Object.hash(fill, radius, Object.hashAll(shadows));
+}
+
+class _GlassBoxPainter extends BoxPainter {
+  _GlassBoxPainter(this.d);
+  final GlassDecoration d;
+
+  @override
+  void paint(Canvas canvas, Offset offset, ImageConfiguration cfg) {
+    final Size? size = cfg.size;
+    if (size == null || size.isEmpty) return;
+    final BorderRadius br = BorderRadius.circular(d.radius);
+    canvas.save();
+    canvas.translate(offset.dx, offset.dy);
+    if (d.shadows.isNotEmpty) OuterShadow(br, d.shadows).paint(canvas, size);
+    canvas.drawRRect(br.toRRect(Offset.zero & size), Paint()..color = d.fill);
+    _Sheen(br, null).paint(canvas, size);
+    _GlassEdge(br, null).paint(canvas, size);
+    canvas.restore();
   }
 }
 
@@ -1393,6 +1441,19 @@ class Kv extends StatelessWidget {
               .fold<double>(0, (double a, double b) => a > b ? a : b);
           final double nk = natural(k, ks), nv = natural(v, vs);
           final double room = box.maxWidth - 14;
+          // Unbreakable words that cannot share one line (long references,
+          // big numbers on narrow phones): value goes under the key instead
+          // of overflowing.
+          if (minContent(k, ks) + minContent(v, vs) > room) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Text(k, style: ks),
+                const SizedBox(height: 2),
+                Text(v, textAlign: TextAlign.right, style: vs),
+              ],
+            );
+          }
           double kw = nk, vw = nv;
           if (nk + nv > room) {
             final double over = nk + nv - room;

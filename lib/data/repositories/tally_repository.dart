@@ -14,6 +14,11 @@ import '../../core/utils/format.dart';
 import '../accounting.dart';
 import '../mock/mock_data.dart';
 import '../models/models.dart';
+import 'team_admin.dart';
+import 'voucher_pager.dart';
+
+export 'voucher_pager.dart'
+    show HistoryTotals, VoucherCounts, VoucherPager, VoucherQuery;
 
 /// Everything the entry flow collected, before it is mapped to a backend
 /// request body by the repository.
@@ -80,6 +85,43 @@ abstract class TallyRepository extends ChangeNotifier {
   /// True once the set has real data (from the server or the local cache).
   bool hasData(String set);
 
+  /// Loads [set] if it has no data yet (screens call this when they open,
+  /// so big sets such as items / stock / team are not loaded at startup).
+  Future<void> ensure(String set);
+
+  /// Sales Team user configuration on the server (permissions, invite,
+  /// delete); null with sample data, which has no server to save to.
+  TeamAdmin? get teamAdmin => null;
+
+  /// Bumped on every data change (cache key for derived values).
+  int get version;
+
+  /// Page-by-page voucher list for one filter / period.
+  VoucherPager voucherPager(VoucherQuery q);
+
+  /// Server-side voucher search (first matches only).
+  Future<List<Voucher>> searchVouchers(String query);
+
+  /// A voucher already loaded on the phone, by [Voucher.key].
+  Voucher? voucherByKey(String key);
+
+  /// All-history totals, once [scanHistory] has run (null before).
+  HistoryTotals? get historyTotals;
+
+  /// Reads the complete voucher history once, on request, into
+  /// [historyTotals] without keeping the rows.
+  Future<void> scanHistory();
+
+  /// Exact voucher counts of the complete matching data for a period
+  /// (`all`, `month`, `week`, `today`): total, per kind and per type. Null
+  /// until loaded ([loadVoucherCounts]); last good counts stay while a
+  /// refresh reloads them.
+  VoucherCounts? voucherCounts(String period);
+
+  /// Loads [voucherCounts] for [period] if missing or out of date (shared
+  /// while running; cheap when nothing is needed).
+  Future<void> loadVoucherCounts(String period);
+
   /// First error of the last load, or null when everything loaded.
   String? lastError();
 
@@ -88,10 +130,11 @@ abstract class TallyRepository extends ChangeNotifier {
   SyncInfo? syncInfo(String companyId);
   Future<void> setActiveCompany(String id);
 
-  /// Every voucher available for the active company, newest first.
+  /// This month's vouchers (complete), newest first — the basis of the
+  /// month totals. Longer periods are paged ([voucherPager]).
   List<Voucher> vouchers();
 
-  /// False when the server's voucher history could not be read in full.
+  /// False when this month's vouchers could not be read in full.
   bool get vouchersComplete;
   List<Bill> receivables();
   List<Bill> payables();
@@ -100,6 +143,9 @@ abstract class TallyRepository extends ChangeNotifier {
   List<Party> parties();
   List<Item> items();
   List<StockRow> stockRows();
+
+  /// Tally stock groups of the active company (from the loaded items).
+  List<String> stockGroups();
   List<BillLine> billLines(String billNo);
   List<Opt> ledgers();
   List<Opt> accounts();
@@ -169,6 +215,57 @@ class MockTallyRepository extends TallyRepository {
   Future<void> refreshAll({bool force = false}) async {}
   @override
   bool hasData(String set) => true;
+  @override
+  Future<void> ensure(String set) async {}
+  @override
+  int get version => 0;
+
+  static List<Voucher> get _newestFirst =>
+      List<Voucher>.of(_vs)
+        ..sort((Voucher a, Voucher b) => b.date!.compareTo(a.date!));
+
+  @override
+  VoucherPager voucherPager(VoucherQuery q) => VoucherPager(
+    q,
+    (int page, VoucherQuery q, DateTime t) async => FetchedPage(
+      page == 1 ? _newestFirst : const <Voucher>[],
+      const <String>[],
+      false,
+    ),
+    _today,
+  );
+
+  @override
+  Future<List<Voucher>> searchVouchers(String query) async {
+    final String q = query.toLowerCase();
+    return _newestFirst
+        .where(
+          (Voucher v) => '${v.party} ${v.no} ${kKinds[v.kind]!.t}'
+              .toLowerCase()
+              .contains(q),
+        )
+        .take(25)
+        .toList();
+  }
+
+  @override
+  Voucher? voucherByKey(String key) =>
+      _vs.where((Voucher v) => v.key == key).firstOrNull;
+
+  static final HistoryTotals _hist = HistoryTotals()
+    ..add(FetchedPage(_vs, const <String>[], false))
+    ..done = true;
+  @override
+  HistoryTotals? get historyTotals => _hist;
+  @override
+  Future<void> scanHistory() async {}
+
+  @override
+  VoucherCounts? voucherCounts(String period) => VoucherCounts.of(
+    _vs.where((Voucher v) => voucherInPeriod(v, period, _today)),
+  );
+  @override
+  Future<void> loadVoucherCounts(String period) async {}
   @override
   String? lastError() => null;
   @override
@@ -240,6 +337,8 @@ class MockTallyRepository extends TallyRepository {
   @override
   List<StockRow> stockRows() => const <StockRow>[];
   @override
+  List<String> stockGroups() => groupsOf(kItems);
+  @override
   List<BillLine> billLines(String billNo) =>
       billNo == 'Sales 9' ? kSales9 : const <BillLine>[];
   @override
@@ -305,3 +404,15 @@ MonthTotals computeMonth(
   DateTime today, {
   bool complete = true,
 }) => monthTotals(vs, today, complete: complete);
+
+/// Distinct, sorted Tally stock groups of [items] (no invented groups:
+/// only groups that items really belong to).
+List<String> groupsOf(List<Item> items) {
+  final Map<String, String> byKey = <String, String>{};
+  for (final Item it in items) {
+    final String g = (it.group ?? '').trim();
+    if (g.isNotEmpty) byKey.putIfAbsent(g.toLowerCase(), () => g);
+  }
+  return byKey.values.toList()
+    ..sort((String a, String b) => a.toLowerCase().compareTo(b.toLowerCase()));
+}

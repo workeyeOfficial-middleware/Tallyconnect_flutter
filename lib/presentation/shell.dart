@@ -21,6 +21,7 @@ import 'screens/hub_screens.dart';
 import 'screens/insight_screens.dart';
 import 'screens/settings_screen.dart';
 import 'screens/stock_party_screens.dart';
+import 'screens/team_config_screens.dart';
 import 'screens/voucher_screens.dart';
 import 'widgets/common.dart' show EnterAnim;
 import 'widgets/tab_bar.dart';
@@ -50,6 +51,9 @@ Widget screenFor(String s) => switch (s) {
   'activity' => const ActivityScreen(),
   'actDetail' => const ActDetailScreen(),
   'team' => const TeamScreen(),
+  'teamUser' => const TeamUserScreen(),
+  'teamLayout' => const TeamLayoutScreen(),
+  'teamSelect' => const TeamSelectScreen(),
   'settings' => const SettingsScreen(),
   'companies' => const CompaniesScreen(),
   'billing' => const BillingScreen(),
@@ -83,6 +87,9 @@ const List<String> kScreens = <String>[
   'activity',
   'actDetail',
   'team',
+  'teamUser',
+  'teamLayout',
+  'teamSelect',
   'settings',
   'companies',
   'billing',

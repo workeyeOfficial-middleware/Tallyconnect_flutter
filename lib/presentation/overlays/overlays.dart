@@ -14,7 +14,7 @@ import '../../core/design/tc_fields.dart';
 import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
-import '../../core/share/share_doc.dart' show InvoiceSpec, invoiceOf;
+import '../../core/share/share_doc.dart' show rateLabel, stockLabel;
 import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
@@ -36,13 +36,13 @@ class OverlayLayer extends ConsumerWidget {
       'company' => const CompanySheet(),
       'pick' => const PickSheetView(),
       'newParty' => const NewPartySheet(),
+      'lineEdit' => const LineEditSheet(),
       'picker' => const ItemPickerSheet(),
       'addItem' => const AddItemSheet(),
       'invite' => const InviteSheet(),
       'newUser' => const NewUserSheet(),
       'member' => const MemberSheet(),
       'reminder' => const ReminderSheet(),
-      'pdf' => const PdfViewer(),
       'doc' => const DocViewer(),
       _ => const SizedBox.shrink(),
     };
@@ -337,9 +337,11 @@ class SearchSheet extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    final String q = c.f('q').trim();
+    // Debounced: results follow 350 ms after typing stops.
+    final String q = c.q('q').trim();
     // Empty: the app's screens. Typed: every loaded item, party, voucher,
-    // bill, activity entry, team member, report and screen that matches.
+    // bill, activity entry, team member, report and screen that matches
+    // (vouchers from the server's search; capped per group).
     final List<SearchHit> results = q.isEmpty
         ? <SearchHit>[
             for (final SearchEntry e in kSearch)
@@ -351,7 +353,11 @@ class SearchSheet extends ConsumerWidget {
                 }
               }),
           ]
-        : c.searchHits(q);
+        : c.memo<List<SearchHit>>(
+            'search-hits',
+            '${c.repo.version}|$q|${identityHashCode(c.vSearchHits)}',
+            () => c.searchHits(q),
+          );
     return Sheet(
       top: 60,
       child: Column(
@@ -360,7 +366,7 @@ class SearchSheet extends ConsumerWidget {
           const SheetHead('Search'),
           Inp(
             value: c.f('q'),
-            onChanged: (String v) => c.setF('q', v),
+            onChanged: (String v) => c.setQuery('q', v),
             placeholder: 'Search items, parties, entries, screens…',
             icon: 'search',
           ),
@@ -370,7 +376,7 @@ class SearchSheet extends ConsumerWidget {
               for (final SearchHit r in results)
                 RowX(
                   onTap: () {
-                    c.setF('q', '');
+                    c.clearQuery('q');
                     c.closeOv();
                     r.open();
                   },
@@ -390,8 +396,9 @@ class SearchSheet extends ConsumerWidget {
                   padding: const EdgeInsets.all(18),
                   child: Text(
                     c.repo.isRemote &&
-                            c.repo.status('items').loading &&
-                            !c.repo.hasData('items')
+                            ((c.repo.status('items').loading &&
+                                    !c.repo.hasData('items')) ||
+                                c.vSearchBusy)
                         ? 'Still loading your data…'
                         : 'Nothing found for “$q”.',
                     textAlign: TextAlign.center,
@@ -462,33 +469,145 @@ class PickSheetView extends ConsumerWidget {
     final TcPalette p = Tc.of(context);
     final PickSheet? pk = c.pick;
     if (pk == null) return const SizedBox.shrink();
-    final String q = c.f('pq').toLowerCase();
+    final String q = c.q('pq').toLowerCase();
     final String cur = c.f(pk.key);
+    // Filtered once per search (debounced), not on every rebuild.
+    final List<Opt> opts = c.memo<List<Opt>>(
+      'pick-opts',
+      '${identityHashCode(pk.opts)}|$q',
+      () => q.isEmpty
+          ? pk.opts
+          : pk.opts.where((Opt o) => o.t.toLowerCase().contains(q)).toList(),
+    );
+    Widget row(BuildContext context, Opt o) => RowX(
+      onTap: () => c.choosePick(o.t, o.s),
+      children: <Widget>[
+        Av(initials(o.t), size: Av.sm),
+        Expanded(child: RTx(o.t, o.s)),
+        if (o.t == cur) Ic('check', color: p.cat('receipt')),
+      ],
+    );
+    final Widget search = Inp(
+      value: c.f('pq'),
+      onChanged: (String v) => c.setQuery('pq', v),
+      placeholder: 'Search',
+      icon: 'search',
+    );
+    if (opts.length > 40) {
+      // Long lists (thousands of ledgers): full-height sheet whose rows are
+      // built only while on screen; same header, search and row look.
+      final MediaQueryData mq = MediaQuery.of(context);
+      return Sheet(
+        flex: true,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 30 + mq.padding.bottom * .5),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              SheetHead(pk.title),
+              search,
+              Expanded(
+                child: CustomScrollView(
+                  physics: const ClampingScrollPhysics(),
+                  slivers: <Widget>[
+                    lazyList<Opt>(
+                      margin: const EdgeInsets.only(top: 12),
+                      rows: opts,
+                      row: row,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return Sheet(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           SheetHead(pk.title),
-          Inp(
-            value: c.f('pq'),
-            onChanged: (String v) => c.setF('pq', v),
-            placeholder: 'Search',
-            icon: 'search',
-          ),
+          search,
           GlassList(
             margin: const EdgeInsets.only(top: 12),
+            children: <Widget>[for (final Opt o in opts) row(context, o)],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Rate / GST of one line of the bill being made. Changes this voucher
+/// only — the item master and Tally's item keep their own rate and GST.
+class LineEditSheet extends ConsumerWidget {
+  const LineEditSheet({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final List<Line> l = c.lines[c.flowType] ?? const <Line>[];
+    final int? i = c.lineEdit;
+    if (i == null || i >= l.length) return const SizedBox.shrink();
+    final Line line = l[i];
+    final num r = numOf(c.f('leRate')), g = numOf(c.f('leGst'));
+    final num amt = paise(r * line.qty);
+    final num tax = paise(amt * g / 100);
+    final String? err = c.lineEditError;
+    return Sheet(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SheetHead(
+            line.name,
+            sub: '${line.qty} ${line.unit} · for this bill only',
+          ),
+          Fld(
+            label: 'Rate (₹ per ${line.unit.isEmpty ? 'unit' : line.unit})',
+            req: true,
+            child: Inp(
+              value: c.f('leRate'),
+              onChanged: (String v) => c.setF('leRate', v),
+              placeholder: '0.00',
+              keyboard: const TextInputType.numberWithOptions(decimal: true),
+            ),
+          ),
+          Fld(
+            label: 'GST %',
+            child: Inp(
+              value: c.f('leGst'),
+              onChanged: (String v) => c.setF('leGst', v),
+              placeholder: '0',
+              keyboard: const TextInputType.numberWithOptions(decimal: true),
+            ),
+          ),
+          KvList(<(String, String, bool)>[
+            ('Amount', inr(amt), false),
+            ('GST', inr(tax), false),
+            ('Line total', inr(paise(amt + tax)), true),
+          ]),
+          if (err != null)
+            InfoBox(err, icon: 'info', margin: const EdgeInsets.only(top: 12)),
+          const InfoBox(
+            'Only this bill changes. The item in Tally keeps its own rate and GST.',
+            icon: 'info',
+            margin: EdgeInsets.only(top: 12, bottom: 14),
+          ),
+          Row(
             children: <Widget>[
-              for (final Opt o in pk.opts.where(
-                (Opt o) => q.isEmpty || o.t.toLowerCase().contains(q),
-              ))
-                RowX(
-                  onTap: () => c.choosePick(o.t, o.s),
-                  children: <Widget>[
-                    Av(initials(o.t), size: Av.sm),
-                    Expanded(child: RTx(o.t, o.s)),
-                    if (o.t == cur) Ic('check', color: p.cat('receipt')),
-                  ],
+              Expanded(
+                child: Btn(label: 'Cancel', kind: BtnKind.g, onTap: c.closeOv),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Btn(
+                  label: 'Save',
+                  icon: 'check',
+                  enabled: err == null,
+                  onTap: c.saveLineEdit,
                 ),
+              ),
             ],
           ),
         ],
@@ -559,7 +678,23 @@ class ItemPickerSheet extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
     final List<Line> cl = c.lines[c.flowType] ?? <Line>[];
-    final String q = c.f('pickQ').toLowerCase();
+    final String q = c.q('pickQ').toLowerCase();
+    final List<Item> all = c.repo.items();
+    // Debounced search over each item's prepared search text; filtered once
+    // per data / search change.
+    final List<Item> its = c.memo<List<Item>>(
+      'pick-items',
+      '${c.repo.version}|${all.length}|$q',
+      () => q.isEmpty
+          ? all
+          : all
+                .where(
+                  (Item it) =>
+                      (it.search.isNotEmpty ? it.search : it.name.toLowerCase())
+                          .contains(q),
+                )
+                .toList(),
+    );
     return Sheet(
       top: 40,
       flex: true,
@@ -579,7 +714,7 @@ class ItemPickerSheet extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Inp(
               value: c.f('pickQ'),
-              onChanged: (String v) => c.setF('pickQ', v),
+              onChanged: (String v) => c.setQuery('pickQ', v),
               placeholder: 'Search item name',
               icon: 'search',
             ),
@@ -616,108 +751,100 @@ class ItemPickerSheet extends ConsumerWidget {
             ),
           ),
           Expanded(
-            child: SingleChildScrollView(
+            // Rows are built only while on screen (thousands of items).
+            child: ListView.builder(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  const Sec('Items from Tally'),
-                  for (final Item it in c.repo.items().where(
-                    (Item it) => q.isEmpty || it.name.toLowerCase().contains(q),
-                  ))
-                    Builder(
-                      builder: (BuildContext context) {
-                        final int idx = cl.indexWhere(
-                          (Line l) => l.name == it.name,
-                        );
-                        final bool sel = idx >= 0;
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: Glass(
-                            border: sel
-                                ? Border.all(color: p.navy, width: 2)
-                                : null,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
+              itemCount: its.length + 1,
+              itemBuilder: (BuildContext context, int i) {
+                if (i == 0) return const Sec('Items from Tally');
+                final Item it = its[i - 1];
+                return Builder(
+                  builder: (BuildContext context) {
+                    final int idx = cl.indexWhere(
+                      (Line l) => l.name == it.name,
+                    );
+                    final bool sel = idx >= 0;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Glass(
+                        border: sel
+                            ? Border.all(color: p.navy, width: 2)
+                            : null,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            RowX(
+                              onTap: () => c.togglePickItem(it),
                               children: <Widget>[
-                                RowX(
-                                  onTap: () => c.togglePickItem(it),
-                                  children: <Widget>[
-                                    Av(
-                                      initials(it.name),
-                                      size: Av.sm,
-                                      gradient: LinearGradient(
-                                        begin: const Alignment(-.35, -1),
-                                        end: const Alignment(.35, 1),
-                                        colors: sel
-                                            ? <Color>[p.acc2, p.acc3]
-                                            : <Color>[p.navy2, p.navy],
-                                      ),
-                                    ),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: <Widget>[
-                                          Text(
-                                            it.name,
-                                            style: rtStyle(context),
-                                          ),
-                                          const SizedBox(height: 2),
-                                          Text.rich(
-                                            TextSpan(
-                                              text:
-                                                  '${it.stock > 0 ? '${qty(it.stock)} ${it.unit} in stock' : 'Out of stock'} · ',
-                                              children: <InlineSpan>[
-                                                TextSpan(
-                                                  text:
-                                                      '${inr(it.rate)} / ${it.unit}',
-                                                  style: const TextStyle(
-                                                    fontWeight: w700,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                            style: rsStyle(context),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    Tk(sel),
-                                  ],
-                                ),
-                                if (sel)
-                                  Padding(
-                                    padding: const EdgeInsets.fromLTRB(
-                                      14,
-                                      0,
-                                      14,
-                                      12,
-                                    ),
-                                    child: Row(
-                                      children: <Widget>[
-                                        Expanded(
-                                          child: Text(
-                                            'Quantity',
-                                            style: ts(13.5, w: w700, c: p.ink3),
-                                          ),
-                                        ),
-                                        Stepper2(
-                                          label: '${cl[idx].qty} ${it.unit}',
-                                          onDec: () => c.stepPickItem(it, -1),
-                                          onInc: () => c.stepPickItem(it, 1),
-                                        ),
-                                      ],
-                                    ),
+                                Av(
+                                  initials(it.name),
+                                  size: Av.sm,
+                                  gradient: LinearGradient(
+                                    begin: const Alignment(-.35, -1),
+                                    end: const Alignment(.35, 1),
+                                    colors: sel
+                                        ? <Color>[p.acc2, p.acc3]
+                                        : <Color>[p.navy2, p.navy],
                                   ),
+                                ),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: <Widget>[
+                                      Text(it.name, style: rtStyle(context)),
+                                      const SizedBox(height: 2),
+                                      Text.rich(
+                                        TextSpan(
+                                          text: '${stockLabel(it)} · ',
+                                          children: <InlineSpan>[
+                                            TextSpan(
+                                              text: rateLabel(it),
+                                              style: const TextStyle(
+                                                fontWeight: w700,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        style: rsStyle(context),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Tk(sel),
                               ],
                             ),
-                          ),
-                        );
-                      },
-                    ),
-                ],
-              ),
+                            if (sel)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  14,
+                                  0,
+                                  14,
+                                  12,
+                                ),
+                                child: Row(
+                                  children: <Widget>[
+                                    Expanded(
+                                      child: Text(
+                                        'Quantity',
+                                        style: ts(13.5, w: w700, c: p.ink3),
+                                      ),
+                                    ),
+                                    Stepper2(
+                                      label: '${cl[idx].qty} ${it.unit}',
+                                      onDec: () => c.stepPickItem(it, -1),
+                                      onInc: () => c.stepPickItem(it, 1),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
             ),
           ),
           _SheetFoot(
@@ -787,10 +914,15 @@ class _CatChips extends StatelessWidget {
                 borderRadius: BorderRadius.circular(19),
                 border: Border.all(color: v == selected ? p.navy : navyA(.12)),
               ),
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.sizeOf(context).width - 64,
+              ),
               child: Center(
                 widthFactor: 1,
                 child: Text(
                   v,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: ts(
                     14,
                     w: w700,
@@ -815,7 +947,11 @@ class AddItemSheet extends ConsumerWidget {
         nr = numOf(c.f('niRate')),
         nd = numOf(c.f('niDisc'));
     final num nsub = nq * nr * (1 - nd / 100), ngst = nsub * c.niGst / 100;
-    final bool off = c.f('niName').trim().isEmpty || nq == 0 || nr == 0;
+    // Real Tally stock groups of the active company (no fixed list).
+    final List<String> groups = c.repo.stockGroups();
+    final bool noGroup = c.repo.isRemote && !groups.contains(c.niCat);
+    final bool off =
+        c.f('niName').trim().isEmpty || nq == 0 || nr == 0 || noGroup;
     void back() => c.openOverlay('picker');
     return Sheet(
       top: 40,
@@ -839,20 +975,21 @@ class AddItemSheet extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   Fld(
-                    label: 'Item type',
-                    req: true,
-                    child: _CatChips(
-                      items: const <String>[
-                        'General',
-                        'Wires & Cables',
-                        'Lighting',
-                        'Switches',
-                        'Switchgear',
-                        'Fans',
-                      ],
-                      selected: c.niCat,
-                      onPick: (String v) => c.update(() => c.niCat = v),
-                    ),
+                    label: 'Stock group',
+                    req: c.repo.isRemote,
+                    child: groups.isEmpty
+                        ? Text(
+                            c.emptyText(
+                              'items',
+                              'No stock groups found in Tally for this company.',
+                            ),
+                            style: rsStyle(context),
+                          )
+                        : _CatChips(
+                            items: groups,
+                            selected: c.niCat,
+                            onPick: (String v) => c.update(() => c.niCat = v),
+                          ),
                   ),
                   Fld(
                     label: 'Item name',
@@ -1100,36 +1237,26 @@ class MemberSheet extends ConsumerWidget {
       );
     }
     final Member m = mf;
-    final List<(String, String, Color, VoidCallback)> actions = m.st == 'active'
-        ? <(String, String, Color, VoidCallback)>[
-            (
-              'Turn off access',
-              'lock',
-              p.neg,
-              () => c.setMemberSt(m, 'off', '${m.name} turned off'),
+    final bool off = m.st == 'off';
+    // Every member: Configure User, Send Invite, Turn Off / Enable Access,
+    // Delete User (asks to confirm first).
+    final List<(String, String, Color, VoidCallback)> actions =
+        <(String, String, Color, VoidCallback)>[
+          ('Configure User', 'gear', p.navy, () => c.configureMember(m)),
+          ('Send Invite', 'send', p.navy, () => c.inviteMember(m)),
+          (
+            off ? 'Enable Access' : 'Turn Off Access',
+            off ? 'check' : 'lock',
+            off ? p.pos : p.warn,
+            () => c.setMemberSt(
+              m,
+              off ? 'active' : 'off',
+              off ? '${m.name} turned on' : '${m.name} turned off',
             ),
-          ]
-        : m.st == 'off'
-        ? <(String, String, Color, VoidCallback)>[
-            (
-              'Turn on access',
-              'check',
-              p.pos,
-              () => c.setMemberSt(m, 'active', '${m.name} turned on'),
-            ),
-          ]
-        : <(String, String, Color, VoidCallback)>[
-            (
-              'Send invite again',
-              'send',
-              p.navy,
-              () {
-                c.closeOv();
-                c.say('Invite sent again');
-              },
-            ),
-            ('Cancel invite', 'close', p.neg, () => c.cancelInvite(m)),
-          ];
+          ),
+          ('Delete User', 'trash', p.neg, () => c.deleteMember(m)),
+        ];
+    final bool confirmDel = c.f('memDel') == m.id;
     return Sheet(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1146,17 +1273,55 @@ class MemberSheet extends ConsumerWidget {
               ],
             ),
           ),
-          _MenuList(<Widget>[
-            for (final (String, String, Color, VoidCallback) a in actions)
-              MRow(
-                ic: a.$2,
-                icColor: a.$3,
-                t: a.$1,
-                textColor: a.$3,
-                chev: false,
-                onTap: a.$4,
+          if (confirmDel)
+            Glass(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Text('Delete ${m.name}?', style: rtStyle(context, 17)),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Their login and access are removed from the server. This cannot be undone.',
+                    style: rsStyle(context),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Btn(
+                          label: 'Cancel',
+                          kind: BtnKind.g,
+                          onTap: c.cancelDelete,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Btn(
+                          label: 'Delete',
+                          icon: 'trash',
+                          kind: BtnKind.g,
+                          color: p.neg,
+                          onTap: () => c.deleteMember(m),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-          ]),
+            )
+          else
+            _MenuList(<Widget>[
+              for (final (String, String, Color, VoidCallback) a in actions)
+                MRow(
+                  ic: a.$2,
+                  icColor: a.$3,
+                  t: a.$1,
+                  textColor: a.$3,
+                  chev: a.$1 == 'Configure User',
+                  onTap: a.$4,
+                ),
+            ]),
           Padding(
             padding: const EdgeInsets.only(top: 12),
             child: Btn(label: 'Close', kind: BtnKind.g, onTap: c.closeOv),
@@ -1168,344 +1333,6 @@ class MemberSheet extends ConsumerWidget {
 }
 
 // -------------------------------------------------------------------- pdf
-
-class PdfViewer extends ConsumerWidget {
-  const PdfViewer({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final AppController c = ref.watch(appProvider);
-    final TcPalette p = Tc.of(context);
-    final MediaQueryData mq = MediaQuery.of(context);
-    final PdfInfo pd = c.pdf ?? c.samplePdf;
-    // Real values only: item lines and totals as sent by Tally.
-    final InvoiceSpec iv = invoiceOf(pd);
-    final bool purchase = iv.heading == 'PURCHASE BILL';
-    final String city = iv.city;
-    final List<(String, String, String, String, String, String)> lines =
-        iv.lines;
-    const Color ink = Color(0xFF16203A), mute = Color(0xFF6B7690);
-    TextStyle t9([FontWeight w = w400, Color col = ink, double sz = 9]) =>
-        ts(sz, w: w, c: col, h: 1.45);
-    Widget lt(Widget a, Widget b) => Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: <Widget>[
-        Flexible(child: a),
-        const SizedBox(width: 8),
-        b,
-      ],
-    );
-    Widget cell(String s, {bool r = false, bool head = false, int flex = 1}) =>
-        Expanded(
-          flex: flex,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 4),
-            child: Text(
-              s,
-              textAlign: r ? TextAlign.right : TextAlign.left,
-              style: head ? t9(w700, ink, 8) : t9(),
-            ),
-          ),
-        );
-    final Widget paper = Container(
-      width: 300,
-      margin: const EdgeInsets.symmetric(vertical: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(4),
-        boxShadow: <BoxShadow>[
-          css(0, 20, 40, 0, Colors.black.withValues(alpha: .4)),
-        ],
-      ),
-      child: DefaultTextStyle(
-        style: t9(),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            lt(
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    c.companyName,
-                    style: ts(12, w: w800, c: p.acc),
-                  ),
-                  for (final String l in iv.seller) Text(l),
-                ],
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: <Widget>[
-                  Text(
-                    purchase ? 'PURCHASE BILL' : 'TAX INVOICE',
-                    style: t9(w800, ink, 11),
-                  ),
-                  Text.rich(
-                    TextSpan(
-                      text: 'No: ',
-                      children: <InlineSpan>[
-                        TextSpan(
-                          text: pd.no,
-                          style: const TextStyle(fontWeight: w700),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Text.rich(
-                    TextSpan(
-                      text: 'Date: ',
-                      children: <InlineSpan>[
-                        TextSpan(
-                          text: pd.date,
-                          style: const TextStyle(fontWeight: w700),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              height: 1,
-              color: p.acc,
-              margin: const EdgeInsets.symmetric(vertical: 8),
-            ),
-            lt(
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    purchase ? 'BILL FROM' : 'BILLED TO',
-                    style: t9(w400, mute, 7.5),
-                  ),
-                  Text(pd.party, style: t9(w800)),
-                  if (city.isNotEmpty) Text(city),
-                ],
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: <Widget>[
-                  Text('DUE DATE', style: t9(w400, mute, 7.5)),
-                  Text(pd.due, style: t9(w800)),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              color: const Color(0xFFEEF1F8),
-              child: Row(
-                children: <Widget>[
-                  cell('#', head: true),
-                  cell('Item', head: true, flex: 5),
-                  cell('HSN', head: true, flex: 2),
-                  cell('Qty', head: true, r: true, flex: 2),
-                  cell('Rate', head: true, r: true, flex: 2),
-                  cell('Amount', head: true, r: true, flex: 3),
-                ],
-              ),
-            ),
-            for (final (String, String, String, String, String, String) l
-                in lines)
-              Container(
-                decoration: const BoxDecoration(
-                  border: Border(bottom: BorderSide(color: Color(0xFFE6E9F1))),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    cell(l.$1),
-                    cell(l.$2, flex: 5),
-                    cell(l.$3, flex: 2),
-                    cell(l.$4, r: true, flex: 2),
-                    cell(l.$5, r: true, flex: 2),
-                    cell(l.$6, r: true, flex: 3),
-                  ],
-                ),
-              ),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.only(left: 300 * .45 - 16),
-              child: Column(
-                children: <Widget>[
-                  if (iv.sub != null)
-                    lt(const Text('Subtotal'), Text(inr(iv.sub))),
-                  for (final (String, num) t in iv.taxes)
-                    lt(Text(t.$1), Text(inr(t.$2))),
-                  Container(
-                    margin: const EdgeInsets.only(top: 3),
-                    padding: const EdgeInsets.only(top: 3),
-                    decoration: const BoxDecoration(
-                      border: Border(top: BorderSide(color: ink)),
-                    ),
-                    child: lt(
-                      Text('Total', style: t9(w800)),
-                      Text(inr(pd.total), style: t9(w800)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              margin: const EdgeInsets.only(top: 10),
-              padding: const EdgeInsets.all(5),
-              color: const Color(0xFFEEF1F8),
-              child: Text.rich(
-                TextSpan(
-                  text: 'Amount: ',
-                  children: <InlineSpan>[
-                    TextSpan(
-                      text: inr(pd.total),
-                      style: const TextStyle(fontWeight: w700),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (iv.note.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(iv.note, style: t9(w400, mute, 7.5)),
-              ),
-            const SizedBox(height: 22),
-            lt(
-              Text(
-                c.repo.isRemote
-                    ? 'Made with TallyConnect'
-                    : 'Made with TallyConnect · prototype preview',
-                style: t9(w400, mute, 7.5),
-              ),
-              Container(
-                padding: const EdgeInsets.only(top: 2),
-                decoration: const BoxDecoration(
-                  border: Border(top: BorderSide(color: ink)),
-                ),
-                child: Text('Authorised signatory', style: t9(w400, ink, 7.5)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-    Widget ctl(String ic, VoidCallback f) => Tap(
-      onTap: f,
-      radius: 23,
-      subtleHighlight: true,
-      child: Container(
-        width: 46,
-        height: 46,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(color: whiteA(.14), shape: BoxShape.circle),
-        child: Ic(ic, color: Colors.white),
-      ),
-    );
-    return fadeIn(
-      ColoredBox(
-        color: const Color(0xFF1D2231),
-        child: Column(
-          children: <Widget>[
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                math.max(28, mq.padding.top + 8),
-                16,
-                12,
-              ),
-              child: Row(
-                children: <Widget>[
-                  CBtn(
-                    'close',
-                    glass: false,
-                    bg: whiteA(.12),
-                    color: Colors.white,
-                    onTap: c.closeOv,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        Text(
-                          '${pd.no.replaceFirst(' ', '_')}.pdf',
-                          style: ts(16, w: w700, c: Colors.white),
-                        ),
-                        Opacity(
-                          opacity: .7,
-                          child: Text(
-                            '1 page · A4 · ${pd.kind}',
-                            style: ts(13, c: Colors.white),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  CBtn(
-                    'share',
-                    glass: false,
-                    bg: whiteA(.12),
-                    color: Colors.white,
-                    onTap: () => c.shareDoc(c.pdfDoc),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(top: 10),
-                child: Center(
-                  child: TweenAnimationBuilder<double>(
-                    tween: Tween<double>(end: c.zoom / 100),
-                    duration: const Duration(milliseconds: 350),
-                    curve: const Cubic(.3, 1.4, .5, 1),
-                    builder: (BuildContext context, double s, Widget? ch) =>
-                        Transform.scale(
-                          scale: s,
-                          alignment: Alignment.topCenter,
-                          child: ch,
-                        ),
-                    child: paper,
-                  ),
-                ),
-              ),
-            ),
-            Container(
-              margin: EdgeInsets.fromLTRB(
-                16,
-                0,
-                16,
-                22 + mq.padding.bottom * .6,
-              ),
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: whiteA(.12),
-                borderRadius: BorderRadius.circular(30),
-              ),
-              child: Row(
-                children: <Widget>[
-                  ctl('minus', () => c.zoomBy(-20)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      '${c.zoom}%',
-                      textAlign: TextAlign.center,
-                      style: ts(16, w: w800, c: Colors.white),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  ctl('plus', () => c.zoomBy(20)),
-                  const SizedBox(width: 10),
-                  ctl('download', () => c.downloadDoc(c.pdfDoc)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 // ------------------------------------------------- floating glass layers
 
@@ -1979,14 +1806,37 @@ class ReminderSheet extends ConsumerWidget {
             sub:
                 '${b.party} · ${b.no} · ${inr(b.amt)} ${recv ? 'to receive' : 'to pay'}',
           ),
-          Fld(
-            label: 'Remind me on',
-            icon: 'calendar',
-            req: true,
-            child: DateInp(
-              value: c.f('remDate'),
-              onChanged: (String v) => c.setF('remDate', v),
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(
+                child: Fld(
+                  label: 'Remind me on',
+                  icon: 'calendar',
+                  req: true,
+                  child: DateInp(
+                    value: c.f('remDate'),
+                    onChanged: (String v) => c.setF('remDate', v),
+                    fontSize: 15,
+                    hPad: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Fld(
+                  label: 'At',
+                  icon: 'clock',
+                  req: true,
+                  child: TimeInp(
+                    value: c.f('remTime'),
+                    onChanged: (String v) => c.setF('remTime', v),
+                    fontSize: 15,
+                    hPad: 12,
+                  ),
+                ),
+              ),
+            ],
           ),
           Fld(
             label: 'Note (optional)',
@@ -2001,7 +1851,7 @@ class ReminderSheet extends ConsumerWidget {
           Btn(
             label: existing == null ? 'Save reminder' : 'Update reminder',
             icon: 'bell',
-            enabled: c.f('remDate').isNotEmpty,
+            enabled: c.f('remDate').isNotEmpty && c.f('remTime').isNotEmpty,
             onTap: c.saveReminder,
           ),
           if (existing != null)

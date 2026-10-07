@@ -27,8 +27,15 @@ class InvoiceSpec {
     this.taxes = const <(String, num)>[],
     this.seller = const <String>[],
     this.note = '',
+    this.accounts = const <(String, String, String)>[],
   });
   final String heading, toLabel, no, date, due, party, city, kind;
+
+  /// Dr / Cr, ledger, amount — the voucher's accounts (empty when none).
+  final List<(String, String, String)> accounts;
+
+  /// A due date to show (vouchers have none).
+  bool get hasDue => due.trim().isNotEmpty && due.trim() != '—';
 
   /// #, item, HSN, qty, rate, amount
   final List<(String, String, String, String, String, String)> lines;
@@ -58,6 +65,15 @@ InvoiceSpec invoiceOf(PdfInfo pd) {
   final bool sample = pd.no == 'Sales 9' && pd.city == 'Mumbai';
   final bool purchase =
       pd.recv == false || RegExp('PI|Purchase').hasMatch(pd.kind);
+  // Sales bills / vouchers are invoices; any other voucher is titled by its
+  // own Tally type (Receipt, Payment, Journal, …).
+  final bool sale =
+      !purchase && (pd.recv == true || pd.kind.toLowerCase().contains('sale'));
+  final String other = pd.kind.trim().isEmpty
+      ? 'VOUCHER'
+      : (pd.kind.toUpperCase().contains('VOUCHER')
+            ? pd.kind.toUpperCase()
+            : '${pd.kind.toUpperCase()} VOUCHER');
   final num? sub = pd.lines.isEmpty
       ? null
       : paise(pd.lines.fold<num>(0, (num s, BillLine l) => s + l.amt));
@@ -70,8 +86,8 @@ InvoiceSpec invoiceOf(PdfInfo pd) {
       ('Taxes & charges (as per Tally)', diff),
   ];
   return InvoiceSpec(
-    heading: purchase ? 'PURCHASE BILL' : 'TAX INVOICE',
-    toLabel: purchase ? 'BILL FROM' : 'BILLED TO',
+    heading: purchase ? 'PURCHASE BILL' : (sale ? 'TAX INVOICE' : other),
+    toLabel: purchase ? 'BILL FROM' : (sale ? 'BILLED TO' : 'PARTY / ACCOUNT'),
     no: pd.no,
     date: pd.date,
     due: pd.due,
@@ -93,9 +109,15 @@ InvoiceSpec invoiceOf(PdfInfo pd) {
     taxes: taxes,
     total: pd.total,
     seller: sample ? kSampleSeller : const <String>[],
-    note: pd.lines.isEmpty
-        ? 'Item lines and tax details were not sent by the server for this bill.'
-        : (sample ? '' : 'Tax details are not sent by the server.'),
+    // Only real sections: with no item lines there is no item table and no
+    // note about it.
+    note: pd.lines.isEmpty || sample || taxes.isEmpty
+        ? ''
+        : 'Tax details are not sent by the server.',
+    accounts: <(String, String, String)>[
+      for (final LedgerLine l in pd.ledger)
+        (l.debit ? 'Dr' : 'Cr', l.ledger, inr(l.amt)),
+    ],
   );
 }
 
@@ -143,12 +165,21 @@ class ShareDoc {
       b.writeln('${iv.heading} · ${iv.no}');
       b.writeln(company);
       b.writeln(
-        '${iv.toLabel == 'BILLED TO' ? 'Billed to' : 'Bill from'}: ${iv.party}',
+        '${switch (iv.toLabel) {
+          'BILLED TO' => 'Billed to',
+          'BILL FROM' => 'Bill from',
+          _ => 'Party / account',
+        }}: ${iv.party}',
       );
-      b.writeln('Date: ${iv.date} · Due: ${iv.due}');
+      b.writeln(
+        iv.hasDue ? 'Date: ${iv.date} · Due: ${iv.due}' : 'Date: ${iv.date}',
+      );
       for (final (String, String, String, String, String, String) l
           in iv.lines) {
         b.writeln('${l.$1}. ${l.$2} — ${l.$4} × ${l.$5} = ${l.$6}');
+      }
+      for (final (String, String, String) a in iv.accounts) {
+        b.writeln('${a.$1} · ${a.$2}: ${a.$3}');
       }
       if (iv.sub != null) b.writeln('Subtotal: ${inr(iv.sub)}');
       for (final (String, num) t in iv.taxes) {
@@ -192,25 +223,42 @@ ShareDoc docInvoice(PdfInfo pd, String company) =>
 String vDate(Voucher v) => v.date != null ? dmy(v.date) : '${v.day} Sep 2026';
 String vDay(Voucher v) => v.date != null ? dm(v.date!) : '${v.day} Sep';
 
-ShareDoc docEntry(Voucher e, String company, [List<LedgerLine>? lines]) {
-  final Kind k = kKinds[e.kind]!;
-  return ShareDoc(
-    title: '${k.long} · ${e.no}',
-    subtitle: 'Synced with Tally',
-    company: company,
-    fileStem: 'Entry_${e.no}',
-    facts: <(String, String)>[
-      ('Type', e.type ?? k.long),
-      ('Number', e.no),
-      ('Date', vDate(e)),
-      ('Party / account', e.party),
-      ('Amount', inr(e.amt)),
-      ('Company', company),
-      for (final LedgerLine l in lines ?? const <LedgerLine>[])
-        ('${l.debit ? 'Dr' : 'Cr'} · ${l.ledger}', inr(l.amt)),
-    ],
-  );
-}
+/// Everything one voucher has, for its PDF: the real item lines (when the
+/// voucher has items) and the real Dr / Cr ledger lines (when loaded).
+PdfInfo voucherPdfInfo(
+  Voucher e, {
+  List<LedgerLine>? lines,
+  String city = '',
+}) => PdfInfo(
+  party: e.party,
+  no: e.no,
+  date: vDate(e),
+  due: '',
+  total: e.amt,
+  kind: e.type ?? kKinds[e.kind]!.t,
+  recv: e.kind == 'purchase' ? false : null,
+  city: city,
+  lines: <BillLine>[
+    for (final VoucherItem i in e.items)
+      BillLine(
+        i.name,
+        '',
+        i.qty == null ? '' : qty(i.qty!),
+        i.rate == null ? '' : inr(i.rate),
+        i.amt ?? 0,
+      ),
+  ],
+  ledger: lines ?? const <LedgerLine>[],
+);
+
+/// The one document of a voucher: Voucher Detail's See bill PDF, Share and
+/// Download all use it.
+ShareDoc docVoucher(
+  Voucher e,
+  String company, {
+  List<LedgerLine>? lines,
+  String city = '',
+}) => docInvoice(voucherPdfInfo(e, lines: lines, city: city), company);
 
 ShareDoc docBill(Bill b, String company) {
   final bool r = b.kind == 'recv';
@@ -344,12 +392,7 @@ ShareDoc docItems(List<Item> rows, String company) => ShareDoc(
     const <String>['Item', 'Stock', 'Rate', 'Value'],
     <List<String>>[
       for (final Item x in rows)
-        <String>[
-          x.name,
-          x.stock > 0 ? '${x.stock} ${x.unit}' : 'Finished',
-          '${inr(x.rate)} / ${x.unit}',
-          inr(x.worth),
-        ],
+        <String>[x.name, stockLabel(x), rateLabel(x), inr(x.worth)],
     ],
     right: const <int>{2, 3},
   ),
@@ -361,14 +404,34 @@ ShareDoc docItems(List<Item> rows, String company) => ShareDoc(
   ],
 );
 
+/// Stock text: `12 pcs`; items without a quantity but with a value (no
+/// unit in Tally) show `Value only`; nothing left → `Finished`.
+String stockLabel(Item x) {
+  if (x.stock > 0) {
+    return x.unit.isEmpty ? qty(x.stock) : '${qty(x.stock)} ${x.unit}';
+  }
+  return x.worth > 0 ? 'Value only' : 'Finished';
+}
+
+/// Rate text: Tally closing rate, else the opening rate, else `—`
+/// (never a made-up ₹0).
+String rateLabel(Item x) {
+  final num? r = x.rate > 0 ? x.rate : x.openingRate;
+  if (r == null || r <= 0) return '—';
+  return x.unit.isEmpty ? inr(paise(r)) : '${inr(paise(r))} / ${x.unit}';
+}
+
 ShareDoc docItem(Item x, String company) => ShareDoc(
   title: x.name,
   subtitle: 'Item · stock from Tally',
   company: company,
   fileStem: 'Item_${x.name}',
   facts: <(String, String)>[
-    ('Stock', x.stock > 0 ? '${x.stock} ${x.unit}' : 'Finished'),
-    ('Rate', '${inr(x.rate)} / ${x.unit}'),
+    ('Stock', stockLabel(x)),
+    if (x.openingQty != null && x.openingQty != 0)
+      ('Opening stock', '${qty(x.openingQty!)} ${x.unit}'.trim()),
+    if (x.openingValue != null) ('Opening value', inr(x.openingValue)),
+    ('Rate', rateLabel(x)),
     (
       'Status',
       x.st == 'ok' ? 'In stock' : (x.st == 'low' ? 'Running low' : 'Finished'),
@@ -443,6 +506,8 @@ ShareDoc docActs(List<Act> rows, String company) => ShareDoc(
   ),
 );
 
+/// One Activity entry: every detail row and item / account line of the
+/// queued entry as the server returned it.
 ShareDoc docAct(Act a, String company) => ShareDoc(
   title: '${kKinds[a.kind]!.long} · ${a.no}',
   subtitle: _stTxt[a.status]!,
@@ -452,10 +517,32 @@ ShareDoc docAct(Act a, String company) => ShareDoc(
     ('Entry number', a.no),
     ('Party / account', a.party),
     ('Amount', inr(a.amt)),
-    ('Saved', a.time),
+    if (a.rows.isEmpty) ('Saved', a.time),
+    for (final (String, String) r in a.rows) (r.$1, r.$2),
     ('Status', _stTxt[a.status]!),
     if (a.note.isNotEmpty) ('Note', a.note),
   ],
+  table: a.items.isEmpty
+      ? null
+      : DocTable(
+          <String>[
+            '#',
+            a.kind == 'journal' ? 'Account' : 'Item',
+            'Details',
+            'Amount',
+          ],
+          <List<String>>[
+            for (int i = 0; i < a.items.length; i++)
+              <String>[
+                '${i + 1}',
+                a.items[i].$1,
+                a.items[i].$2,
+                inr(a.items[i].$3),
+              ],
+          ],
+          right: const <int>{3},
+        ),
+  totals: <(String, String)>[('Amount', inr(a.amt))],
 );
 
 ShareDoc docNotif(Notif n, String company) => ShareDoc(

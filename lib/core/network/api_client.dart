@@ -99,6 +99,16 @@ class ApiClient {
     bool auth = true,
   }) => _send(() => _http.get(uri(path, query), headers: _headers(auth: auth)));
 
+  /// GET returning the raw JSON text (not decoded) so large responses can be
+  /// parsed in a background isolate instead of on the UI thread.
+  Future<String> getText(String path, {Map<String, Object?>? query}) async {
+    final Object? r = await _send(
+      () => _http.get(uri(path, query), headers: _headers()),
+      raw: true,
+    );
+    return r is String ? r : jsonEncode(r);
+  }
+
   Future<Object?> post(String path, {Object? body, bool auth = true}) => _send(
     () => _http.post(
       uri(path),
@@ -118,7 +128,10 @@ class ApiClient {
   Future<Object?> delete(String path) =>
       _send(() => _http.delete(uri(path), headers: _headers()));
 
-  Future<Object?> _send(Future<http.Response> Function() call) async {
+  Future<Object?> _send(
+    Future<http.Response> Function() call, {
+    bool raw = false,
+  }) async {
     final http.Response r;
     try {
       r = await call().timeout(timeout);
@@ -133,6 +146,12 @@ class ApiClient {
     }
     Object? body;
     final String text = utf8.decode(r.bodyBytes, allowMalformed: true);
+    final bool ok = r.statusCode >= 200 && r.statusCode < 300;
+    // Raw success: hand the text back undecoded, unless it is the
+    // `{success:false}` failure shape (checked without a full decode).
+    if (raw && ok && !text.trimLeft().startsWith('{"success":false')) {
+      return text;
+    }
     if (text.trim().isNotEmpty) {
       try {
         body = jsonDecode(text);

@@ -118,8 +118,12 @@ class LedgerRow {
     this.opening,
     this.closing,
     this.lastDate,
+    this.search = '',
   });
   final String guid, name, group;
+
+  /// Lower-case `name group`, built once (in the parsing isolate).
+  final String search;
   final String? email, phone;
   final num? opening, closing;
   final DateTime? lastDate;
@@ -134,6 +138,7 @@ LedgerRow ledgerFrom(Map<String, Object?> m) => LedgerRow(
   opening: toNum(m['opening_balance']),
   closing: toNum(m['closing_balance']),
   lastDate: dateOnly(m['date']),
+  search: '${str(m['name'])} ${str(m['parent_group'])}'.toLowerCase(),
 );
 
 // ---------------------------------------------------------------- bills
@@ -184,12 +189,19 @@ List<BillLine> _billItems(Object? v) => <BillLine>[
 
 // ------------------------------------------------------------- vouchers
 
-/// A `/voucher-entry/paged` row → [Voucher] (null when soft-deleted).
+/// A `/voucher-entry/paged` row → [Voucher].
 /// `amount` is Tally's voucher net amount; its sign convention is not
 /// documented, so the magnitude is used and the voucher type gives the
 /// direction.
+///
+/// `is_active` is not a deletion flag on this backend: a voucher deleted in
+/// Tally is removed from the table by the agent's cleanup, while
+/// `is_active = false` is only the start-of-full-sync reset (`/reset-active`)
+/// left on vouchers a sync run did not re-post. Those are real Tally
+/// vouchers (the server's total equals Tally's own voucher count), so every
+/// row is kept — dropping them emptied whole types (Journal, Contra,
+/// Physical Stock) whose rows carried the stale flag.
 Voucher? voucherFrom(Map<String, Object?> m) {
-  if (m['is_active'] == false) return null;
   final DateTime? d = dateOnly(m['voucher_date']);
   final String type = str(m['voucher_type']);
   final num amt = (toNum(m['amount']) ?? 0).abs();
@@ -250,20 +262,41 @@ List<LedgerLine> ledgerLinesFrom(Object? body) {
 
 // ---------------------------------------------------------------- items
 
+/// A `/inventory/mobile` row. Closing qty / value come from Tally's stock
+/// summary, opening qty / value from the stock-item master; the unit is kept
+/// exactly as Tally names it (it is sent back to Tally in vouchers).
+/// Tally exports stock values with its Dr / Cr sign: a debit (an asset —
+/// stock held) is negative, e.g. `OPENINGVALUE -3576.38` for 301 bottles
+/// worth ₹3,576.38, while quantities are plain (301). The agent and server
+/// store and return those values as exported, and the server's `rate` is
+/// `closing_value ÷ closing_qty`, so it carries the same sign. Converted
+/// here into an ordinary stock value (Dr → positive): a genuine credit
+/// stock value stays negative — this is a sign convention, not `abs`.
+num? _stockValue(Object? tallySigned) {
+  final num? v = toNum(tallySigned);
+  return v == null ? null : (v == 0 ? 0 : -v);
+}
+
 Item itemFrom(Map<String, Object?> m) {
   final num qty = toNum(m['closing_qty']) ?? 0;
+  final num? value = _stockValue(m['closing_value']);
   return Item(
     str(m['name']),
     qty,
-    str(m['unit']).isEmpty ? 'nos' : str(m['unit']).toLowerCase(),
-    toNum(m['rate']) ?? 0,
+    str(m['unit']),
+    _stockValue(m['rate']) ?? 0,
     // The server always sends minStock 0, so "running low" cannot be known.
-    qty <= 0 ? 'out' : 'ok',
+    // Items without a unit carry value only, so value also counts as stock.
+    (qty > 0 || (value ?? 0) > 0) ? 'ok' : 'out',
     guid: str(m['item_guid']),
-    value: toNum(m['closing_value']),
+    value: value,
     hsn: str(m['hsn_code']).isEmpty ? null : str(m['hsn_code']),
     gst: toNum(m['gst_rate']),
-    group: str(m['group']),
+    group: str(m['group']).isEmpty ? null : str(m['group']),
+    openingQty: toNum(m['opening_qty']),
+    openingValue: _stockValue(m['opening_value']),
+    search: '${str(m['name'])} ${str(m['group'])} ${str(m['hsn_code'])}'
+        .toLowerCase(),
   );
 }
 
@@ -343,9 +376,10 @@ Act actFrom(Map<String, Object?> m, DateTime now) {
       for (final Object? e in p['items']! as List)
         if (e is Map)
           (
-            str(e['name']),
-            'Qty: ${str(e['qty'])} ${str(e['unit'])} · Rate: ${inr(toNum(e['rate']) ?? 0)}'
-                '${toNum(e['gst']) != null ? ' · GST ${str(e['gst'])}%' : ''}',
+            // Agent contract keys; older queued entries used name/qty/gst.
+            str(e['item_name'] ?? e['name']),
+            'Qty: ${str(e['quantity'] ?? e['qty'])} ${str(e['unit'])} · Rate: ${inr(toNum(e['rate']) ?? 0)}'
+                '${toNum(e['gst_rate'] ?? e['gst']) != null ? ' · GST ${str(e['gst_rate'] ?? e['gst'])}%' : ''}',
             toNum(e['amount']) ?? 0,
           ),
     if (p['ledger_entries'] is List && type.toLowerCase() == 'journal')
