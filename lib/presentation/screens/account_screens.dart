@@ -12,6 +12,7 @@ import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
+import '../../core/share/links.dart';
 import '../widgets/common.dart';
 import 'auth_screens.dart' show FNote;
 
@@ -206,16 +207,18 @@ class ReferScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 10),
               Text(
-                'Share your code',
+                'Share TallyConnect',
                 textAlign: TextAlign.center,
                 style: rtStyle(context, 19),
               ),
               const SizedBox(height: 2),
               Text(
-                'When they sign up with it, they show in your list below.',
+                'Know a business that runs on Tally? Send them TallyConnect on '
+                'WhatsApp in one tap.',
                 textAlign: TextAlign.center,
                 style: ts(15, h: 1.3, c: p.ink3),
               ),
+              // The message they will receive.
               Container(
                 margin: const EdgeInsets.symmetric(vertical: 14),
                 child: CustomPaint(
@@ -226,42 +229,18 @@ class ReferScreen extends ConsumerWidget {
                     fill: whiteA(.7),
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-                    child: Row(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: <Widget>[
-                              Text(
-                                'YOUR CODE',
-                                style: ts(11, w: w800, ls: .88, c: p.ink3),
-                              ),
-                              Text(
-                                c.repo.isRemote ? '—' : 'TC-WORKK72',
-                                style: TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontFamilyFallback: const <String>[
-                                    'Menlo',
-                                    'Courier',
-                                  ],
-                                  fontSize: 22,
-                                  fontWeight: w700,
-                                  letterSpacing: 1.32,
-                                  color: p.acc,
-                                ),
-                              ),
-                            ],
-                          ),
+                        Text(
+                          'THEY WILL GET',
+                          style: ts(11, w: w800, ls: .88, c: p.ink3),
                         ),
-                        ChipBtn(
-                          'Copy',
-                          color: p.acc,
-                          onTap: () => c.say(
-                            c.repo.isRemote
-                                ? 'Referral codes are not available yet on the server'
-                                : 'Code copied',
-                          ),
+                        const SizedBox(height: 6),
+                        Text(
+                          AppController.kReferMessage,
+                          style: ts(14, h: 1.45, c: p.ink2),
                         ),
                       ],
                     ),
@@ -269,14 +248,17 @@ class ReferScreen extends ConsumerWidget {
                 ),
               ),
               Btn(
-                label: 'Share invite',
-                icon: 'send',
+                label: 'Share on WhatsApp',
+                icon: 'chat',
                 kind: BtnKind.a,
-                onTap: () => c.say(
-                  c.repo.isRemote
-                      ? 'Referral codes are not available yet on the server'
-                      : 'Share sheet opened',
-                ),
+                onTap: c.referOnWhatsApp,
+              ),
+              const SizedBox(height: 10),
+              Btn(
+                label: 'Share another way',
+                icon: 'share',
+                kind: BtnKind.g,
+                onTap: c.referOtherApps,
               ),
             ],
           ),
@@ -289,20 +271,20 @@ class ReferScreen extends ConsumerWidget {
                   (
                     'chat',
                     'sales',
-                    '1. Share your code',
-                    'Send it on WhatsApp, SMS or email',
+                    '1. Send the message',
+                    'WhatsApp opens with it ready — pick a contact',
                   ),
                   (
-                    'userPlus',
+                    'globe',
                     'party',
-                    '2. Your friend signs up',
-                    'They type your code when they join',
+                    '2. They visit tally-connect.com',
+                    'And see how TallyConnect works with Tally',
                   ),
                   (
                     'check',
                     'receipt',
-                    '3. See them here',
-                    'Track who has joined below',
+                    '3. They get started',
+                    'Sign up, pick a plan and connect their Tally',
                   ),
                 ])
               RowX(
@@ -318,13 +300,13 @@ class ReferScreen extends ConsumerWidget {
               ),
           ],
         ),
-        const H2Row('Your referrals'),
-        const EmptyBox('No one has joined yet. Share your code to start.'),
       ],
     );
   }
 }
 
+/// Help: product explanation and FAQs from https://tally-connect.com/, and
+/// the support contacts published there (each opens its app).
 class HelpScreen extends ConsumerWidget {
   const HelpScreen({super.key});
 
@@ -333,31 +315,85 @@ class HelpScreen extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
     final List<Faq> faqs = c.repo.faqs();
+    Widget link(
+      String ic,
+      String cc,
+      String t,
+      String s,
+      Uri uri,
+      String fail,
+    ) => RowX(
+      onTap: () => c.openExternal(uri, fail),
+      children: <Widget>[
+        Ico(ic, size: IcoSize.xs, color: p.cat(cc), icon: IcSize.s),
+        Expanded(child: RTx(t, s)),
+        chevR(),
+      ],
+    );
     return Scr(
       children: <Widget>[
         const BackNav(),
         const H1('Help', afterNav: true),
         const Sub('Answers and support'),
+        // What it is and how it works (from the website).
+        Glass(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Ico('laptop', size: IcoSize.xs, color: p.acc, icon: IcSize.s),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'How TallyConnect works',
+                      style: rtStyle(context, 17),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              for (final (String, String) st in const <(String, String)>[
+                (
+                  'Sync app on your Tally computer',
+                  'A small app on the Windows computer running Tally Prime '
+                      'sends new entries and changes every 5 minutes.',
+                ),
+                (
+                  'Your data, on every device',
+                  'Dashboards and reports from your Tally data — no need to '
+                      'open Tally for a number.',
+                ),
+                (
+                  'Entries go back to Tally',
+                  'Vouchers and bills made here are pushed into Tally Prime '
+                      'automatically.',
+                ),
+              ])
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Ic('check', size: IcSize.s, color: p.pos),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(child: RTx(st.$1, st.$2, titleSize: 15)),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const Sec('Common questions'),
         Glass(
           padding: const EdgeInsets.symmetric(vertical: 2),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-                child: Row(
-                  children: <Widget>[
-                    Ico(
-                      'help',
-                      size: IcoSize.xs,
-                      color: p.navy,
-                      icon: IcSize.s,
-                    ),
-                    const SizedBox(width: 10),
-                    Text('Common questions', style: rtStyle(context, 17)),
-                  ],
-                ),
-              ),
               for (int i = 0; i < faqs.length; i++) ...<Widget>[
                 if (i > 0) listDivider(),
                 Tap(
@@ -402,44 +438,48 @@ class HelpScreen extends ConsumerWidget {
         const Sec('Talk to us'),
         GlassList(
           children: <Widget>[
-            for (final (String, String, String, String, String) r
-                in const <(String, String, String, String, String)>[
-                  (
-                    'phone',
-                    'receipt',
-                    'Call support',
-                    '[YOUR SUPPORT NUMBER]',
-                    'Calling support…',
-                  ),
-                  (
-                    'chat',
-                    'sales',
-                    'WhatsApp chat',
-                    '[YOUR WHATSAPP NUMBER]',
-                    'Opening WhatsApp…',
-                  ),
-                  (
-                    'mail',
-                    'party',
-                    'Email support',
-                    '[YOUR SUPPORT EMAIL]',
-                    'Opening email…',
-                  ),
-                ])
-              RowX(
-                onTap: () => c.say(r.$5),
-                children: <Widget>[
-                  Ico(
-                    r.$1,
-                    size: IcoSize.xs,
-                    color: p.cat(r.$2),
-                    icon: IcSize.s,
-                  ),
-                  Expanded(child: RTx(r.$3, r.$4)),
-                  chevR(),
-                ],
+            link(
+              'mail',
+              'party',
+              'Email support',
+              '${TcSite.supportEmail} · ${TcSite.supportHours}',
+              Uri(
+                scheme: 'mailto',
+                path: TcSite.supportEmail,
+                query: 'subject=${Uri.encodeComponent('TallyConnect app support')}',
               ),
+              'No email app found. Write to ${TcSite.supportEmail}',
+            ),
+            link(
+              'phone',
+              'receipt',
+              'Call support',
+              TcSite.supportPhone,
+              Uri(scheme: 'tel', path: TcSite.supportPhone.replaceAll(' ', '')),
+              'Could not open the dialer. Call ${TcSite.supportPhone}',
+            ),
+            link(
+              'globe',
+              'sales',
+              'Website',
+              'tally-connect.com',
+              Uri.parse(TcSite.website),
+              'Could not open the browser',
+            ),
+            link(
+              'laptop',
+              'vouchers',
+              'Web dashboard',
+              'dashboard.tally-connect.com',
+              Uri.parse(TcSite.dashboard),
+              'Could not open the browser',
+            ),
           ],
+        ),
+        const Sec('Company'),
+        Glass(
+          padding: const EdgeInsets.all(16),
+          child: RTx(TcSite.company, TcSite.address, titleSize: 15),
         ),
         const FNote('Version 19.6.2'),
       ],

@@ -85,7 +85,6 @@ class ReportsScreen extends ConsumerWidget {
           ),
         ),
         Chips(
-          margin: const EdgeInsets.only(top: 4, bottom: 14),
           children: <Widget>[
             for (final (String, String) x in kRC)
               ChipBtn(
@@ -216,6 +215,10 @@ class ReportScreen extends ConsumerWidget {
           margin: const EdgeInsets.only(top: 12),
           rows: List<int>.generate(d.rows.length, (int i) => i),
           row: (BuildContext context, int i) => RowX(
+            // Opens the party / item / voucher behind the row.
+            onTap: d.rows[i].target == null
+                ? null
+                : () => c.openRowTarget(d.rows[i].target!),
             children: <Widget>[
               Av(
                 d.rows[i].n,
@@ -226,6 +229,10 @@ class ReportScreen extends ConsumerWidget {
               ),
               Expanded(child: RTx(d.rows[i].t, d.rows[i].s, ell: true)),
               Text(d.rows[i].v, style: amtStyle(context, cls: d.rows[i].cls)),
+              if (d.rows[i].target != null) ...<Widget>[
+                const SizedBox(width: 6),
+                chevR(),
+              ],
             ],
           ),
           empty: d.note.isNotEmpty

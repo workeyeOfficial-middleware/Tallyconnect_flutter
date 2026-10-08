@@ -141,7 +141,7 @@ class SideMenu extends ConsumerWidget {
     final List<(String, String, String, String, int)> acct =
         <(String, String, String, String, int)>[
           ('Companies', 'building', 'navy', 'companies', 0),
-          ('Sales Team', 'team', 'team', 'team', 0),
+          if (c.canOpen('team')) ('Sales Team', 'team', 'team', 'team', 0),
           ('Reports', 'chart', 'reports', 'reports', 0),
           ('Settings', 'gear', 'settings', 'settings', 0),
           ('Alerts', 'bell', 'acc', 'notifs', unread),

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/app_state.dart';
 import '../../app/providers.dart';
+import '../../core/design/tc_fields.dart';
 import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
@@ -69,6 +70,11 @@ class OutHubScreen extends ConsumerWidget {
               kind: BadgeKind.acc,
             ),
             const SizedBox(width: 10),
+            CBtn(
+              'search',
+              key: const ValueKey<String>('outSearchBtn'),
+              onTap: c.toggleOutSearch,
+            ),
             // All active reminders (dot: one is due now).
             CBtn(
               'bell',
@@ -80,6 +86,43 @@ class OutHubScreen extends ConsumerWidget {
         ),
         const H1('Outstanding', afterNav: true),
         const Sub('Receivable and payable bills still to be settled'),
+        if (c.outSearch) ...<Widget>[
+          OutSearchBox(c: c),
+          if (c.outQuery.trim().isNotEmpty) ...<Widget>[
+            Builder(
+              builder: (BuildContext context) {
+                final List<Bill> hits = c.memo<List<Bill>>(
+                  'out-hub-search',
+                  '${c.repo.version}|${c.outQuery}',
+                  () => <Bill>[
+                    ...c.searchBills(recv).map((Bill b) => b.withKind('recv')),
+                    ...c.searchBills(payb).map((Bill b) => b.withKind('pay')),
+                  ],
+                );
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
+                  child: Text(
+                    '${grouped(hits.length)} ${hits.length == 1 ? 'bill' : 'bills'} found',
+                    style: rsStyle(context),
+                  ),
+                );
+              },
+            ),
+            lazyList<Bill>(
+              margin: const EdgeInsets.only(bottom: 14),
+              rows: c.memo<List<Bill>>(
+                'out-hub-search',
+                '${c.repo.version}|${c.outQuery}',
+                () => <Bill>[
+                  ...c.searchBills(recv).map((Bill b) => b.withKind('recv')),
+                  ...c.searchBills(payb).map((Bill b) => b.withKind('pay')),
+                ],
+              ),
+              row: (BuildContext context, Bill b) => _BillRow(c: c, b: b),
+              empty: 'No pending bill matches “${c.outQuery.trim()}”.',
+            ),
+          ],
+        ],
         for (final (
               String,
               String,
@@ -308,10 +351,11 @@ class OutListScreen extends ConsumerWidget {
     final ({List<Bill> rows, int hidden, VoidCallback unhide})
     v = c.memo<({List<Bill> rows, int hidden, VoidCallback unhide})>(
       'bills-view',
-      '${c.repo.version}|${bl.length}|${c.outKind}|${c.outFilter}|${c.prefsVersion}',
+      '${c.repo.version}|${bl.length}|${c.outKind}|${c.outFilter}|${c.prefsVersion}|${c.outQuery}',
       () => c.listView<Bill>(
         'bills',
-        bl
+        c
+            .searchBills(bl)
             .where((Bill b) => c.outFilter == 'all' || b.st == c.outFilter)
             .map((Bill b) => b.withKind(c.outKind))
             .toList(),
@@ -322,6 +366,7 @@ class OutListScreen extends ConsumerWidget {
       children: <Widget>[
         BackNav(
           actions: <Widget>[
+            CBtn('search', onTap: c.toggleOutSearch),
             CBtn(
               'bell',
               dot: c.dueReminders.isNotEmpty,
@@ -341,6 +386,17 @@ class OutListScreen extends ConsumerWidget {
               ? 'Money customers owe you (Outstanding)'
               : 'Money you owe suppliers (Outstanding)',
         ),
+        if (c.outSearch) ...<Widget>[
+          OutSearchBox(c: c),
+          if (c.outQuery.trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(6, 0, 6, 10),
+              child: Text(
+                '${grouped(v.rows.length)} of ${grouped(bl.length)} bills match',
+                style: rsStyle(context),
+              ),
+            ),
+        ],
         Glass(
           padding: const EdgeInsets.all(18),
           child: Column(
@@ -543,8 +599,82 @@ class OutListScreen extends ConsumerWidget {
             ),
             hidden: v.hidden,
             unhide: v.unhide,
-            empty: c.emptyText(DataSet.bills, 'No pending bills.'),
+            empty: c.outQuery.trim().isNotEmpty
+                ? 'No pending bill matches “${c.outQuery.trim()}”.'
+                : c.emptyText(DataSet.bills, 'No pending bills.'),
           ),
+      ],
+    );
+  }
+}
+
+/// Search field for outstanding bills (party, bill no., place, dates,
+/// status, amount). Filters the bills already loaded.
+class OutSearchBox extends StatelessWidget {
+  const OutSearchBox({super.key, required this.c});
+  final AppController c;
+
+  @override
+  Widget build(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Inp(
+        value: c.outQuery,
+        onChanged: c.setOutQuery,
+        placeholder: 'Party, bill no., amount…',
+        icon: 'search',
+        trailing: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: c.toggleOutSearch,
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Center(child: Ic('close', color: p.ink3)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One search result row (receivable or payable).
+class _BillRow extends StatelessWidget {
+  const _BillRow({required this.c, required this.b});
+  final AppController c;
+  final Bill b;
+
+  @override
+  Widget build(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    final bool r = b.kind == 'recv';
+    return RowX(
+      onTap: () => c.go('billDetail', <String, Object?>{'bill': b}),
+      children: <Widget>[
+        Ico(
+          r ? 'in' : 'out',
+          size: IcoSize.xs,
+          color: p.cat(r ? 'receipt' : 'payment'),
+          icon: IcSize.s,
+        ),
+        Expanded(
+          child: RTx(
+            b.party,
+            '${r ? 'Receivable' : 'Payable'} · ${b.no} · Due ${b.due}',
+            ell: true,
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: <Widget>[
+            Text(
+              '${r ? '+' : '−'}${inr(b.amt)}',
+              style: amtStyle(context, cls: r ? 'in' : 'out'),
+            ),
+            const SizedBox(height: 4),
+            Bdg(b.txt, kind: billKind(b.st), dot: true),
+          ],
+        ),
       ],
     );
   }

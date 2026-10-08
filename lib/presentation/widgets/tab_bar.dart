@@ -25,7 +25,8 @@ class TcTabBar extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
     final double width = MediaQuery.sizeOf(context).width - 28;
-    final double slot = (width - 12) / 5;
+    // Only the tabs this user may open (a USER has no Team tab).
+    final double slot = (width - 12) / c.barCount;
     c.setBarGeometry(slot, 14);
 
     final (Duration, Curve, Duration, Curve) tr = switch (c.pillT) {
@@ -58,7 +59,8 @@ class TcTabBar extends ConsumerWidget {
 
     final List<Widget> tabs = <Widget>[];
     for (int i = 0; i < kTabs.length; i++) {
-      final int pos = c.tabOrder.indexOf(i);
+      if (c.tabHidden(i)) continue;
+      final int pos = c.posOf(i);
       final bool dragging = c.tdrag != null && c.tdrag!.i == i;
       final bool on = c.tab == i;
       final bool hov = c.hovOn && pos == c.hovPos;
@@ -139,9 +141,10 @@ class TcTabBar extends ConsumerWidget {
     }
     // Lifted tab paints on top.
     if (c.tdrag != null) {
-      final int di = c.tdrag!.i;
-      final Widget d = tabs.removeAt(di);
-      tabs.add(d);
+      final int di = tabs.indexWhere(
+        (Widget w) => w.key == ValueKey<int>(c.tdrag!.i),
+      );
+      if (di >= 0) tabs.add(tabs.removeAt(di));
     }
 
     return Positioned(

@@ -454,6 +454,19 @@ const Map<String, (String, String, String, NavTo)> kWebNotifTypes =
       ),
     };
 
+/// Screen the app resolves on tap (see `AppController.openNotifTarget`):
+/// the alert's type, message and server `meta` find the exact voucher,
+/// entry, bill, party or item; [fallback] is opened when none matches.
+const String kNotifTarget = 'notifTarget';
+
+NavTo notifTarget(String type, String message, Object? meta, NavTo fallback) =>
+    NavTo(kNotifTarget, <String, Object?>{
+      'type': type,
+      'message': message,
+      'meta': meta is Map ? meta.cast<String, Object?>() : null,
+      'fallback': fallback,
+    });
+
 /// A `/admin/notifications` row → [Notif] (id `w:<id>`).
 Notif webNotifFrom(Map<String, Object?> m, DateTime now) {
   final (String, String, String, NavTo) t = kWebNotifTypes[str(m['type'])]!;
@@ -466,7 +479,7 @@ Notif webNotifFrom(Map<String, Object?> m, DateTime now) {
     t.$2,
     t.$3,
     m['is_read'] != true,
-    t.$4,
+    notifTarget('web:${str(m['type'])}', str(m['message']), m['meta'], t.$4),
   );
 }
 
@@ -482,7 +495,7 @@ Notif notifFrom(Map<String, Object?> m, DateTime now) {
     t.$1,
     t.$2,
     m['is_read'] != true,
-    t.$3,
+    notifTarget(str(m['type']), str(m['message']), m['meta'], t.$3),
   );
 }
 

@@ -540,6 +540,9 @@ const Map<String, String> kForm = <String, String>{
   'user': '',
   'pass': '',
   'fEmail': '',
+  'fCode': '',
+  'fPass': '',
+  'fPass2': '',
   'q': '',
   'pq': '',
   'pickQ': '',
@@ -786,22 +789,49 @@ const List<Workspace> kWorkspaces = <Workspace>[
   ),
 ];
 
+/// Common questions, from the FAQ on https://tally-connect.com/ (answers
+/// as published there; app steps added only where the app works
+/// differently from the web dashboard).
 const List<Faq> kFaqs = <Faq>[
   Faq(
-    'What is TallyConnect?',
-    'TallyConnect is a mobile and web app that connects with your Tally ERP 9 / TallyPrime. Business owners, sales people and accountants can see reports, check party balances, look at stock and make entries from the phone.',
+    'What is Tally Connect?',
+    'Tally Connect is a web app that connects to your Tally Prime and turns your accounting data into easy-to-read dashboards and reports. Instead of opening Tally every time you need a number, just open Tally Connect from any browser — on your phone, laptop, or desktop.',
   ),
   Faq(
-    'How do entries reach Tally?',
-    'The TallyConnect app on your office computer sends new entries to Tally and brings back updates by itself, whenever Tally is open. You can see each entry in Activity.',
+    'How does the auto-sync work?',
+    'A small background app runs on the Windows computer where Tally is installed. Every 5 minutes it quietly picks up any new entries or changes from Tally and sends them to your Tally Connect dashboard. You don\'t have to do anything — it just stays current on its own.',
   ),
   Faq(
-    'Is my data safe?',
-    'Only people you add to your team can see your company data. [Add your security and data-storage details here.]',
+    'How do I get the sync app set up?',
+    'After signing up, you download a small app and install it on the Windows computer where Tally Prime is running. You enter your registered email, activate your license, and that\'s it — your data starts syncing automatically. Note: this setup app works on Windows only, since Tally Prime itself is a Windows application.',
   ),
   Faq(
-    'Can I use more than one company?',
-    'Yes. Tap the company name at the top of Home and pick another company.',
+    'How do I get started?',
+    'Create an account, verify your email, pick a plan, and install the sync app on your Tally machine. Your dashboard fills up on its own after the first sync — usually within a few minutes. The whole setup takes less than 10 minutes.',
+  ),
+  Faq(
+    'Can I create vouchers and bills without opening Tally?',
+    'Yes! You can create vouchers and bills directly from Tally Connect. Whatever you submit gets pushed straight into Tally Prime automatically — no need to open the desktop app at all.',
+  ),
+  Faq(
+    'Is my financial data safe?',
+    'Yes. Every account is protected with a verified login — no one can access your data without going through the right steps. You control exactly who sees what. Every action taken on the platform is logged, and your sync app is recognized by your device so nothing unauthorized can connect to your Tally.',
+  ),
+  Faq(
+    'Can I control what my team members are allowed to see?',
+    'Yes, and in quite a lot of detail. As the admin, you can choose which sections of the app each person can open, which columns they see in each table, and even which specific parties, transactions, or items they\'re allowed to view. You can update any of this at any time.',
+  ),
+  Faq(
+    'Can I manage more than one company?',
+    'Absolutely. You can connect multiple Tally companies to a single Tally Connect account. Each company\'s data is kept completely separate, and you can give different team members access to different companies — with different rules for each. In this app, tap the company name at the top of Home to switch company.',
+  ),
+  Faq(
+    'Can multiple people be logged in at the same time?',
+    'Yes. Multiple team members can use Tally Connect at the same time, each seeing only what you\'ve permitted them to see. There\'s no clash or conflict — everyone gets their own view of the data.',
+  ),
+  Faq(
+    'What if my internet or Tally goes offline?',
+    'No problem. The sync simply pauses while Tally or your internet is unavailable and picks up right where it left off once things are back online. You can always check when the last successful sync happened from your dashboard.',
   ),
 ];
 

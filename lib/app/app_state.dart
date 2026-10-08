@@ -22,12 +22,15 @@ import '../core/notify/reminder_alarms.dart';
 import '../core/design/tc_palette.dart';
 import '../core/storage/local_storage.dart';
 import '../core/utils/format.dart';
+import '../data/accounting.dart' show voucherKind;
+import '../data/api/adapters.dart' show kNotifTarget;
 import '../data/mock/mock_data.dart';
 import '../data/models/models.dart';
 import '../data/repositories/api_tally_repository.dart' show DataSet;
 import '../data/repositories/tally_repository.dart';
 import '../data/repositories/team_admin.dart';
 import '../core/share/doc_exporter.dart';
+import '../core/share/links.dart';
 import '../core/share/report_data.dart';
 import '../core/share/share_doc.dart';
 
@@ -336,7 +339,7 @@ class AppController extends ChangeNotifier {
     tab = ti < 0 ? 0 : ti;
     glass = glassLevel;
     _load();
-    pillPos = tabOrder.indexOf(tab).toDouble();
+    pillPos = posOf(tab).toDouble();
     if (this.repo.isRemote) {
       // Real data: no sample values in the entry forms.
       form = _blankForm(this.repo.today);
@@ -538,6 +541,9 @@ class AppController extends ChangeNotifier {
   String nFilter = 'all';
   bool showPass = false, forgotSent = false;
 
+  /// Forgot password step 2 is done (password changed).
+  bool forgotDone = false;
+
   /// Login role sent as `loginType` (`ADMIN` | `USER`).
   String loginType = 'ADMIN';
 
@@ -710,7 +716,32 @@ class AppController extends ChangeNotifier {
   int get unread => notifs.where((Notif n) => n.unread).length;
   bool get scrollLock =>
       drag != null || ldrag != null || _lpActive || tdrag != null;
-  int posOf(int i) => tabOrder.indexOf(i);
+  /// Screens only an admin may open (the team and its settings). A USER
+  /// never sees them: no tab, no menu row, no search hit, no navigation.
+  static const Set<String> kAdminScreens = <String>{
+    'team',
+    'teamUser',
+    'teamLayout',
+    'teamSelect',
+  };
+
+  /// Screen [s] is allowed for the logged-in user (from its server role).
+  bool canOpen(String s) => isAdmin || !kAdminScreens.contains(s);
+
+  /// Tab [i] is not shown in the bottom bar for this user.
+  bool tabHidden(int i) => !canOpen(kTabs[i].k);
+
+  /// The bottom bar's tabs in the user's order (hidden tabs left out).
+  List<int> get barOrder => <int>[
+    for (final int i in tabOrder)
+      if (!tabHidden(i)) i,
+  ];
+
+  /// Number of tabs in the bottom bar.
+  int get barCount => barOrder.length;
+
+  /// Slot of tab [i] in the bottom bar.
+  int posOf(int i) => barOrder.indexOf(i);
 
   // ------------------------------------------------------------ toast/nav
   /// `say(msg)`: toast for 2600 ms.
@@ -812,6 +843,7 @@ class AppController extends ChangeNotifier {
   }
 
   void jump(String s) {
+    if (!canOpen(s)) s = 'home';
     final int ti = kTabs.indexWhere(
       (({String k, String t, String ic}) t) => t.k == s,
     );
@@ -832,6 +864,7 @@ class AppController extends ChangeNotifier {
   }
 
   void selectTab(int i, [Map<String, Object?>? extra]) {
+    if (tabHidden(i)) i = 0;
     _onEnter(kTabs[i].k);
     final int cur = tab;
     final double a = posOf(cur).toDouble(), b = posOf(i).toDouble();
@@ -868,6 +901,7 @@ class AppController extends ChangeNotifier {
   }
 
   void go(String s, [Map<String, Object?>? extra]) {
+    if (!canOpen(s)) return;
     final int ti = kTabs.indexWhere(
       (({String k, String t, String ic}) t) => t.k == s,
     );
@@ -958,6 +992,64 @@ class AppController extends ChangeNotifier {
   /// in [period] — one source for every summary: This month from the
   /// complete month set (as before); other periods from that period's exact
   /// totals (All time: the server's sums). Null while loading.
+  // ------------------------------------------------ refer / outside links
+  /// The referral message (WhatsApp / share sheet).
+  static const String kReferMessage =
+      'Hi! I use TallyConnect to see my Tally data on my phone — sales, '
+      'outstanding bills, stock and reports, synced from Tally automatically. '
+      'Entries made in the app go straight into Tally too. If your business '
+      'runs on Tally, have a look and get started:\n${TcSite.website}';
+
+  /// Opens WhatsApp with the referral message (contact picked there).
+  Future<void> referOnWhatsApp() async {
+    if (!await shareOnWhatsApp(kReferMessage)) {
+      say('Could not open WhatsApp or the share sheet');
+    }
+  }
+
+  /// The system share sheet with the referral message.
+  Future<void> referOtherApps() async {
+    if (!await shareText(kReferMessage, subject: 'Try TallyConnect')) {
+      say('Could not open the share sheet');
+    }
+  }
+
+  /// Opens [uri] outside the app; [fail] is shown when nothing opens it.
+  Future<void> openExternal(Uri uri, String fail) async {
+    if (!await openLink(uri)) say(fail);
+  }
+
+  /// Home "Money summary": outstanding as today, and Receipts / Payments /
+  /// Sales / Purchase over ALL TIME (the server's exact totals). A tap opens
+  /// those vouchers for All time; a month or other period is picked there.
+  Map<String, SumCard> homeMoneyCards() {
+    final Map<String, SumCard> base = repo.moneyCards();
+    const Map<String, String> kind = <String, String>{
+      'mIn': 'receipt',
+      'mOut': 'payment',
+      'sales': 'sales',
+      'purch': 'purchase',
+    };
+    return <String, SumCard>{
+      for (final MapEntry<String, SumCard> e in base.entries)
+        e.key: kind.containsKey(e.key)
+            ? SumCard(
+                e.value.k,
+                e.value.t,
+                'All time',
+                periodAmount('all', kind[e.key]!),
+                e.value.ic,
+                e.value.c,
+                e.value.cls,
+                NavTo('vList', <String, Object?>{
+                  'vFilter': kind[e.key],
+                  'vPeriod': 'all',
+                }),
+              )
+            : e.value,
+    };
+  }
+
   num? periodAmount(String period, String filter) {
     if (period == 'month') {
       final MonthTotals mt = repo.monthTotals();
@@ -1146,19 +1238,23 @@ class AppController extends ChangeNotifier {
 
   void goForgot() {
     forgotSent = false;
+    forgotDone = false;
+    form['fEmail'] = (form['user'] ?? '').trim();
+    for (final String k in <String>['fCode', 'fPass', 'fPass2']) {
+      form[k] = '';
+    }
     go('forgot');
   }
 
-  /// Forgot password: the server emails a reset code (`/api/auth/send-otp`).
+  static final RegExp _emailRx = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+
+  /// Forgot password step 1: the server emails a 6-digit code
+  /// (`POST /api/auth/send-otp`). Also "Resend code".
   Future<void> sendReset() async {
-    if (!repo.isRemote) {
-      _set(() => forgotSent = true);
-      return;
-    }
     final String email = (form['fEmail'] ?? '').trim();
     if (busy) return;
-    if (email.isEmpty) {
-      say('Enter your email address');
+    if (!_emailRx.hasMatch(email)) {
+      say('Enter a valid email address');
       return;
     }
     _set(() => busy = true);
@@ -1167,10 +1263,72 @@ class AppController extends ChangeNotifier {
       _set(() {
         busy = false;
         forgotSent = true;
+        form['fCode'] = '';
+      });
+      say('Code sent to $email');
+    } on ApiException catch (e) {
+      _set(() => busy = false);
+      say(
+        e.status == 404
+            ? 'No TallyConnect account uses this email'
+            : e.userMessage,
+      );
+    } catch (_) {
+      _set(() => busy = false);
+      say('Could not send the code. Try again.');
+    }
+  }
+
+  /// Why step 2 cannot be sent yet, or null.
+  String? get resetError {
+    if (!RegExp(r'^\d{6}$').hasMatch((form['fCode'] ?? '').trim())) {
+      return 'Enter the 6-digit code from the email';
+    }
+    final String pw = form['fPass'] ?? '';
+    if (pw.length < 8) return 'New password needs at least 8 characters';
+    if (pw != (form['fPass2'] ?? '')) return 'The two passwords do not match';
+    return null;
+  }
+
+  /// Forgot password step 2: code + new password
+  /// (`POST /api/auth/verify-otp`), then back to Log in with the email.
+  Future<void> confirmReset() async {
+    final String? err = resetError;
+    if (err != null) {
+      say(err);
+      return;
+    }
+    if (busy) return;
+    final String email = (form['fEmail'] ?? '').trim();
+    _set(() => busy = true);
+    try {
+      await repo.resetPassword(
+        email,
+        (form['fCode'] ?? '').trim(),
+        form['fPass'] ?? '',
+      );
+      _set(() {
+        busy = false;
+        forgotDone = true;
+        form['user'] = email;
+        form['pass'] = '';
+        form['fPass'] = '';
+        form['fPass2'] = '';
+        form['fCode'] = '';
       });
     } on ApiException catch (e) {
       _set(() => busy = false);
-      say(e.userMessage);
+      final String m = e.message.toLowerCase();
+      say(
+        m.contains('invalid otp')
+            ? 'That code is not right. Check the email and try again.'
+            : (m.contains('expired')
+                  ? 'The code has expired. Tap Resend code.'
+                  : e.userMessage),
+      );
+    } catch (_) {
+      _set(() => busy = false);
+      say('Could not change the password. Try again.');
     }
   }
 
@@ -2100,7 +2258,11 @@ class AppController extends ChangeNotifier {
   void openNotif(Notif n) {
     if (repo.isRemote) {
       if (n.unread) repo.markNotifRead(n.id);
-      run(n.go);
+      if (n.go.screen == kNotifTarget) {
+        unawaited(openNotifTarget(n.go.extra));
+      } else {
+        run(n.go);
+      }
       return;
     }
     _set(
@@ -2109,6 +2271,214 @@ class AppController extends ChangeNotifier {
           .toList(),
     );
     run(n.go);
+  }
+
+  /// Opens exactly what a server alert is about, from its type, `meta` and
+  /// message:
+  /// - Entry created → that queued entry (matched by its server reference
+  ///   number) in Activity;
+  /// - Entry failed → the failed entry with that error;
+  /// - Vouchers synced → that voucher's detail (GUID from `meta`);
+  /// - New party / ledger / item → that party / item;
+  /// - Bill created → that bill;
+  /// - others → their screen. When the target is not found, the alert's
+  ///   own screen opens with a short note (never a wrong record).
+  Future<void> openNotifTarget(Map<String, Object?> x) async {
+    final String type = '${x['type'] ?? ''}';
+    final String msg = '${x['message'] ?? ''}';
+    final Map<String, Object?> meta =
+        (x['meta'] as Map<String, Object?>?) ?? const <String, Object?>{};
+    final NavTo fallback = x['fallback'] is NavTo
+        ? x['fallback']! as NavTo
+        : const NavTo('notifs');
+    String s(String k) => '${meta[k] ?? ''}'.trim();
+    // Text after the first ": " (party / item / error in the message).
+    String tail() {
+      final int i = msg.indexOf(': ');
+      return i < 0 ? '' : msg.substring(i + 2).trim();
+    }
+
+    // Queued entries (Activity): loaded on demand.
+    Future<Act?> findAct(bool Function(Act a) hit) async {
+      Act? a = acts.where(hit).firstOrNull;
+      if (a == null && repo.isRemote) {
+        await repo.refreshActivity();
+        if (_disposed) return null;
+        acts = repo.activity();
+        a = acts.where(hit).firstOrNull;
+      }
+      return a;
+    }
+
+    String ref(Act a) =>
+        a.rows
+            .where(((String, String) r) => r.$1 == 'Reference no.')
+            .firstOrNull
+            ?.$2 ??
+        '';
+
+    switch (type) {
+      case 'create_entry':
+        final String rn = s('reference_no');
+        final Act? a = await findAct(
+          (Act a) =>
+              (rn.isNotEmpty && ref(a) == rn) ||
+              (rn.isEmpty &&
+                  a.party == s('party_name') &&
+                  paise(a.amt) == paise(numOf(s('amount')))),
+        );
+        if (a != null) {
+          go('actDetail', <String, Object?>{'act': a.id});
+          return;
+        }
+        go('activity');
+        say('This entry is no longer in the queue');
+        return;
+      case 'entry_failed':
+        final int i = msg.indexOf('sync failed: ');
+        final String err = i < 0 ? '' : msg.substring(i + 13).trim();
+        final Act? a = await findAct(
+          (Act a) => a.status == 'fail' && err.isNotEmpty && a.note.trim() == err,
+        );
+        if (a != null) {
+          go('actDetail', <String, Object?>{'act': a.id});
+          return;
+        }
+        go('activity');
+        if (err.isNotEmpty) say(err);
+        return;
+      case 'voucher_sync':
+        final String g = s('voucher_guid');
+        if (g.isNotEmpty) {
+          final DateTime? d = DateTime.tryParse(s('voucher_date'));
+          final String vt = s('voucher_type');
+          go('entryDetail', <String, Object?>{
+            'entry': Voucher(
+              voucherKind(vt),
+              s('party_name').isEmpty ? '—' : s('party_name'),
+              s('reference_no'),
+              d?.day ?? 0,
+              numOf(s('amount')).abs(),
+              guid: g,
+              date: d == null ? null : DateTime(d.year, d.month, d.day),
+              type: vt.isEmpty ? null : vt,
+            ),
+          });
+          return;
+        }
+      case 'party_sync' || 'ledger_sync':
+        final String name = tail();
+        if (name.isNotEmpty) {
+          await openParty(name);
+          return;
+        }
+      case 'item_sync':
+        final String name = tail();
+        if (name.isNotEmpty) {
+          openItem(name);
+          return;
+        }
+      case 'web:BILL':
+        // "🧾 Bill <no> created for <ledger> (₹<amount>)"
+        final RegExpMatch? m = RegExp(
+          r'Bill (.+) created for (.+) \(₹',
+        ).firstMatch(msg);
+        if (m != null) {
+          final String no = m.group(1)!.trim(), led = m.group(2)!.trim();
+          for (final (List<Bill>, String) side in <(List<Bill>, String)>[
+            (repo.receivables(), 'recv'),
+            (repo.payables(), 'pay'),
+          ]) {
+            final Bill? b = side.$1
+                .where((Bill b) => b.no == no && b.party == led)
+                .firstOrNull;
+            if (b != null) {
+              go('billDetail', <String, Object?>{'bill': b.withKind(side.$2)});
+              return;
+            }
+          }
+          go('outHub');
+          say('Bill $no is settled or not synced yet');
+          return;
+        }
+    }
+    run(fallback);
+  }
+
+  /// Opens a party by name: its detail when it is a ledger of this
+  /// company, else its pending bills (Outstanding filtered to the name) —
+  /// never another party's page.
+  Future<void> openParty(String name) async {
+    bool known() => partyPool().any((Party x) => x.name == name);
+    if (!known() && repo.isRemote) {
+      await repo.ensure(DataSet.ledgers);
+      if (_disposed) return;
+    }
+    if (known()) {
+      go('partyDetail', <String, Object?>{
+        'party': name,
+        'partyTab': 'summary',
+      });
+      return;
+    }
+    final bool recv = repo.receivables().any((Bill b) => b.party == name);
+    final bool pay = repo.payables().any((Bill b) => b.party == name);
+    if (recv || pay) {
+      go('outList', <String, Object?>{
+        'outKind': recv ? 'recv' : 'pay',
+        'outFilter': 'all',
+      });
+      _set(() {
+        outSearch = true;
+        outQuery = name;
+      });
+      return;
+    }
+    say('$name is not in this company\'s ledgers');
+  }
+
+  /// A report row's party / item / voucher.
+  void openRowTarget(RowTarget t) {
+    switch (t.kind) {
+      case 'party':
+        unawaited(openParty(t.name));
+      case 'item':
+        openItem(t.name);
+      case 'voucher':
+        go('entryDetail', <String, Object?>{'entry': t.voucher});
+    }
+  }
+
+  // ------------------------------------------------- outstanding search
+  /// Search box on Outstanding / Receivable / Payable is open.
+  bool outSearch = false;
+
+  /// Words to find in party, bill number, place, dates, status and amount.
+  String outQuery = '';
+
+  void toggleOutSearch() => _set(() {
+    outSearch = !outSearch;
+    if (!outSearch) outQuery = '';
+  });
+
+  void setOutQuery(String q) => _set(() => outQuery = q);
+
+  /// [bills] matching every word of [outQuery] (any order, any case) —
+  /// over the bills already on the phone, no extra download.
+  List<Bill> searchBills(List<Bill> bills) {
+    final List<String> words = outQuery
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((String w) => w.isNotEmpty)
+        .toList();
+    if (words.isEmpty) return bills;
+    return bills.where((Bill b) {
+      final String hay =
+          '${b.party} ${b.no} ${b.city} ${b.bill} ${b.due} ${b.txt} '
+                  '${inr(b.amt)} ${qty(b.amt)}'
+              .toLowerCase();
+      return words.every(hay.contains);
+    }).toList();
   }
 
   void openMember(Member m) => _set(() {
@@ -2694,17 +3064,23 @@ class AppController extends ChangeNotifier {
           }
           return;
         }
-        final double maxL = _slot * 5 + 12 - _slot;
+        final int n = barCount;
+        final double maxL = _slot * n + 12 - _slot;
         final double left = (barX(ev.position.dx) - _slot / 2).clamp(0, maxL);
-        final int pos = ((left - 6) / _slot).round().clamp(0, 4);
-        final List<int> order = List<int>.of(tabOrder);
+        final int pos = ((left - 6) / _slot).round().clamp(0, n - 1);
+        final List<int> order = barOrder;
         final int cur = order.indexOf(i);
         _set(() {
           tdrag = (i: i, x: left);
           if (pos != cur) {
             order.removeAt(cur);
             order.insert(pos, i);
-            tabOrder = order;
+            // Hidden tabs keep their place after the visible ones.
+            tabOrder = <int>[
+              ...order,
+              for (final int t in tabOrder)
+                if (!order.contains(t)) t,
+            ];
             pillPos = order.indexOf(tab).toDouble();
             pillSpan = 1;
             pillS = 1;
@@ -2723,7 +3099,10 @@ class AppController extends ChangeNotifier {
     GestureBinding.instance.pointerRouter.addGlobalRoute(r);
     _tlp = Timer(const Duration(milliseconds: 450), () {
       tabLp = true;
-      final double left = (barX(p0.dx) - _slot / 2).clamp(0, _slot * 4 + 12);
+      final double left = (barX(p0.dx) - _slot / 2).clamp(
+        0,
+        _slot * (barCount - 1) + 12,
+      );
       _set(() => tdrag = (i: i, x: left));
       HapticFeedback.lightImpact();
     });
@@ -2741,7 +3120,8 @@ class AppController extends ChangeNotifier {
   int? _hbStart;
   bool _hbTouch = false;
 
-  int barPos(double localX) => ((localX - 6) / _slot).floor().clamp(0, 4);
+  int barPos(double localX) =>
+      ((localX - 6) / _slot).floor().clamp(0, barCount - 1);
 
   void hbDown(PointerDownEvent e, double localX) {
     final int q = barPos(localX);
@@ -2783,7 +3163,7 @@ class AppController extends ChangeNotifier {
     _dw?.cancel();
     final int q = barPos(localX);
     if (_hbTouch && q != _hbStart && tdrag == null) {
-      final int ti = tabOrder[q];
+      final int ti = barOrder[q];
       if (ti != tab) {
         tabLp = true;
         selectTab(ti);
@@ -2809,7 +3189,7 @@ class AppController extends ChangeNotifier {
     if (e.kind == PointerDeviceKind.touch || e.buttons != 0 || tdrag != null) {
       return;
     }
-    final int ti = tabOrder[q];
+    final int ti = barOrder[q];
     if (ti == tab) return;
     _dw0 = Timer(const Duration(milliseconds: 60), () {
       if (hovPos == q && hovOn) _set(() => dwell = true);
@@ -3720,7 +4100,8 @@ class AppController extends ChangeNotifier {
     ]);
     add(<SearchHit>[
       for (final SearchEntry e in kSearch)
-        if (hit('${e.t} ${e.s}'))
+        if (hit('${e.t} ${e.s}') &&
+            (e.a == null || canOpen(e.a!.screen)))
           SearchHit(e.t, e.s, e.ic, e.c, () {
             if (e.f != null) {
               startFlow(e.f!);

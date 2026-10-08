@@ -241,9 +241,11 @@ class ForgotScreen extends ConsumerWidget {
         ),
         const H1('Forgot password?', center: true),
         Sub(
-          c.repo.isRemote
-              ? 'Type the email you use for TallyConnect. We will email you a code to make a new password.'
-              : 'Type the email you use for TallyConnect. We will send you a link to make a new password.',
+          c.forgotDone
+              ? 'Your password has been changed.'
+              : (c.forgotSent
+                    ? 'Enter the 6-digit code we emailed to ${c.f('fEmail').trim()} and choose a new password.'
+                    : 'Type the email you use for TallyConnect. We will email you a code to make a new password.'),
           center: true,
         ),
         if (!c.forgotSent)
@@ -263,9 +265,7 @@ class ForgotScreen extends ConsumerWidget {
                   ),
                 ),
                 Btn(
-                  label: c.busy
-                      ? 'Sending…'
-                      : (c.repo.isRemote ? 'Send code' : 'Send link'),
+                  label: c.busy ? 'Sending…' : 'Send code',
                   icon: 'send',
                   enabled: !c.busy,
                   onTap: c.sendReset,
@@ -273,7 +273,113 @@ class ForgotScreen extends ConsumerWidget {
               ],
             ),
           ),
-        if (c.forgotSent)
+        // Step 2: code + new password.
+        if (c.forgotSent && !c.forgotDone)
+          Rise(
+            ms: 400,
+            child: Glass(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Fld(
+                    label: '6-digit code',
+                    req: true,
+                    child: Inp(
+                      value: c.f('fCode'),
+                      onChanged: (String v) => c.setF('fCode', v),
+                      placeholder: '••••••',
+                      icon: 'key',
+                      keyboard: TextInputType.number,
+                      maxLength: 6,
+                      formatters: kDigits,
+                      letterSpacing: 4,
+                    ),
+                  ),
+                  Fld(
+                    label: 'New password',
+                    req: true,
+                    child: Inp(
+                      value: c.f('fPass'),
+                      onChanged: (String v) => c.setF('fPass', v),
+                      placeholder: 'At least 8 characters',
+                      icon: 'lock',
+                      obscure: !c.showPass,
+                      trailing: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => c.update(() => c.showPass = !c.showPass),
+                        child: SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: Center(
+                            child: Ic(
+                              c.showPass ? 'eyeOff' : 'eye',
+                              color: p.ink3,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Fld(
+                    label: 'Confirm new password',
+                    req: true,
+                    child: Inp(
+                      value: c.f('fPass2'),
+                      onChanged: (String v) => c.setF('fPass2', v),
+                      placeholder: 'Type it again',
+                      icon: 'lock',
+                      obscure: !c.showPass,
+                    ),
+                  ),
+                  if (c.f('fCode').isNotEmpty && c.resetError != null)
+                    InfoBox(
+                      c.resetError!,
+                      icon: 'info',
+                      margin: const EdgeInsets.only(bottom: 12),
+                    ),
+                  Btn(
+                    label: c.busy ? 'Saving…' : 'Set new password',
+                    icon: 'check',
+                    enabled: !c.busy && c.resetError == null,
+                    onTap: c.confirmReset,
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Btn(
+                          label: 'Change email',
+                          kind: BtnKind.g,
+                          enabled: !c.busy,
+                          onTap: () => c.update(() => c.forgotSent = false),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Btn(
+                          label: 'Resend code',
+                          kind: BtnKind.g,
+                          enabled: !c.busy,
+                          onTap: c.sendReset,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Text(
+                      'The code works for 10 minutes. Check spam if it does not arrive.',
+                      textAlign: TextAlign.center,
+                      style: rsStyle(context, 12.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        // Done.
+        if (c.forgotDone)
           Rise(
             ms: 400,
             child: Glass(
@@ -283,16 +389,14 @@ class ForgotScreen extends ConsumerWidget {
                   const Tk(true, size: 56, iconSize: IcSize.l),
                   const SizedBox(height: 10),
                   Text(
-                    'Check your email',
+                    'Password changed',
                     textAlign: TextAlign.center,
                     style: rtStyle(context, 19),
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(0, 6, 0, 16),
                     child: Text(
-                      c.repo.isRemote
-                          ? 'We sent a 6-digit code to your email. It works for 10 minutes.'
-                          : 'We sent a link. Open it to set a new password.',
+                      'Log in with your email and the new password.',
                       textAlign: TextAlign.center,
                       style: ts(15, h: 1.3, c: p.ink3),
                     ),

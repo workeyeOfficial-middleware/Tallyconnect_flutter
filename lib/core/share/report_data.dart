@@ -10,8 +10,29 @@ import '../../data/repositories/tally_repository.dart';
 import '../utils/format.dart';
 import 'share_doc.dart' show rateLabel, stockLabel;
 
+/// What a report row opens: a party (`party`), an item (`item`) or a
+/// voucher (`voucher`, [voucher] set). [kind] `''`: not tappable.
+class RowTarget {
+  const RowTarget.party(this.name) : kind = 'party', voucher = null;
+  const RowTarget.item(this.name) : kind = 'item', voucher = null;
+  RowTarget.voucher(Voucher this.voucher) : kind = 'voucher', name = '';
+  final String kind, name;
+  final Voucher? voucher;
+}
+
 class ReportRow {
-  const ReportRow(this.n, this.t, this.s, this.v, this.cls, [this.value]);
+  const ReportRow(
+    this.n,
+    this.t,
+    this.s,
+    this.v,
+    this.cls, [
+    this.value,
+    this.target,
+  ]);
+
+  /// Opened when the row is tapped (null: nothing to open).
+  final RowTarget? target;
 
   /// Avatar text (rank, day or initial).
   final String n;
@@ -118,6 +139,7 @@ ReportData reportData(TallyRepository repo, String id) {
             inr(t5[i].value),
             'in',
             t5[i].value,
+            RowTarget.party(t5[i].key),
           ),
       ];
       tot = inr(
@@ -170,6 +192,8 @@ ReportData reportData(TallyRepository repo, String id) {
                   : 'Last entry ${dmy(x.lastDate)}',
               '—',
               '',
+              null,
+              RowTarget.party(x.name),
             ),
         ];
       } else {
@@ -183,6 +207,8 @@ ReportData reportData(TallyRepository repo, String id) {
               '${x.city} · no sale in 60 days',
               '—',
               '',
+              null,
+              RowTarget.party(x.name),
             ),
         ];
       }
@@ -204,6 +230,8 @@ ReportData reportData(TallyRepository repo, String id) {
                   : 'In stock · no outward movement',
               '—',
               '',
+              null,
+              RowTarget.item(x.name),
             ),
         ];
       } else {
@@ -215,6 +243,8 @@ ReportData reportData(TallyRepository repo, String id) {
               'Finished · not sold this month',
               inr(0),
               '',
+              null,
+              RowTarget.item(x.name),
             ),
         ];
       }
@@ -238,6 +268,7 @@ ReportData reportData(TallyRepository repo, String id) {
             inr(v.amt),
             '',
             v.amt,
+            RowTarget.voucher(v),
           ),
       ];
       tot = inr(d.fold<num>(0, (num s, Voucher v) => s + v.amt));
@@ -267,6 +298,7 @@ ReportData reportData(TallyRepository repo, String id) {
             inr(v.amt),
             '',
             v.amt,
+            RowTarget.voucher(v),
           ),
       ];
       tot = inr(l2.fold<num>(0, (num s, Voucher v) => s + v.amt));
@@ -282,6 +314,7 @@ ReportData reportData(TallyRepository repo, String id) {
             inr(x.worth),
             '',
             x.worth,
+            RowTarget.item(x.name),
           ),
       ];
       tot = inr(items.fold<num>(0, (num s, Item x) => s + x.worth));

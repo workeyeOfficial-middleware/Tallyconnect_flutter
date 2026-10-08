@@ -76,6 +76,8 @@ const Map<String, String> tcIconPaths = <String, String>{
   'edit': 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4',
   'send': 'M21 3 3 10.5l7 3 3 7.5zM10 13.5 21 3',
   'chat': 'M4 20l1.3-4A8 8 0 1 1 8 19z',
+  'globe':
+      'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18',
   'trophy':
       'M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3',
   'pie': 'M21 12A9 9 0 1 1 12 3v9zM15 3.5A9 9 0 0 1 20.5 9H15z',

@@ -890,9 +890,8 @@ class ChipBtn extends StatelessWidget {
   }
 }
 
-/// Wrap of chips: `.chips` gap 8, margin 4 0 14. Up to [wrapMax] chips
-/// wrap onto rows; more than that become two rows that scroll sideways, so
-/// many voucher types never push the page down or overlap.
+/// Row of chips: `.chips` gap 8, margin 4 0 14 — always ONE line that
+/// scrolls sideways ([wrapMax] is no longer used; kept for callers).
 class Chips extends StatelessWidget {
   const Chips({
     super.key,
@@ -904,40 +903,26 @@ class Chips extends StatelessWidget {
   final EdgeInsets margin;
   final int wrapMax;
 
+  /// Filter / type chips on ONE horizontal line that swipes sideways when
+  /// the chips are wider than the screen — never wrapped into more rows
+  /// (same pattern as the voucher-type row).
   @override
-  Widget build(BuildContext context) {
-    if (children.length <= wrapMax) {
-      return Padding(
-        padding: margin,
-        child: Wrap(spacing: 8, runSpacing: 8, children: children),
-      );
-    }
-    final int half = (children.length + 1) ~/ 2;
-    Widget row(List<Widget> cs) => Row(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        for (int i = 0; i < cs.length; i++) ...<Widget>[
-          if (i > 0) const SizedBox(width: 8),
-          cs[i],
-        ],
-      ],
-    );
-    return Padding(
-      padding: margin,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        clipBehavior: Clip.none,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            row(children.sublist(0, half)),
-            const SizedBox(height: 8),
-            row(children.sublist(half)),
+  Widget build(BuildContext context) => Padding(
+    padding: margin,
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      clipBehavior: Clip.none,
+      physics: const BouncingScrollPhysics(),
+      child: Row(
+        children: <Widget>[
+          for (int i = 0; i < children.length; i++) ...<Widget>[
+            if (i > 0) const SizedBox(width: 8),
+            children[i],
           ],
-        ),
+        ],
       ),
-    );
-  }
+    ),
+  );
 }
 
 /// `.seg`: glass segmented control.

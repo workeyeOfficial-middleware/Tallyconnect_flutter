@@ -24,12 +24,26 @@ class TallyApi {
         },
       );
 
-  /// POST /api/auth/send-otp
+  /// POST /api/auth/send-otp `{email}` → emails a 6-digit code (10 min).
+  /// 404 `User not found` for an unknown email.
   Future<Object?> sendOtp(String email) => http.post(
     '/api/auth/send-otp',
     auth: false,
     body: <String, Object?>{'email': email},
   );
+
+  /// POST /api/auth/verify-otp `{email, otp, newPassword}` → sets the new
+  /// password. 400 `Invalid OTP` / `OTP expired` / `All fields required`.
+  Future<Object?> verifyOtp(String email, String otp, String newPassword) =>
+      http.post(
+        '/api/auth/verify-otp',
+        auth: false,
+        body: <String, Object?>{
+          'email': email,
+          'otp': otp,
+          'newPassword': newPassword,
+        },
+      );
 
   // ------------------------------------------------------- profile (§3)
   Future<Object?> me() => http.get('/users/me');

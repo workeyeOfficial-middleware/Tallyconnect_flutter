@@ -285,6 +285,11 @@ class ApiTallyRepository extends TallyRepository {
     await _api.sendOtp(email.trim());
   }
 
+  @override
+  Future<void> resetPassword(String email, String code, String password) async {
+    await _api.verifyOtp(email.trim(), code.trim(), password);
+  }
+
   // ------------------------------------------------------- snapshot cache
 
   /// Shows the last saved real data at once (before the network answers).

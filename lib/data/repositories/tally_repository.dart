@@ -73,6 +73,9 @@ abstract class TallyRepository extends ChangeNotifier {
   Future<void> logout();
   Future<void> sendResetCode(String email);
 
+  /// Sets a new password with the emailed code.
+  Future<void> resetPassword(String email, String code, String password);
+
   // -------------------------------------------------------------- data
   /// Reloads every data set. Concurrent calls share one load; without
   /// [force] a load finished in the last few seconds is not repeated.
@@ -213,6 +216,12 @@ class MockTallyRepository extends TallyRepository {
   Future<void> logout() async {}
   @override
   Future<void> sendResetCode(String email) async {}
+  @override
+  Future<void> resetPassword(
+    String email,
+    String code,
+    String password,
+  ) async {}
 
   @override
   Future<void> refreshAll({bool force = false}) async {}

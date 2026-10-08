@@ -785,7 +785,8 @@ class _MoneyCard extends ConsumerWidget {
       'purch' => mix(p.navy2, .07),
       _ => navyA(.06),
     };
-    final Map<String, SumCard> sums = c.repo.moneyCards();
+    // All-time values by default (periods are chosen in Vouchers).
+    final Map<String, SumCard> sums = c.homeMoneyCards();
     return Glass(
       padding: const EdgeInsets.all(18),
       child: Column(
