@@ -280,6 +280,12 @@ class TeamAdmin {
 
   Future<void> sendInvite(Member m) => _api.sendInvite(m.email, m.name);
 
+  /// Creates a team login (POST /users) and reloads the team.
+  Future<void> createUser(String email, String password) async {
+    await _api.createUser(email, password);
+    await _reloadTeam();
+  }
+
   Future<void> deleteUser(Member m) async {
     await _api.deleteUser(m.id);
     await _reloadTeam();

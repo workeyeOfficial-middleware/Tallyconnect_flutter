@@ -120,6 +120,15 @@ class TallyApi {
   /// `inventory_permissions`; each `{ columns: { <field>: bool } }`).
   Future<Object?> users() => http.get('/users');
 
+  /// POST /users `{ email, password }` (ADMIN) → `{ user: { id, username,
+  /// email } }`. The server names the login after the email (`username` =
+  /// part before `@`) and stores nothing else; 400 `User already exists`,
+  /// 403 `Upgrade your plan to create more users`.
+  Future<Object?> createUser(String email, String password) => http.post(
+    '/users',
+    body: <String, Object?>{'email': email, 'password': password},
+  );
+
   /// DELETE /users/:id
   Future<Object?> deleteUser(String id) =>
       http.delete('/users/${Uri.encodeComponent(id)}');
@@ -191,6 +200,20 @@ class TallyApi {
   Future<Object?> saveNotificationConfig(Map<String, bool> cfg) =>
       http.put('/api/mobile/notifications/config', body: cfg);
 
+  /// Web-dashboard notifications of this user (`notifications` table:
+  /// BILL, MONTHLY_REPORT, USER_CREATED / USER_DELETED, VOUCHER_CREATED /
+  /// VOUCHER_DELETED), already filtered by the user's web preferences.
+  Future<Object?> markWebNotificationRead(String id) =>
+      http.post('/admin/notifications/${Uri.encodeComponent(id)}/read');
+
+  /// The user's web notification preferences (`users.notification_
+  /// preferences`: bill_created, monthly_reports, new_voucher,
+  /// user_created, user_deleted, payment_due, low_stock). PUT replaces the
+  /// whole object, so callers send every key.
+  Future<Object?> webNotificationPrefs() => http.get('/users/me/notifications');
+  Future<Object?> saveWebNotificationPrefs(Map<String, Object?> prefs) =>
+      http.put('/users/me/notifications', body: prefs);
+
   // ------------------------------------------- raw JSON text (big lists)
   // Same endpoints and parameters as above, returned undecoded so the app
   // parses them in a background isolate and can cache the text as is.
@@ -205,6 +228,10 @@ class TallyApi {
       http.getText('/api/mobile/notifications');
   Future<String> notificationConfigText() =>
       http.getText('/api/mobile/notifications/config');
+  Future<String> webNotificationsText() =>
+      http.getText('/admin/notifications');
+  Future<String> webNotificationPrefsText() =>
+      http.getText('/users/me/notifications');
   Future<String> queueActivityText(String companyGuid) => http.getText(
     '/api/mobile-sync-queue/activity',
     query: <String, Object?>{'company_guid': companyGuid},

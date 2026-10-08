@@ -4,6 +4,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,6 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app/app_state.dart';
 import 'app/providers.dart';
 import 'core/design/tc_kit.dart';
+import 'core/notify/reminder_alarms.dart';
 import 'core/storage/local_storage.dart';
 import 'data/repositories/api_tally_repository.dart';
 import 'data/repositories/tally_repository.dart';
@@ -54,6 +56,10 @@ Future<Widget> _boot() async {
     store: store,
     repo: repo,
     startScreen: restored ? 'home' : 'login',
+    // Reminders ring as device notifications (Android / iOS).
+    alarms: Platform.isAndroid || Platform.isIOS
+        ? DeviceReminderAlarms()
+        : NoReminderAlarms(),
   );
   // Saved data (snapshot cache) is already on screen; fresh data replaces it
   // in the background. Errors keep the saved data and show a toast.

@@ -64,7 +64,9 @@ OutstandingSummary summarise(
   final Set<String> parties = <String>{};
   for (final Bill b in bills) {
     total += b.amt;
-    parties.add(b.ledgerGuid ?? b.party);
+    // By ledger name (unique per company in Tally): a party's bills with
+    // and without a resolved ledger_guid are still one party.
+    parties.add(b.party.trim().toLowerCase());
     final DateTime? due = b.dueDate;
     final int daysLate = due == null ? 0 : -dayDiff(today, due);
     if (daysLate <= 0) {

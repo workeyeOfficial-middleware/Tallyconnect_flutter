@@ -39,6 +39,20 @@ class LocalStorage {
   static const String kBgShade = 'tc-liquid-bg-shade';
   static const String kReminders = 'tc-outstanding-reminders';
 
+  /// Due-bill alerts switch (3 days before due) and the notification ids
+  /// armed for it.
+  static const String kAutoRemind = 'tc-due-alerts-on';
+  static const String kDueAlertIds = 'tc-due-alert-ids';
+
+  /// Name / company-role / mobile entered in Add person, by email (the
+  /// server's create-user endpoint stores only email + password).
+  static const String kMemberInfo = 'tc-team-member-info';
+
+  /// Low-stock alerts switch, and per company the items last seen out of
+  /// stock (so only items that newly run out raise an alert).
+  static const String kLowStockOn = 'tc-low-stock-alerts-on';
+  static const String kOutStock = 'tc-out-of-stock-items';
+
   /// `loadJ(k, d)`.
   T load<T>(String k, T d) {
     try {

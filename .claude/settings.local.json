@@ -3,7 +3,10 @@
     "allow": [
       "Bash(python -)",
       "Bash(dart format *)",
-      "Bash(dart analyze *)"
+      "Bash(dart analyze *)",
+      "Read(//c/Users/AVERLON/Downloads/Tallyconnect__Backend/tally-backend/routes/**)",
+      "Read(//c/Users/AVERLON/Downloads/Tallyconnect__Backend/tally-backend/utils/**)",
+      "Read(//c/Users/AVERLON/Downloads/Tallyconnect__Backend/tally-backend/**)"
     ]
   }
 }

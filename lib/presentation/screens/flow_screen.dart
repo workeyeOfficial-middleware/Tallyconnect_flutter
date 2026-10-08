@@ -436,53 +436,29 @@ class _Items extends ConsumerWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: <Widget>[
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: <Widget>[
-                                    RTx(
-                                      lines[i].name,
-                                      '${inr(lines[i].rate)} × ${lines[i].qty} ${lines[i].unit} · GST ${qty(lines[i].gst)}%',
-                                    ),
-                                    // This line's rate / GST (this bill only).
-                                    Tap(
-                                      onTap: () => c.openLineEdit(i),
-                                      radius: 8,
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 6,
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: <Widget>[
-                                            Ic(
-                                              'edit',
-                                              size: IcSize.xs,
-                                              color: Tc.of(context).acc,
-                                            ),
-                                            const SizedBox(width: 6),
-                                            Flexible(
-                                              child: Text(
-                                                'Edit rate / GST',
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: ts(
-                                                  13.5,
-                                                  w: w700,
-                                                  c: Tc.of(context).acc,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                                child: _LineText(
+                                  line: lines[i],
+                                  // Tap the GST: this line's GST (this bill).
+                                  onGst: () => c.openLineEdit(i, field: 'gst'),
+                                  gstKey: ValueKey<String>('lineGst$i'),
                                 ),
                               ),
                               const SizedBox(width: 10),
-                              Text(
-                                inr(lines[i].rate * lines[i].qty),
-                                style: amtStyle(context),
+                              // Double-tap the amount: this line's rate.
+                              GestureDetector(
+                                key: ValueKey<String>('lineAmt$i'),
+                                behavior: HitTestBehavior.opaque,
+                                onDoubleTap: () => c.openLineEdit(i),
+                                child: Padding(
+                                  padding: const EdgeInsets.only(
+                                    left: 6,
+                                    bottom: 6,
+                                  ),
+                                  child: Text(
+                                    inr(lines[i].rate * lines[i].qty),
+                                    style: amtStyle(context),
+                                  ),
+                                ),
                               ),
                             ],
                           ),
@@ -542,6 +518,52 @@ class _Items extends ConsumerWidget {
           ], margin: const EdgeInsets.only(top: 12)),
         ],
       ),
+    );
+  }
+}
+
+/// Item line name and `₹rate × qty unit · GST n%`; the GST part is a tap
+/// target (dotted underline) that opens this line's GST editor.
+class _LineText extends StatelessWidget {
+  const _LineText({required this.line, required this.onGst, this.gstKey});
+  final Line line;
+  final VoidCallback onGst;
+  final Key? gstKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    final TextStyle sub = ts(13.5, h: 1.3, c: p.ink3);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(line.name, style: ts(16, w: w700, h: 1.25, c: p.ink)),
+        const SizedBox(height: 2),
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            Text('${inr(line.rate)} × ${line.qty} ${line.unit} · ', style: sub),
+            GestureDetector(
+              key: gstKey,
+              behavior: HitTestBehavior.opaque,
+              onTap: onGst,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Text(
+                  'GST ${qty(line.gst)}%',
+                  style: sub.copyWith(
+                    color: p.acc,
+                    fontWeight: w700,
+                    decoration: TextDecoration.underline,
+                    decorationStyle: TextDecorationStyle.dotted,
+                    decorationColor: p.acc,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

@@ -426,6 +426,50 @@ const Map<String, (String, String, NavTo)> kNotifTypes =
       'system_alerts': ('bell', 'acc', NavTo('notifs')),
     };
 
+/// Prefix of web-dashboard alert ids (`w:<id>`) and of web preference keys
+/// in the alert switches (`web.<key>`).
+const String kWebNotif = 'w:';
+const String kWebPref = 'web.';
+
+/// Web-dashboard alert types shown in the app: title, icon, colour, target.
+/// Other web types (none with a switch) are not shown.
+const Map<String, (String, String, String, NavTo)> kWebNotifTypes =
+    <String, (String, String, String, NavTo)>{
+      'BILL': ('Bill Created', 'file', 'sales', NavTo('outHub')),
+      'MONTHLY_REPORT': ('Monthly Report', 'chart', 'acc', NavTo('reports')),
+      'USER_CREATED': ('Team Member Added', 'userPlus', 'team', NavTo('team')),
+      'USER_INVITE': ('Team Invite Sent', 'mail', 'team', NavTo('team')),
+      'USER_DELETED': ('Team Member Removed', 'person', 'team', NavTo('team')),
+      'VOUCHER_CREATED': (
+        'Voucher Created',
+        'receipt',
+        'vouchers',
+        NavTo('activity'),
+      ),
+      'VOUCHER_DELETED': (
+        'Voucher Deleted',
+        'trash',
+        'vouchers',
+        NavTo('activity'),
+      ),
+    };
+
+/// A `/admin/notifications` row → [Notif] (id `w:<id>`).
+Notif webNotifFrom(Map<String, Object?> m, DateTime now) {
+  final (String, String, String, NavTo) t = kWebNotifTypes[str(m['type'])]!;
+  final DateTime? at = instant(m['created_at']);
+  return Notif(
+    '$kWebNotif${str(m['id'])}',
+    t.$1,
+    str(m['message']),
+    at == null ? '' : ago(at, now),
+    t.$2,
+    t.$3,
+    m['is_read'] != true,
+    t.$4,
+  );
+}
+
 Notif notifFrom(Map<String, Object?> m, DateTime now) {
   final (String, String, NavTo) t =
       kNotifTypes[str(m['type'])] ?? ('bell', 'acc', const NavTo('notifs'));

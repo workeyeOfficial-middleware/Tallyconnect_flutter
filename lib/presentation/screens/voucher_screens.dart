@@ -229,27 +229,27 @@ Widget voucherRow(BuildContext context, AppController c, Voucher x) {
           color: p.cat(kKinds[x.kind]!.c),
           icon: IcSize.s,
         ),
-        Expanded(child: RTx(x.party, '${x.no} · ${vDay(x)}', ell: true)),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: <Widget>[
-            Text(
-              '${x.kind == 'receipt' ? '+' : (x.kind == 'payment' ? '−' : '')}${inr(x.amt)}',
-              style: amtStyle(
-                context,
-                cls: x.kind == 'receipt'
-                    ? 'in'
-                    : (x.kind == 'payment' ? 'out' : ''),
-              ),
-            ),
-            const SizedBox(height: 4),
-            const Bdg(
-              'Synced',
-              kind: BadgeKind.ok,
-              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              fontSize: 11,
-            ),
-          ],
+        // Number · date · voucher type (Tally sync status is not shown).
+        Expanded(
+          child: RTx(
+            x.party,
+            <String>[
+              x.no,
+              vDay(x),
+              if ((x.type ?? '').trim().isNotEmpty) x.type!.trim(),
+            ].where((String s) => s.isNotEmpty).join(' · '),
+            ell: true,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          '${x.kind == 'receipt' ? '+' : (x.kind == 'payment' ? '−' : '')}${inr(x.amt)}',
+          style: amtStyle(
+            context,
+            cls: x.kind == 'receipt'
+                ? 'in'
+                : (x.kind == 'payment' ? 'out' : ''),
+          ),
         ),
       ],
     ),
@@ -273,6 +273,82 @@ class VListScreen extends ConsumerWidget {
     return ListenableBuilder(
       listenable: pager,
       builder: (BuildContext context, _) => _VList(c: c, pager: pager),
+    );
+  }
+}
+
+/// Voucher-type chips on ONE swipeable line (never wrapped), with a fixed
+/// "More" (+) button at the end that opens every type in a sheet. A type
+/// picked from the sheet is moved to the front of the extra types so it is
+/// on screen.
+class VoucherTypeRow extends StatelessWidget {
+  const VoucherTypeRow({super.key, required this.c, required this.otherTypes});
+  final AppController c;
+  final List<String> otherTypes;
+
+  @override
+  Widget build(BuildContext context) {
+    final String sel = c.vFilter.startsWith('type:')
+        ? c.vFilter.substring(5)
+        : '';
+    final List<String> extra = <String>[
+      if (sel.isNotEmpty) sel,
+      for (final String t in otherTypes)
+        if (t != sel) t,
+    ];
+    // 42 px chips + 16 px below them inside the row (the selected chip's
+    // shadow is not clipped), same total height as before.
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: SizedBox(
+        height: 58,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(
+              child: ShaderMask(
+                // Soft fade at the right edge: more chips to swipe to.
+                shaderCallback: (Rect r) => const LinearGradient(
+                  colors: <Color>[Color(0xFFFFFFFF), Color(0x00FFFFFF)],
+                  stops: <double>[.92, 1],
+                ).createShader(r),
+                blendMode: BlendMode.dstIn,
+                child: ListView(
+                  key: const PageStorageKey<String>('vTypeRow'),
+                  scrollDirection: Axis.horizontal,
+                  clipBehavior: Clip.none,
+                  padding: const EdgeInsets.only(right: 16, bottom: 16),
+                  children: <Widget>[
+                    for (final (String, String) x in kVF) ...<Widget>[
+                      ChipBtn(
+                        x.$2,
+                        on: c.vFilter == x.$1,
+                        onTap: () => c.update(() => c.vFilter = x.$1),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    for (final String t in extra) ...<Widget>[
+                      ChipBtn(
+                        t,
+                        on: c.vFilter == 'type:$t',
+                        onTap: () => c.update(() => c.vFilter = 'type:$t'),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            ChipBtn(
+              otherTypes.isEmpty ? 'More' : '${otherTypes.length}',
+              key: const ValueKey<String>('vTypesMore'),
+              icon: 'plus',
+              onTap: () => c.openVoucherTypes(otherTypes),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -438,23 +514,7 @@ class _VList extends StatelessWidget {
           count: countText,
           total: totalText,
         ),
-        Chips(
-          margin: const EdgeInsets.only(top: 4, bottom: 14),
-          children: <Widget>[
-            for (final (String, String) x in kVF)
-              ChipBtn(
-                x.$2,
-                on: c.vFilter == x.$1,
-                onTap: () => c.update(() => c.vFilter = x.$1),
-              ),
-            for (final String t in otherTypes)
-              ChipBtn(
-                t,
-                on: c.vFilter == 'type:$t',
-                onTap: () => c.update(() => c.vFilter = 'type:$t'),
-              ),
-          ],
-        ),
+        VoucherTypeRow(c: c, otherTypes: otherTypes),
         Seg(
           items: periods.map(((String, String) e) => e.$2).toList(),
           selected: periods.indexWhere(
@@ -490,10 +550,11 @@ class _VList extends StatelessWidget {
   }
 }
 
-/// The list's Entries / Total value card. Count and value share the row in
-/// proportion to their own length (same font size), always keep a gap, and
-/// each shrinks to fit only when both together are wider than the row — so
-/// they never overlap or clip, however large the numbers grow.
+/// The list's Entries / Total value card. Count and value sit in two
+/// columns split by a thin divider with clear space on both sides. Each
+/// column is as wide as its own number; when both together are wider than
+/// the row, both shrink by the same factor (so they keep one size) — they
+/// never touch, overlap or clip, however large the numbers grow.
 class VoucherSummaryRow extends StatelessWidget {
   const VoucherSummaryRow({
     super.key,
@@ -505,58 +566,95 @@ class VoucherSummaryRow extends StatelessWidget {
   final String icon, count, total;
   final Color color;
 
+  /// Space on each side of the divider.
+  static const double gap = 14;
+
   @override
-  Widget build(BuildContext context) => GlassRow(
-    minHeight: 72,
-    children: <Widget>[
-      Ico(icon, size: IcoSize.sm, color: color),
-      Expanded(
-        child: Row(
-          // Count at the left edge, value at the right edge (as before).
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: <Widget>[
-            Flexible(
-              flex: math.max(count.length, 3),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    'Entries',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: rsStyle(context),
-                  ),
-                  AmtText(
-                    count,
-                    align: Alignment.centerLeft,
-                    style: rtStyle(context, 22),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-            Flexible(
-              flex: math.max(total.length, 3),
-              child: Column(
+  Widget build(BuildContext context) {
+    final TextStyle countStyle = rtStyle(context, 22);
+    final TextStyle totalStyle = amtStyle(context, size: 22);
+    final TextStyle label = rsStyle(context);
+    final TextScaler scaler = MediaQuery.textScalerOf(context);
+    double width(String s, TextStyle st) {
+      final TextPainter tp = TextPainter(
+        text: TextSpan(text: s, style: st),
+        textDirection: TextDirection.ltr,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      final double w = tp.width;
+      tp.dispose();
+      return w;
+    }
+
+    return GlassRow(
+      minHeight: 72,
+      children: <Widget>[
+        Ico(icon, size: IcoSize.sm, color: color),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints box) {
+              final double room = math.max(0, box.maxWidth - 2 * gap - 1);
+              final double cw = width(count, countStyle);
+              final double tw = width(total, totalStyle);
+              // One shared factor: 1 when both fit at full size.
+              final double s = cw + tw <= room ? 1 : room / (cw + tw);
+              // Count column: its (scaled) number, at least its label, at
+              // most 45 % of the row; the value column takes the rest.
+              final double countW = math
+                  .max(cw * s, math.min(width('Entries', label), room * .3))
+                  .clamp(0, room * .45)
+                  .toDouble();
+              return Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: <Widget>[
-                  Text(
-                    'Total value',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: rsStyle(context),
+                  SizedBox(
+                    width: countW,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          'Entries',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: label,
+                        ),
+                        AmtText(
+                          count,
+                          align: Alignment.centerLeft,
+                          style: countStyle,
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 4),
-                  AmtText(total, style: amtStyle(context, size: 22)),
+                  Container(
+                    width: 1,
+                    height: 40,
+                    margin: const EdgeInsets.symmetric(horizontal: gap),
+                    color: navyA(.12),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: <Widget>[
+                        Text(
+                          'Total value',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: label,
+                        ),
+                        AmtText(total, style: totalStyle),
+                      ],
+                    ),
+                  ),
                 ],
-              ),
-            ),
-          ],
+              );
+            },
+          ),
         ),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 class EntryDetailScreen extends ConsumerWidget {

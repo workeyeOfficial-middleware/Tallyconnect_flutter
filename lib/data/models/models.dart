@@ -368,6 +368,15 @@ class Member {
   final String id, name, email, role, st;
 
   Member withSt(String s) => Member(id, name, email, role, s);
+
+  /// Same member with the name / role entered on this phone (if any).
+  Member labeled(String? n, String? r) => Member(
+    id,
+    (n ?? '').trim().isEmpty ? name : n!.trim(),
+    email,
+    (r ?? '').trim().isEmpty ? role : r!.trim(),
+    st,
+  );
 }
 
 /// Workspace (`WS`, 1847).
@@ -686,8 +695,12 @@ class Reminder {
     required this.date,
     this.time = '',
     this.note = '',
+    this.done = false,
   });
   final String id, company, billKey, party, billNo;
+
+  /// Marked done (from the list or the notification): no longer rings.
+  final bool done;
 
   /// `recv` | `pay`
   final String kind;
@@ -712,6 +725,20 @@ class Reminder {
     return DateTime(d.year, d.month, d.day, h, m);
   }
 
+  Reminder copyWith({String? date, String? time, bool? done}) => Reminder(
+    id: id,
+    company: company,
+    billKey: billKey,
+    party: party,
+    billNo: billNo,
+    kind: kind,
+    amount: amount,
+    date: date ?? this.date,
+    time: time ?? this.time,
+    note: note,
+    done: done ?? this.done,
+  );
+
   Map<String, Object?> toJson() => <String, Object?>{
     'id': id,
     'company': company,
@@ -723,6 +750,7 @@ class Reminder {
     'date': date,
     'time': time,
     'note': note,
+    'done': done,
   };
 
   static Reminder? fromJson(Object? o) {
@@ -738,6 +766,7 @@ class Reminder {
       date: o['date'] as String,
       time: o['time'] is String ? o['time'] as String : '',
       note: '${o['note'] ?? ''}',
+      done: o['done'] == true,
     );
   }
 }

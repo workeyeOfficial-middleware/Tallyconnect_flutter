@@ -515,9 +515,28 @@ class ApiTallyRepository extends TallyRepository {
         if (_active == null) return '[]';
         return _api.queueActivityText(_active!);
       case DataSet.notifications:
-        return _api.notificationsText();
+        // Mobile alerts + the web-dashboard alerts (bill created, monthly
+        // report, team, voucher updates). The web list is optional: if it
+        // fails, the mobile alerts still show.
+        final String nMobile = await _api.notificationsText();
+        String nWeb = 'null';
+        try {
+          nWeb = await _api.webNotificationsText();
+        } on ApiException catch (e) {
+          if (e.kind == ApiErrorKind.unauthorized) rethrow;
+        }
+        return '{"mobile":$nMobile,"web":$nWeb}';
       case DataSet.alerts:
-        return _api.notificationConfigText();
+        // Mobile switches (/api/mobile/notifications/config) + web switches
+        // (/users/me/notifications).
+        final String aMobile = await _api.notificationConfigText();
+        String aWeb = 'null';
+        try {
+          aWeb = await _api.webNotificationPrefsText();
+        } on ApiException catch (e) {
+          if (e.kind == ApiErrorKind.unauthorized) rethrow;
+        }
+        return '{"mobile":$aMobile,"web":$aWeb}';
       case DataSet.team:
         return _api.usersText();
     }
@@ -1127,18 +1146,51 @@ class ApiTallyRepository extends TallyRepository {
   Map<String, bool>? alertConfig() => _alerts;
 
   @override
-  Future<void> saveAlert(String key, bool on) async {
-    final Object? b = await _api.saveNotificationConfig(<String, bool>{
-      key: on,
-    });
-    final Object? c = b is Map ? b['config'] : null;
-    if (c is Map) {
-      _alerts = <String, bool>{
-        for (final MapEntry<Object?, Object?> e in c.entries)
-          '${e.key}': e.value == true,
-      };
+  Future<void> saveAlert(String key, bool on) =>
+      saveAlerts(<String, bool>{key: on});
+
+  /// Saves switches: plain keys → mobile config (PUT merges on the server);
+  /// `web.<key>` → web preferences (PUT replaces, so the current object is
+  /// read first and every key is sent). Then reloads the alert list, which
+  /// the server filters by these switches.
+  @override
+  Future<void> saveAlerts(Map<String, bool> changes) async {
+    final Map<String, bool> mobile = <String, bool>{
+      for (final MapEntry<String, bool> e in changes.entries)
+        if (!e.key.startsWith(kWebPref)) e.key: e.value,
+    };
+    final Map<String, bool> web = <String, bool>{
+      for (final MapEntry<String, bool> e in changes.entries)
+        if (e.key.startsWith(kWebPref))
+          e.key.substring(kWebPref.length): e.value,
+    };
+    final Map<String, bool> next = <String, bool>{...?_alerts};
+    if (mobile.isNotEmpty) {
+      final Object? b = await _api.saveNotificationConfig(mobile);
+      final Object? c = b is Map ? b['config'] : null;
+      if (c is Map) {
+        next.removeWhere((String k, bool _) => !k.startsWith(kWebPref));
+        for (final MapEntry<Object?, Object?> e in c.entries) {
+          next['${e.key}'] = e.value == true;
+        }
+      }
     }
+    if (web.isNotEmpty) {
+      final Object? cur = await _api.webNotificationPrefs();
+      final Map<String, Object?> all = <String, Object?>{
+        if (cur is Map)
+          for (final MapEntry<Object?, Object?> e in cur.entries)
+            '${e.key}': e.value,
+        ...web,
+      };
+      await _api.saveWebNotificationPrefs(all);
+      for (final MapEntry<String, Object?> e in all.entries) {
+        next['$kWebPref${e.key}'] = e.value == true;
+      }
+    }
+    _alerts = next;
     _notify();
+    await refreshNotifications();
   }
 
   // --------------------------------------------------- detail on demand
@@ -1236,12 +1288,17 @@ class ApiTallyRepository extends TallyRepository {
   }
 
   // -------------------------------------------------------- notifications
+  /// Web-dashboard alerts carry `w:<id>` (own table and read route).
+  Future<Object?> _markRead(String id) => id.startsWith(kWebNotif)
+      ? _api.markWebNotificationRead(id.substring(kWebNotif.length))
+      : _api.markNotificationRead(id);
+
   @override
   Future<void> markNotifRead(String id) async {
     _notifs = _notifs.map((Notif n) => n.id == id ? n.read() : n).toList();
     _notify();
     try {
-      await _api.markNotificationRead(id);
+      await _markRead(id);
     } on ApiException catch (e) {
       if (e.kind == ApiErrorKind.unauthorized) _expired = true;
       await refreshNotifications();
@@ -1259,7 +1316,7 @@ class ApiTallyRepository extends TallyRepository {
     _notify();
     for (final String id in ids) {
       try {
-        await _api.markNotificationRead(id);
+        await _markRead(id);
       } on ApiException {
         await refreshNotifications();
         return;
@@ -1270,10 +1327,6 @@ class ApiTallyRepository extends TallyRepository {
   // --------------------------------------------------------------- entries
   @override
   String? entryBlocker(EntryDraft d) {
-    if (d.type == 'purchase') {
-      return 'Purchase cannot be sent yet: the server records the supplier '
-          'on the debit side (reversed). Saved entries would be wrong in Tally.';
-    }
     if (_active == null) return 'No active company on the server.';
     return null;
   }
@@ -1284,7 +1337,8 @@ class ApiTallyRepository extends TallyRepository {
     if (block != null) return SubmitResult(ok: false, message: block);
     try {
       final Object? body = switch (d.type) {
-        'sales' => await _api.createSalesPurchase(salesBody(d)),
+        'sales' ||
+        'purchase' => await _api.createSalesPurchase(salesBody(d)),
         'receipt' => await _api.createReceipt(receiptBody(d)),
         'payment' => await _api.createPayment(paymentBody(d)),
         'journal' => await _api.createJournal(journalBody(d)),
@@ -1319,8 +1373,11 @@ Map<String, Object?> _clean(Map<String, Object?> m) => <String, Object?>{
     if (e.value != null) e.key: e.value,
 };
 
-/// Sales body (`POST /api/mobile-voucher-command/create`). GST is split
-/// equally into CGST / SGST because the endpoint has no IGST field.
+/// Sales / Purchase body (`POST /api/mobile-voucher-command/create`). GST
+/// is split equally into CGST / SGST because the endpoint has no IGST
+/// field. The agent writes the sides from `voucher_type`: Sales → customer
+/// Dr, stock out, Sales + GST Cr; Purchase → supplier Cr, stock in,
+/// Purchase + input GST Dr.
 Map<String, Object?> salesBody(EntryDraft d) {
   num sub = 0, tax = 0;
   final List<Map<String, Object?>> items = <Map<String, Object?>>[];
@@ -1355,9 +1412,11 @@ Map<String, Object?> salesBody(EntryDraft d) {
   final num total = paise(sub + tax);
   final num got = paise(d.amount);
   return _clean(<String, Object?>{
-    'voucher_type': 'Sales',
+    'voucher_type': d.type == 'purchase' ? 'Purchase' : 'Sales',
     'voucher_date': d.date,
-    'voucher_no': _opt(d.no),
+    // Purchase without its own number: the supplier's bill number.
+    'voucher_no':
+        _opt(d.no) ?? (d.type == 'purchase' ? _opt(d.supplierInvoice) : null),
     'party_name': d.party,
     'due_date': _opt(d.due),
     'narration': _opt(d.note),

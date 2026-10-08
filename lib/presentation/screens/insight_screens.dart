@@ -759,11 +759,7 @@ class TeamScreen extends ConsumerWidget {
       c.overlay = 'invite';
       c.form['iEmail'] = '';
     });
-    void create() => c.update(() {
-      c.overlay = 'newUser';
-      c.form['nuName'] = '';
-      c.form['nuPhone'] = '';
-    });
+    void create() => c.openNewUser();
     return Scr(
       children: <Widget>[
         NavRow(

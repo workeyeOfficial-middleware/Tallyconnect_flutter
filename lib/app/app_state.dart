@@ -6,6 +6,7 @@ library;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
@@ -17,6 +18,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../core/design/tc_color_math.dart';
 import '../core/network/api_client.dart';
+import '../core/notify/reminder_alarms.dart';
 import '../core/design/tc_palette.dart';
 import '../core/storage/local_storage.dart';
 import '../core/utils/format.dart';
@@ -154,6 +156,167 @@ class HitRegistry {
   }
 }
 
+/// One switch in Settings → Notifications.
+///
+/// [key]: a mobile alert type (`create_entry`, `voucher_sync`, … — saved
+/// with /api/mobile/notifications/config), `web.<key>` (web-dashboard
+/// preference — /users/me/notifications) or `phone.<key>` (generated on
+/// this phone from real data: due dates, stock).
+class NotifPref {
+  const NotifPref(
+    this.key,
+    this.t,
+    this.s,
+    this.group,
+    this.ic,
+    this.c, {
+    this.adminOnly = false,
+  });
+  final String key, t, s, group, ic, c;
+  final bool adminOnly;
+}
+
+const List<NotifPref> kNotifPrefs = <NotifPref>[
+  NotifPref(
+    'voucher_sync',
+    'New vouchers synced from Tally',
+    'When the sync brings new vouchers from Tally',
+    'Tally sync',
+    'receipt',
+    'vouchers',
+  ),
+  NotifPref(
+    'sync_completed',
+    'Sync completed',
+    'When a sync with Tally finishes',
+    'Tally sync',
+    'sync',
+    'activity',
+  ),
+  NotifPref(
+    'sync_failed',
+    'Sync failed',
+    'When a sync with Tally fails',
+    'Tally sync',
+    'xCircle',
+    'payment',
+  ),
+  NotifPref(
+    'tally_connection',
+    'Tally connection',
+    'When Tally connects or disconnects',
+    'Tally sync',
+    'laptop',
+    'activity',
+  ),
+  NotifPref(
+    'party_sync',
+    'New party synced',
+    'A new customer or supplier arrives from Tally',
+    'Tally sync',
+    'person',
+    'party',
+  ),
+  NotifPref(
+    'ledger_sync',
+    'New ledger synced',
+    'A new ledger arrives from Tally',
+    'Tally sync',
+    'person',
+    'party',
+  ),
+  NotifPref(
+    'item_sync',
+    'New item synced',
+    'A new stock item arrives from Tally',
+    'Tally sync',
+    'box',
+    'items',
+  ),
+  NotifPref(
+    'create_entry',
+    'New entry created',
+    'An entry made in the app is queued for Tally',
+    'Entries',
+    'plus',
+    'activity',
+  ),
+  NotifPref(
+    'entry_failed',
+    'Entry failed to reach Tally',
+    'Tally could not take an entry made in the app',
+    'Entries',
+    'xCircle',
+    'payment',
+  ),
+  NotifPref(
+    'web.new_voucher',
+    'Voucher / entry updates',
+    'Vouchers created or deleted from TallyConnect',
+    'Entries',
+    'receipt',
+    'vouchers',
+  ),
+  NotifPref(
+    'web.bill_created',
+    'Bill created',
+    'When a new bill is created',
+    'Bills and payments',
+    'file',
+    'sales',
+  ),
+  NotifPref(
+    'phone.due',
+    'Payment due reminders',
+    '3 days before a bill is due (on this phone)',
+    'Bills and payments',
+    'calendar',
+    'payment',
+  ),
+  NotifPref(
+    'phone.lowStock',
+    'Low stock alerts',
+    'When an item runs out of stock in Tally (on this phone)',
+    'Stock',
+    'box',
+    'items',
+  ),
+  NotifPref(
+    'web.monthly_reports',
+    'Monthly reports',
+    'When your scheduled monthly report is ready',
+    'Reports',
+    'chart',
+    'acc',
+  ),
+  NotifPref(
+    'web.user_created',
+    'Team member added',
+    'Someone is added to your team',
+    'Team',
+    'userPlus',
+    'team',
+    adminOnly: true,
+  ),
+  NotifPref(
+    'web.user_deleted',
+    'Team member removed',
+    'Someone is removed from your team',
+    'Team',
+    'person',
+    'team',
+    adminOnly: true,
+  ),
+  NotifPref(
+    'system_alerts',
+    'System alerts',
+    'Important messages about your account',
+    'System',
+    'bell',
+    'acc',
+  ),
+];
+
 class AppController extends ChangeNotifier {
   AppController({
     required this.store,
@@ -161,8 +324,10 @@ class AppController extends ChangeNotifier {
     String startScreen = 'login',
     double glassLevel = 60,
     DocExporter? exporter,
+    ReminderAlarms? alarms,
   }) : repo = repo ?? MockTallyRepository(),
-       exporter = exporter ?? PlatformDocExporter() {
+       exporter = exporter ?? PlatformDocExporter(),
+       alarms = alarms ?? NoReminderAlarms() {
     final int ti = kTabs.indexWhere(
       (({String k, String t, String ic}) t) => t.k == startScreen,
     );
@@ -180,9 +345,10 @@ class AppController extends ChangeNotifier {
       company = this.repo.activeCompanyId ?? '';
       acts = this.repo.activity();
       notifs = this.repo.notifications();
-      team = this.repo.team();
+      team = _labelTeam(this.repo.team());
       this.repo.addListener(_onRepo);
     }
+    _startAlarms();
   }
 
   /// Form defaults for real use: empty fields, today's dates.
@@ -209,8 +375,10 @@ class AppController extends ChangeNotifier {
     }
     acts = repo.activity();
     notifs = repo.notifications();
-    team = repo.team();
+    team = _labelTeam(repo.team());
     company = repo.activeCompanyId ?? '';
+    _armDueAlerts();
+    _checkStock();
     if (repo.sessionExpired && loggedIn) {
       _endSession('Your session has ended. Please log in again.');
       return;
@@ -223,6 +391,9 @@ class AppController extends ChangeNotifier {
 
   /// Share / PDF / Download platform side (NEW feature).
   final DocExporter exporter;
+
+  /// Device notifications for reminders and due-bill alerts.
+  final ReminderAlarms alarms;
   final HitRegistry reg = HitRegistry();
 
   // ---------------------------------------------------------------- state
@@ -296,13 +467,33 @@ class AppController extends ChangeNotifier {
   int niGst = 18;
 
   String vFilter = 'all', vPeriod = 'all';
+
+  /// Extra Tally voucher types listed in the "More types" sheet.
+  List<String> vTypeOptions = const <String>[];
+
+  /// Opens every voucher type (main + this company's other Tally types).
+  void openVoucherTypes(List<String> others) => _set(() {
+    vTypeOptions = others;
+    overlay = 'vTypes';
+  });
+
+  /// Picks a voucher type from the sheet (`all`, `sales`, … or
+  /// `type:<Tally type>`).
+  void pickVoucherType(String f) => _set(() {
+    vFilter = f;
+    overlay = null;
+  });
   Voucher? entry;
   String outKind = 'recv', outFilter = 'all';
 
   /// Outstanding list: `list` or `graph`; graph series `age` | `party`.
   String outView = 'list', outChart = 'age';
   Bill? bill;
-  bool autoRemind = true;
+
+  /// Due-bill alerts (Outstanding → Payable "Payment alerts" and Settings →
+  /// Alerts "Bills due soon" are the same switch): a device notification
+  /// 3 days before each pending bill's due date.
+  bool get autoRemind => prefs['due'] ?? true;
   String itemsFilter = 'all',
       partyFilter = 'all',
       partySort = 'amt',
@@ -391,6 +582,7 @@ class AppController extends ChangeNotifier {
       t?.cancel();
     }
     _stopRoute();
+    _alarmSub?.cancel();
     for (final Timer t in _qTimers.values) {
       t.cancel();
     }
@@ -454,6 +646,20 @@ class AppController extends ChangeNotifier {
     reminders = rm is List
         ? rm.map(Reminder.fromJson).whereType<Reminder>().toList()
         : <Reminder>[];
+    prefs['due'] = store.load<Object?>(LocalStorage.kAutoRemind, true) != false;
+    prefs['lowStock'] =
+        store.load<Object?>(LocalStorage.kLowStockOn, true) != false;
+    final Object? mi = store.load<Object?>(LocalStorage.kMemberInfo, null);
+    if (mi is Map) {
+      mi.forEach((Object? k, Object? v) {
+        if (k is String && v is Map) {
+          memberInfo[k] = <String, String>{
+            for (final MapEntry<Object?, Object?> e in v.entries)
+              if (e.key is String) e.key! as String: '${e.value ?? ''}',
+          };
+        }
+      });
+    }
     final Object? ph = store.load<Object?>(LocalStorage.kPhoto, null);
     if (ph is Map &&
         ph['path'] is String &&
@@ -893,6 +1099,7 @@ class AppController extends ChangeNotifier {
       say('Welcome back, ${u.username}');
       await repo.refreshAll();
       afterRefresh(quietOk: true);
+      _openPendingTap();
     } on ApiException catch (e) {
       _set(() => busy = false);
       say(e.userMessage);
@@ -1124,7 +1331,9 @@ class AppController extends ChangeNotifier {
         }
         if (d.amount < 0) return 'Amount cannot be negative';
         if (d.amount > totals(d.lines).total) {
-          return 'Money received is more than the bill total';
+          return d.type == 'purchase'
+              ? 'Money paid is more than the bill total'
+              : 'Money received is more than the bill total';
         }
       case 'receipt' || 'payment':
         if (d.amount <= 0) return 'Enter an amount above zero';
@@ -1383,47 +1592,57 @@ class AppController extends ChangeNotifier {
   });
 
   // ------------------------------------------- one voucher line's rate / GST
-  /// Line being edited (rate / GST) in the line sheet.
+  /// Line being edited in the line sheet.
   int? lineEdit;
 
-  /// Opens the rate / GST editor of line [i] of the current entry.
-  void openLineEdit(int i) {
+  /// What the line sheet edits: `rate` (double-tap on the line amount) or
+  /// `gst` (tap on the line's GST).
+  String lineEditField = 'rate';
+
+  /// Opens the rate ([field] `rate`) or GST ([field] `gst`) editor of line
+  /// [i] of the current entry.
+  void openLineEdit(int i, {String field = 'rate'}) {
     final List<Line> l = lines[flowType] ?? <Line>[];
     if (i < 0 || i >= l.length) return;
     _set(() {
       lineEdit = i;
+      lineEditField = field == 'gst' ? 'gst' : 'rate';
       form['leRate'] = l[i].rate == 0 ? '' : qty(paise(l[i].rate));
       form['leGst'] = qty(l[i].gst);
       overlay = 'lineEdit';
     });
   }
 
-  /// Why the line sheet's values cannot be used, or null.
+  /// Why the line sheet's value cannot be used, or null.
   String? get lineEditError {
+    if (lineEditField == 'gst') {
+      final num? g = num.tryParse((form['leGst'] ?? '').trim());
+      if (g == null || g < 0 || g > 100) return 'GST must be 0 to 100%';
+      return null;
+    }
     final num? r = num.tryParse((form['leRate'] ?? '').trim());
-    final num? g = num.tryParse((form['leGst'] ?? '').trim());
     if (r == null || r <= 0) return 'Enter a rate above zero';
-    if (g == null || g < 0 || g > 100) return 'GST must be 0 to 100%';
     return null;
   }
 
-  /// Applies the sheet's rate / GST to that line of THIS voucher only —
+  /// Applies the sheet's rate or GST to that line of THIS voucher only —
   /// the item master (and Tally's item) is not changed.
   void saveLineEdit() {
     final int? i = lineEdit;
     final List<Line> l = lines[flowType] ?? <Line>[];
     if (i == null || i >= l.length || lineEditError != null) return;
-    final num r = paise(num.parse(form['leRate']!.trim()));
-    final num g = num.parse(form['leGst']!.trim());
+    final bool gst = lineEditField == 'gst';
+    final Line edited = gst
+        ? l[i].withGst(num.parse(form['leGst']!.trim()))
+        : l[i].withRate(paise(num.parse(form['leRate']!.trim())));
     _set(() {
       lines[flowType] = <Line>[
-        for (int j = 0; j < l.length; j++)
-          j == i ? l[j].withRate(r).withGst(g) : l[j],
+        for (int j = 0; j < l.length; j++) j == i ? edited : l[j],
       ];
       lineEdit = null;
       overlay = null;
     });
-    say('Rate and GST updated for this bill');
+    say(gst ? 'GST updated for this bill' : 'Rate updated for this bill');
   }
 
   void stepPickItem(Item it, int d) => _set(() {
@@ -2628,30 +2847,134 @@ class AppController extends ChangeNotifier {
     say('Invite sent to $em');
   }
 
-  void saveUser() {
-    final String nm = (form['nuName'] ?? '').trim();
-    if (repo.isRemote) {
-      // POST /users needs email + password; this form has name + mobile.
-      say(
-        'Adding a person needs email and password on the server — not available yet',
-      );
+  /// Add person: name / company-role / mobile entered for a login, by
+  /// lower-case email. Kept on this phone (POST /users stores only email
+  /// and password) and shown in the team list.
+  final Map<String, Map<String, String>> memberInfo =
+      <String, Map<String, String>>{};
+
+  /// Add person: temporary password shown in clear text.
+  bool showNuPass = false;
+
+  /// Shortest temporary password accepted.
+  static const int kMinTempPass = 6;
+
+  List<Member> _labelTeam(List<Member> ms) => <Member>[
+    for (final Member m in ms)
+      m.labeled(
+        memberInfo[m.email.toLowerCase()]?['name'],
+        memberInfo[m.email.toLowerCase()]?['role'],
+      ),
+  ];
+
+  /// Why the Add person form cannot be sent yet, or null.
+  String? get newUserError {
+    if ((form['nuName'] ?? '').trim().isEmpty) return 'Enter the full name';
+    final String em = (form['nuEmail'] ?? '').trim();
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(em)) {
+      return 'Enter a valid email address';
+    }
+    final String pw = form['nuPass'] ?? '';
+    if (pw.length < kMinTempPass) {
+      return 'Temporary password needs at least $kMinTempPass characters';
+    }
+    if (pw.trim() != pw) return 'Password cannot start or end with a space';
+    return null;
+  }
+
+  /// Opens Add person with a clean form.
+  void openNewUser() {
+    _set(() {
+      for (final String k in <String>[
+        'nuName',
+        'nuEmail',
+        'nuRole',
+        'nuPhone',
+        'nuPass',
+      ]) {
+        form[k] = '';
+      }
+      showNuPass = false;
+      overlay = 'newUser';
+    });
+  }
+
+  /// Fills a random 10-character temporary password (shown, to share).
+  void suggestTempPass() {
+    const String abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    final math.Random r = math.Random.secure();
+    _set(() {
+      form['nuPass'] = <String>[
+        for (int i = 0; i < 10; i++) abc[r.nextInt(abc.length)],
+      ].join();
+      showNuPass = true;
+    });
+  }
+
+  /// Creates the login (POST /users with email + temporary password).
+  Future<void> saveUser() async {
+    final String? err = newUserError;
+    if (err != null) {
+      say(err);
       return;
     }
-    final String ph = form['nuPhone'] ?? '';
-    _set(() {
-      overlay = null;
-      team = <Member>[
-        ...team,
-        Member(
-          't${DateTime.now().millisecondsSinceEpoch}',
-          nm,
-          ph.isNotEmpty ? ph : 'No email yet',
-          'Sales Rep',
-          'active',
-        ),
-      ];
-    });
-    say('$nm added to your team');
+    if (busy) return;
+    final String nm = (form['nuName'] ?? '').trim();
+    final String em = (form['nuEmail'] ?? '').trim().toLowerCase();
+    final String role = (form['nuRole'] ?? '').trim();
+    final String ph = (form['nuPhone'] ?? '').trim();
+    final String pw = form['nuPass'] ?? '';
+    void remember() {
+      memberInfo[em] = <String, String>{
+        'name': nm,
+        if (role.isNotEmpty) 'role': role,
+        if (ph.isNotEmpty) 'phone': ph,
+      };
+      store.save(LocalStorage.kMemberInfo, memberInfo);
+    }
+
+    final TeamAdmin? admin = repo.teamAdmin;
+    if (!repo.isRemote || admin == null) {
+      remember();
+      _set(() {
+        overlay = null;
+        team = <Member>[
+          ...team,
+          Member(
+            't${DateTime.now().millisecondsSinceEpoch}',
+            nm,
+            em,
+            role.isEmpty ? 'Sales Rep' : role,
+            'active',
+          ),
+        ];
+      });
+      say('$nm added to your team');
+      return;
+    }
+    _set(() => busy = true);
+    try {
+      remember(); // before the reload, so the new row shows the name
+      await admin.createUser(em, pw);
+      if (_disposed) return;
+      _set(() {
+        busy = false;
+        overlay = null;
+        form['nuPass'] = '';
+        team = _labelTeam(repo.team());
+      });
+      say('$nm added · logs in with $em');
+    } catch (e) {
+      // Not created: forget the details (unless that login already exists).
+      final String msg = e is ApiException ? e.userMessage : 'Could not add';
+      if (!msg.toLowerCase().contains('already exists')) {
+        memberInfo.remove(em);
+        store.save(LocalStorage.kMemberInfo, memberInfo);
+      }
+      if (_disposed) return;
+      _set(() => busy = false);
+      say(msg);
+    }
   }
 
   void setMemberSt(Member m, String st, String msg) {
@@ -2688,26 +3011,137 @@ class AppController extends ChangeNotifier {
     say('All marked as read');
   }
 
-  /// Alert switch. With the server, `sync` maps to `sync_completed`; the
-  /// other switches have no server setting and stay on this phone.
-  void toggleAlert(String k) {
-    final bool on = !alertOn(k);
-    if (repo.isRemote && k == 'sync' && repo.alertConfig() != null) {
-      repo.saveAlert('sync_completed', on).catchError((Object e) {
-        say(e is ApiException ? e.userMessage : 'Could not save');
-      });
-      return;
+  // ------------------------------------------- notification preferences
+  /// Unsaved switch changes in Settings → Notifications (null: none).
+  Map<String, bool>? alertDraft;
+  bool alertSaving = false;
+
+  /// Switches this user can set (team switches: admins only).
+  List<NotifPref> get notifPrefs => <NotifPref>[
+    for (final NotifPref x in kNotifPrefs)
+      if (!x.adminOnly || isAdmin) x,
+  ];
+
+  /// Low-stock (out of stock) alerts on this phone.
+  bool get lowStockAlerts => prefs['lowStock'] ?? true;
+
+  /// The saved value of switch [k].
+  bool savedAlert(String k) {
+    if (k == 'phone.due') return autoRemind;
+    if (k == 'phone.lowStock') return lowStockAlerts;
+    if (repo.isRemote) {
+      // The server fills every mobile type with its default; a web key the
+      // user never saved is off (the web list shows it only when true).
+      return repo.alertConfig()?[k] ?? false;
     }
-    _set(() => prefs[k] = on);
-    if (repo.isRemote) say('Saved on this phone only');
+    return prefs[k] ?? true; // sample data: kept on this phone
   }
 
-  bool alertOn(String k) {
-    final Map<String, bool>? cfg = repo.alertConfig();
-    if (repo.isRemote && k == 'sync' && cfg != null) {
-      return cfg['sync_completed'] ?? false;
+  /// The switch as shown: unsaved change, else the saved value.
+  bool alertOn(String k) => alertDraft?[k] ?? savedAlert(k);
+
+  void toggleAlert(String k) => _set(() {
+    final bool on = !alertOn(k);
+    final Map<String, bool> d = alertDraft ?? <String, bool>{};
+    if (on == savedAlert(k)) {
+      d.remove(k);
+    } else {
+      d[k] = on;
     }
-    return prefs[k] ?? false;
+    alertDraft = d.isEmpty ? null : d;
+  });
+
+  /// Unsaved changes exist.
+  bool get alertDirty => alertDraft != null && alertDraft!.isNotEmpty;
+
+  /// Settings loaded (server switches known) — always for sample data.
+  bool get alertsReady => !repo.isRemote || repo.alertConfig() != null;
+
+  /// Saves the changed switches: server ones to this user's account (the
+  /// server then shows / creates only the enabled alert types), phone ones
+  /// on this phone.
+  Future<void> saveAlertPrefs() async {
+    final Map<String, bool>? d = alertDraft;
+    if (d == null || d.isEmpty || alertSaving) return;
+    _set(() => alertSaving = true);
+    try {
+      final Map<String, bool> server = <String, bool>{
+        for (final MapEntry<String, bool> e in d.entries)
+          if (!e.key.startsWith('phone.')) e.key: e.value,
+      };
+      if (server.isNotEmpty) {
+        if (repo.isRemote) {
+          await repo.saveAlerts(server);
+        } else {
+          prefs.addAll(server);
+        }
+      }
+      final bool? due = d['phone.due'];
+      if (due != null) setAutoRemind(due, quiet: true);
+      final bool? low = d['phone.lowStock'];
+      if (low != null) {
+        prefs['lowStock'] = low;
+        store.save(LocalStorage.kLowStockOn, low);
+        if (low) unawaited(alarms.requestAccess());
+      }
+      if (_disposed) return;
+      _set(() {
+        alertSaving = false;
+        alertDraft = null;
+      });
+      say('Notification preferences saved');
+    } catch (e) {
+      if (_disposed) return;
+      _set(() => alertSaving = false);
+      say(e is ApiException ? e.userMessage : 'Could not save preferences');
+    }
+  }
+
+  // ------------------------------------------------- out-of-stock alerts
+  String _stockSig = '';
+
+  /// When the items list changes, raises a device notification for items
+  /// that newly reached zero stock in Tally (compared with the items seen
+  /// out of stock last time for this company). The first look only
+  /// records the current state.
+  void _checkStock() {
+    final List<Item> its = repo.items();
+    final String co = repo.activeCompanyId ?? '';
+    if (its.isEmpty || co.isEmpty) return;
+    final String sig = '${identityHashCode(its)}|${its.length}|$co';
+    if (sig == _stockSig) return;
+    _stockSig = sig;
+    final Set<String> out = <String>{
+      for (final Item x in its)
+        if (x.st == 'out') x.name,
+    };
+    final Object? saved = store.load<Object?>(LocalStorage.kOutStock, null);
+    final Map<String, Object?> all = saved is Map
+        ? saved.cast<String, Object?>()
+        : <String, Object?>{};
+    final Object? before = all[co];
+    all[co] = out.toList();
+    store.save(LocalStorage.kOutStock, all);
+    if (before is! List || !lowStockAlerts || !loggedIn) return;
+    final Set<String> was = before.whereType<String>().toSet();
+    final List<String> fresh = out.difference(was).toList()..sort();
+    if (fresh.isEmpty) return;
+    unawaited(
+      alarms.schedule(
+        AlarmSpec(
+          id: alarmId('stock:$co'),
+          at: DateTime.now().add(const Duration(seconds: 2)),
+          title: fresh.length == 1
+              ? 'Out of stock: ${fresh.first}'
+              : '${fresh.length} items ran out of stock',
+          body: fresh.length == 1
+              ? 'Its stock in Tally has reached zero.'
+              : '${fresh.take(3).join(', ')}${fresh.length > 3 ? ' and ${fresh.length - 3} more' : ''}',
+          payload: 'stock:${fresh.length == 1 ? fresh.first : ''}',
+          actions: false,
+        ),
+      ),
+    );
   }
 
   // ------------------------------------------------------------- look
@@ -3320,13 +3754,24 @@ class AppController extends ChangeNotifier {
               '${a.date} ${a.time}'.compareTo('${b.date} ${b.time}'),
         );
 
-  /// Reminders whose date and time have arrived.
+  /// Reminders whose date and time have arrived and are not done yet.
   List<Reminder> get dueReminders {
     final DateTime now = DateTime.now();
     return companyReminders.where((Reminder r) {
       final DateTime? at = r.at;
-      return at != null && !at.isAfter(now);
+      return !r.done && at != null && !at.isAfter(now);
     }).toList();
+  }
+
+  /// Active (not done) reminders of the active company, soonest first.
+  List<Reminder> get activeReminders =>
+      companyReminders.where((Reminder r) => !r.done).toList();
+
+  /// `Scheduled` (rings later), `Due` (time has come, not done) or `Done`.
+  String reminderStatus(Reminder r) {
+    if (r.done) return 'Done';
+    final DateTime? at = r.at;
+    return at == null || at.isAfter(DateTime.now()) ? 'Scheduled' : 'Due';
   }
 
   Reminder? reminderFor(Bill b) =>
@@ -3357,6 +3802,12 @@ class AppController extends ChangeNotifier {
       say('Pick a time for the reminder');
       return;
     }
+    final DateTime? at = DateTime.tryParse('${date}T$time:00');
+    if (at == null || !at.isAfter(DateTime.now())) {
+      // e.g. 1:58 AM picked at 1:56 PM today: it could never ring.
+      say('That time has already passed. Pick a later time (check AM / PM)');
+      return;
+    }
     final Reminder? old = reminderFor(b);
     final Reminder r = Reminder(
       id: old?.id ?? 'r${DateTime.now().microsecondsSinceEpoch}',
@@ -3380,6 +3831,246 @@ class AppController extends ChangeNotifier {
     });
     _saveReminders();
     say('Reminder set for ${reminderWhen(r)}');
+    unawaited(_armWithAccess(r));
+  }
+
+  /// Asks for notification permission (first time), then schedules [r].
+  Future<void> _armWithAccess(Reminder r) async {
+    final AlarmAccess a = await alarms.requestAccess();
+    if (_disposed) return;
+    if (a == AlarmAccess.blocked) {
+      say(
+        'Notifications are off for TallyConnect. Turn them on in phone '
+        'Settings to hear this reminder',
+      );
+    } else if (a == AlarmAccess.inexact) {
+      say(
+        'Allow "Alarms & reminders" for TallyConnect so it rings exactly on '
+        'time',
+      );
+    }
+    await _arm(r);
+  }
+
+  int _remAlarmId(Reminder r) => alarmId('rem:${r.id}');
+
+  /// Schedules (or cancels) the device notification of [r].
+  Future<void> _arm(Reminder r) async {
+    final DateTime? at = r.at;
+    if (r.done || at == null || !at.isAfter(DateTime.now())) {
+      await alarms.cancel(_remAlarmId(r));
+      return;
+    }
+    final bool recv = r.kind == 'recv';
+    await alarms.schedule(
+      AlarmSpec(
+        id: _remAlarmId(r),
+        at: at,
+        title: recv
+            ? 'Collect ${inr(r.amount)} from ${r.party}'
+            : 'Pay ${inr(r.amount)} to ${r.party}',
+        body: <String>[
+          'Bill ${r.billNo}',
+          recv ? 'Receivable' : 'Payable',
+          if (r.note.isNotEmpty) r.note,
+        ].join(' · '),
+        payload: 'rem:${r.id}',
+      ),
+    );
+  }
+
+  /// Marks a reminder done: it stops ringing and leaves the active list.
+  void markReminderDone(String id) {
+    final Reminder? r = reminders.where((Reminder x) => x.id == id).firstOrNull;
+    if (r == null) return;
+    final Reminder d = r.copyWith(done: true);
+    _set(() => reminders = <Reminder>[
+      for (final Reminder x in reminders) x.id == id ? d : x,
+    ]);
+    _saveReminders();
+    unawaited(_arm(d));
+    say('Reminder done · ${r.party}');
+  }
+
+  /// Rings again in [minutes] minutes.
+  void snoozeReminder(String id, {int minutes = 10}) {
+    final Reminder? r = reminders.where((Reminder x) => x.id == id).firstOrNull;
+    if (r == null) return;
+    final DateTime at = DateTime.now().add(Duration(minutes: minutes));
+    final Reminder s = r.copyWith(
+      date: ymd(at),
+      time:
+          '${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}',
+      done: false,
+    );
+    _set(() => reminders = <Reminder>[
+      for (final Reminder x in reminders) x.id == id ? s : x,
+    ]);
+    _saveReminders();
+    unawaited(_arm(s));
+    say('Snoozed · rings again at ${clock(at)}');
+  }
+
+  // ------------------------------------------------- notifications (device)
+  StreamSubscription<AlarmTap>? _alarmSub;
+
+  /// A notification tap waiting for the login / data to open.
+  AlarmTap? _pendingTap;
+
+  /// Bills behind the armed due alerts (re-armed only when they change).
+  String _dueSig = '';
+
+  void _startAlarms() {
+    _alarmSub = alarms.taps.listen(onAlarmTap);
+    alarms.init().then((AlarmTap? launch) {
+      if (_disposed) return;
+      // Re-arm every saved reminder (after an update / time-zone change the
+      // OS may have dropped them; scheduling the same id replaces it).
+      for (final Reminder r in reminders) {
+        unawaited(_arm(r));
+      }
+      _armDueAlerts();
+      if (launch != null) onAlarmTap(launch);
+    }, onError: (Object _) {});
+  }
+
+  /// A tapped notification (or its Mark done / Snooze button).
+  void onAlarmTap(AlarmTap t) {
+    if (_disposed) return;
+    final String p = t.payload;
+    if (p.startsWith('rem:')) {
+      final String id = p.substring(4);
+      if (t.action == 'done') return markReminderDone(id);
+      if (t.action == 'snooze') return snoozeReminder(id);
+    }
+    if (!loggedIn) {
+      _pendingTap = t; // opened after the login
+      return;
+    }
+    _pendingTap = t;
+    _openPendingTap();
+  }
+
+  void _openPendingTap() {
+    final AlarmTap? t = _pendingTap;
+    if (t == null || !loggedIn || _disposed) return;
+    _pendingTap = null;
+    final String p = t.payload;
+    if (p.startsWith('rem:')) {
+      final String id = p.substring(4);
+      final Reminder? r = reminders
+          .where((Reminder x) => x.id == id)
+          .firstOrNull;
+      if (r == null) {
+        say('This reminder was removed');
+        return;
+      }
+      if (r.company != _reminderCompany) {
+        say('Reminder for ${r.party} belongs to another company');
+        return;
+      }
+      go('outHub');
+      _set(() => overlay = 'reminders');
+      return;
+    }
+    if (p.startsWith('stock:')) {
+      final String name = p.substring(6);
+      if (name.isEmpty) {
+        go('items');
+      } else {
+        openItem(name);
+      }
+      return;
+    }
+    if (p.startsWith('auto:')) {
+      final List<String> k = p.substring(5).split('\n');
+      final String kind = k.first == 'pay' ? 'pay' : 'recv';
+      final String key = k.length > 1 ? k[1] : '';
+      final Bill? b = (kind == 'pay' ? repo.payables() : repo.receivables())
+          .where((Bill x) => x.key == key)
+          .firstOrNull;
+      if (b == null) {
+        say('This bill is no longer pending');
+        return;
+      }
+      go('billDetail', <String, Object?>{'bill': b.withKind(kind)});
+    }
+  }
+
+  /// Turns the 3-days-before-due alerts on / off (saved on this phone).
+  void toggleAutoRemind() => setAutoRemind(!autoRemind);
+
+  /// Sets the due-date alerts switch ([quiet]: no toast).
+  void setAutoRemind(bool on, {bool quiet = false}) {
+    _set(() => prefs['due'] = on);
+    store.save(LocalStorage.kAutoRemind, on);
+    _dueSig = '';
+    _armDueAlerts();
+    if (on) unawaited(alarms.requestAccess());
+    if (quiet) return;
+    say(on ? 'Alert 3 days before each bill is due' : 'Due-date alerts are off');
+  }
+
+  /// Most due alerts kept armed at once (the soonest ones).
+  static const int kMaxDueAlerts = 40;
+
+  /// Schedules a notification at 10:00 AM, 3 days before the due date, for
+  /// each pending bill of the active company (receivable and payable), and
+  /// cancels the ones no longer needed. Runs when the bills change.
+  void _armDueAlerts() {
+    final List<Bill> recv = repo.receivables(), pay = repo.payables();
+    final String sig =
+        '$autoRemind|${identityHashCode(recv)}|${identityHashCode(pay)}|'
+        '${recv.length}|${pay.length}|${ymd(today)}';
+    if (sig == _dueSig) return;
+    _dueSig = sig;
+    final DateTime now = DateTime.now();
+    final List<(DateTime, Bill, String)> want = <(DateTime, Bill, String)>[];
+    if (autoRemind && loggedIn) {
+      for (final (List<Bill>, String) side in <(List<Bill>, String)>[
+        (recv, 'recv'),
+        (pay, 'pay'),
+      ]) {
+        for (final Bill b in side.$1) {
+          final DateTime? due = b.dueDate;
+          if (due == null) continue;
+          final DateTime at = DateTime(due.year, due.month, due.day - 3, 10);
+          if (at.isAfter(now)) want.add((at, b, side.$2));
+        }
+      }
+      want.sort(
+        ((DateTime, Bill, String) a, (DateTime, Bill, String) b) =>
+            a.$1.compareTo(b.$1),
+      );
+    }
+    final List<int> ids = <int>[];
+    for (final (DateTime, Bill, String) w in want.take(kMaxDueAlerts)) {
+      final Bill b = w.$2;
+      final bool r = w.$3 == 'recv';
+      final int id = alarmId('auto:${w.$3}\n${b.key}');
+      ids.add(id);
+      unawaited(
+        alarms.schedule(
+          AlarmSpec(
+            id: id,
+            at: w.$1,
+            title: r
+                ? 'Due in 3 days: collect ${inr(b.amt)}'
+                : 'Due in 3 days: pay ${inr(b.amt)}',
+            body: '${b.party} · Bill ${b.no} · due ${b.due}',
+            payload: 'auto:${w.$3}\n${b.key}',
+            actions: false,
+          ),
+        ),
+      );
+    }
+    final Object? old = store.load<Object?>(LocalStorage.kDueAlertIds, null);
+    if (old is List) {
+      for (final int id in old.whereType<num>().map((num n) => n.toInt())) {
+        if (!ids.contains(id)) unawaited(alarms.cancel(id));
+      }
+    }
+    store.save(LocalStorage.kDueAlertIds, ids);
   }
 
   /// `06 Oct 2026 · 10:30 AM`.
@@ -3389,10 +4080,30 @@ class AppController extends ChangeNotifier {
     return r.time.isEmpty ? dmy(at) : '${dmy(at)} · ${clock(at)}';
   }
 
-  void deleteReminder(String id) {
+  /// Opens the edit sheet of [r] (its bill must still be pending).
+  void editReminder(Reminder r) {
+    final Bill? b = (r.kind == 'pay' ? repo.payables() : repo.receivables())
+        .where((Bill x) => x.key == r.billKey)
+        .firstOrNull;
+    if (b == null) {
+      say('This bill is no longer pending');
+      return;
+    }
+    openReminder(b.withKind(r.kind));
+  }
+
+  /// Removes a reminder and its pending notification. [keepOpen] keeps the
+  /// reminders list open (removing from the list).
+  void deleteReminder(String id, {bool keepOpen = false}) {
+    final Reminder? gone = reminders
+        .where((Reminder x) => x.id == id)
+        .firstOrNull;
+    if (gone != null) unawaited(alarms.cancel(_remAlarmId(gone)));
     _set(() {
       reminders = reminders.where((Reminder x) => x.id != id).toList();
-      if (overlay == 'reminder') overlay = null;
+      if (overlay == 'reminder' || (overlay == 'reminders' && !keepOpen)) {
+        overlay = null;
+      }
     });
     _saveReminders();
     say('Reminder removed');

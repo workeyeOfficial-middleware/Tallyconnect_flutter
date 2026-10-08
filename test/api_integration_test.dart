@@ -61,6 +61,9 @@ class FakeBackend {
   /// Users removed with DELETE /users/:id.
   final Set<String> deletedUsers = <String>{};
 
+  /// Logins made with POST /users (`{email, password}`).
+  final List<Map<String, Object?>> createdUsers = <Map<String, Object?>>[];
+
   /// Request-shape violations seen by the fake server. Recorded instead of
   /// `expect` inside the handler (an `expect` there conflicts with a widget
   /// test's pump); tests assert this stays empty.
@@ -462,8 +465,33 @@ class FakeBackend {
             'create_entry': true,
           },
         };
+      case '/users' when r.method == 'POST':
+        // routes/users.js: email + password required; username = part of
+        // the email before '@'; duplicate email → 400.
+        final Map<String, Object?> b =
+            jsonDecode(r.body) as Map<String, Object?>;
+        if (b.keys.toSet().difference(<String>{'email', 'password'}).isNotEmpty) {
+          violations.add('POST /users extra fields: ${b.keys}');
+        }
+        final String em = '${b['email'] ?? ''}'.toLowerCase();
+        if (em.isEmpty || '${b['password'] ?? ''}'.isEmpty) {
+          return http.Response('{"message":"Email and password required"}', 400);
+        }
+        if (<String>['ravi@x.in', 'asha@x.in'].contains(em) ||
+            createdUsers.any((Map<String, Object?> u) => u['email'] == em)) {
+          return http.Response('{"message":"User already exists"}', 400);
+        }
+        final Map<String, Object?> u = <String, Object?>{
+          'id': 20 + createdUsers.length,
+          'username': em.split('@').first,
+          'email': em,
+          'role': 'USER',
+        };
+        createdUsers.add(u);
+        body = <String, Object?>{'user': u};
       case '/users':
         body = <Object?>[
+          ...createdUsers,
           <String, Object?>{
             'id': 7,
             'username': 'ravi',
@@ -868,7 +896,7 @@ void main() {
       },
     );
 
-    test('purchase is blocked; receipt posts the right body', () async {
+    test('purchase posts as Purchase; receipt posts the right body', () async {
       final FakeBackend f = FakeBackend();
       final ApiTallyRepository r = f.repo();
       await r.login('ravi@x.in', 'secret', 'ADMIN');
@@ -881,8 +909,13 @@ void main() {
           party: 'Polycab Wires',
         ),
       );
-      expect(p.ok, isFalse);
-      expect(f.to('/api/mobile-voucher-command/create'), isEmpty);
+      expect(p.ok, isTrue);
+      final List<http.Request> pc = f.to('/api/mobile-voucher-command/create');
+      expect(pc, hasLength(1));
+      expect(
+        (jsonDecode(pc.single.body) as Map<String, Object?>)['voucher_type'],
+        'Purchase',
+      );
       final SubmitResult ok = await r.submitEntry(
         const EntryDraft(
           type: 'receipt',
@@ -951,9 +984,9 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(f.to('/api/mobile-voucher-command/journal/create'), hasLength(1));
       expect(c.screen, 'home');
-      // Purchase shows the blocker on the check step.
+      // Purchase can be sent now (agent writes supplier Cr, stock in).
       c.startFlow('purchase');
-      expect(c.flowBlocker, contains('Purchase cannot be sent'));
+      expect(c.flowBlocker ?? '', isNot(contains('cannot be sent')));
       f.expire = true;
       await r.refreshAll(force: true);
       await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -1157,18 +1190,21 @@ void main() {
       final LocalStorage s = LocalStorage.memory();
       final AppController a = AppController(store: s);
       final Bill b = a.repo.receivables().first;
+      // Future dates (a reminder in the past is refused: it can't ring).
+      final String d1 = ymd(DateTime.now().add(const Duration(days: 2)));
+      final String d2 = ymd(DateTime.now().add(const Duration(days: 4)));
       a.openReminder(b);
-      a.setF('remDate', '2026-09-28');
+      a.setF('remDate', d1);
       a.setF('remNote', 'Call');
       a.saveReminder();
-      expect(a.reminderFor(b)!.date, '2026-09-28');
+      expect(a.reminderFor(b)!.date, d1);
       a.openReminder(b);
-      a.setF('remDate', '2026-09-30');
+      a.setF('remDate', d2);
       a.saveReminder();
       expect(a.companyReminders, hasLength(1));
       a.dispose();
       final AppController b2 = AppController(store: s);
-      expect(b2.reminderFor(b)!.date, '2026-09-30');
+      expect(b2.reminderFor(b)!.date, d2);
       b2.deleteReminder(b2.reminderFor(b)!.id);
       expect(b2.companyReminders, isEmpty);
       b2.dispose();

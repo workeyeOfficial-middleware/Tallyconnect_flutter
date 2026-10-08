@@ -68,6 +68,14 @@ class OutHubScreen extends ConsumerWidget {
               c.repo.isRemote ? 'As on ${dmy(c.today)}' : 'Sample data',
               kind: BadgeKind.acc,
             ),
+            const SizedBox(width: 10),
+            // All active reminders (dot: one is due now).
+            CBtn(
+              'bell',
+              key: const ValueKey<String>('remindersBtn'),
+              dot: c.dueReminders.isNotEmpty,
+              onTap: () => c.openOverlay('reminders'),
+            ),
           ],
         ),
         const H1('Outstanding', afterNav: true),
@@ -178,11 +186,11 @@ class OutHubScreen extends ConsumerWidget {
               ],
             ),
           ),
-        if (c.companyReminders.isNotEmpty) ...<Widget>[
+        if (c.activeReminders.isNotEmpty) ...<Widget>[
           const H2Row('Your reminders', top: 18),
           GlassList(
             children: <Widget>[
-              for (final Reminder rm in c.companyReminders)
+              for (final Reminder rm in c.activeReminders)
                 Builder(
                   builder: (BuildContext context) {
                     final DateTime? d = rm.day;
@@ -315,6 +323,11 @@ class OutListScreen extends ConsumerWidget {
         BackNav(
           actions: <Widget>[
             CBtn(
+              'bell',
+              dot: c.dueReminders.isNotEmpty,
+              onTap: () => c.openOverlay('reminders'),
+            ),
+            CBtn(
               'file',
               onTap: () =>
                   c.previewDoc(docBills(isR, v.rows, c.companyName, c.today)),
@@ -409,7 +422,7 @@ class OutListScreen extends ConsumerWidget {
         if (!isR)
           GlassRow(
             margin: const EdgeInsets.only(top: 12),
-            onTap: () => c.update(() => c.autoRemind = !c.autoRemind),
+            onTap: c.toggleAutoRemind,
             children: <Widget>[
               Ico('bell', size: IcoSize.xs, color: p.navy, icon: IcSize.s),
               Expanded(

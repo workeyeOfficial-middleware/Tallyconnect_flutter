@@ -163,6 +163,9 @@ abstract class TallyRepository extends ChangeNotifier {
   Map<String, bool>? alertConfig();
   Future<void> saveAlert(String key, bool on);
 
+  /// Saves several switches at once (`web.<key>` = web preference).
+  Future<void> saveAlerts(Map<String, bool> changes);
+
   PartyDetail? partyDetail(String partyKey);
   Future<void> loadPartyDetail(Party p, {bool force = false});
   ItemDetail? itemDetail(String itemName);
@@ -366,6 +369,8 @@ class MockTallyRepository extends TallyRepository {
   Map<String, bool>? alertConfig() => null;
   @override
   Future<void> saveAlert(String key, bool on) async {}
+  @override
+  Future<void> saveAlerts(Map<String, bool> changes) async {}
 
   @override
   PartyDetail? partyDetail(String partyKey) => null;

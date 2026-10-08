@@ -20,6 +20,7 @@ import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../screens/account_screens.dart' show CompanyRow;
 import '../screens/insight_screens.dart' show kTS;
+import '../screens/voucher_screens.dart' show kVF;
 import '../widgets/common.dart';
 import 'doc_viewer.dart';
 
@@ -43,6 +44,8 @@ class OverlayLayer extends ConsumerWidget {
       'newUser' => const NewUserSheet(),
       'member' => const MemberSheet(),
       'reminder' => const ReminderSheet(),
+      'reminders' => const RemindersSheet(),
+      'vTypes' => const VoucherTypesSheet(),
       'doc' => const DocViewer(),
       _ => const SizedBox.shrink(),
     };
@@ -541,6 +544,8 @@ class PickSheetView extends ConsumerWidget {
 
 /// Rate / GST of one line of the bill being made. Changes this voucher
 /// only — the item master and Tally's item keep their own rate and GST.
+/// Edits one value: the rate (double-tap on the line amount) or the GST
+/// (tap on the line's GST).
 class LineEditSheet extends ConsumerWidget {
   const LineEditSheet({super.key});
 
@@ -551,7 +556,10 @@ class LineEditSheet extends ConsumerWidget {
     final int? i = c.lineEdit;
     if (i == null || i >= l.length) return const SizedBox.shrink();
     final Line line = l[i];
-    final num r = numOf(c.f('leRate')), g = numOf(c.f('leGst'));
+    final bool gst = c.lineEditField == 'gst';
+    // The field not being edited keeps the line's own value.
+    final num r = gst ? line.rate : numOf(c.f('leRate'));
+    final num g = gst ? numOf(c.f('leGst')) : line.gst;
     final num amt = paise(r * line.qty);
     final num tax = paise(amt * g / 100);
     final String? err = c.lineEditError;
@@ -561,27 +569,31 @@ class LineEditSheet extends ConsumerWidget {
         children: <Widget>[
           SheetHead(
             line.name,
-            sub: '${line.qty} ${line.unit} · for this bill only',
+            sub:
+                '${gst ? 'GST' : 'Rate'} · ${line.qty} ${line.unit} · for this bill only',
           ),
-          Fld(
-            label: 'Rate (₹ per ${line.unit.isEmpty ? 'unit' : line.unit})',
-            req: true,
-            child: Inp(
-              value: c.f('leRate'),
-              onChanged: (String v) => c.setF('leRate', v),
-              placeholder: '0.00',
-              keyboard: const TextInputType.numberWithOptions(decimal: true),
+          if (gst)
+            Fld(
+              label: 'GST %',
+              req: true,
+              child: Inp(
+                value: c.f('leGst'),
+                onChanged: (String v) => c.setF('leGst', v),
+                placeholder: '0',
+                keyboard: const TextInputType.numberWithOptions(decimal: true),
+              ),
+            )
+          else
+            Fld(
+              label: 'Rate (₹ per ${line.unit.isEmpty ? 'unit' : line.unit})',
+              req: true,
+              child: Inp(
+                value: c.f('leRate'),
+                onChanged: (String v) => c.setF('leRate', v),
+                placeholder: '0.00',
+                keyboard: const TextInputType.numberWithOptions(decimal: true),
+              ),
             ),
-          ),
-          Fld(
-            label: 'GST %',
-            child: Inp(
-              value: c.f('leGst'),
-              onChanged: (String v) => c.setF('leGst', v),
-              placeholder: '0',
-              keyboard: const TextInputType.numberWithOptions(decimal: true),
-            ),
-          ),
           KvList(<(String, String, bool)>[
             ('Amount', inr(amt), false),
             ('GST', inr(tax), false),
@@ -589,10 +601,10 @@ class LineEditSheet extends ConsumerWidget {
           ]),
           if (err != null)
             InfoBox(err, icon: 'info', margin: const EdgeInsets.only(top: 12)),
-          const InfoBox(
-            'Only this bill changes. The item in Tally keeps its own rate and GST.',
+          InfoBox(
+            'Only this bill changes. The item in Tally keeps its own ${gst ? 'GST' : 'rate'}.',
             icon: 'info',
-            margin: EdgeInsets.only(top: 12, bottom: 14),
+            margin: const EdgeInsets.only(top: 12, bottom: 14),
           ),
           Row(
             children: <Widget>[
@@ -1169,19 +1181,30 @@ class InviteSheet extends ConsumerWidget {
   }
 }
 
+/// Add person: creates a team login with `POST /users` (email + temporary
+/// password — the endpoint's required fields). Name, company / role and
+/// mobile are kept on this phone and shown in the team list.
 class NewUserSheet extends ConsumerWidget {
   const NewUserSheet({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    final String? err = c.newUserError;
+    // Show a field's problem only once something was typed in the form.
+    final bool touched = <String>[
+      'nuName',
+      'nuEmail',
+      'nuPass',
+    ].any((String k) => c.f(k).isNotEmpty);
     return Sheet(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           const SheetHead(
             'Add person',
-            sub: 'Make a login for someone in your team.',
+            sub: 'Create a login for someone in your team.',
           ),
           Fld(
             label: 'Full name',
@@ -1191,6 +1214,28 @@ class NewUserSheet extends ConsumerWidget {
               onChanged: (String v) => c.setF('nuName', v),
               placeholder: 'e.g. Rohit Kumar',
               icon: 'person',
+              capitalization: TextCapitalization.words,
+            ),
+          ),
+          Fld(
+            label: 'Email address',
+            req: true,
+            child: Inp(
+              value: c.f('nuEmail'),
+              onChanged: (String v) => c.setF('nuEmail', v),
+              placeholder: 'rohit@company.com',
+              icon: 'mail',
+              keyboard: TextInputType.emailAddress,
+            ),
+          ),
+          Fld(
+            label: 'Company / Role',
+            child: Inp(
+              value: c.f('nuRole'),
+              onChanged: (String v) => c.setF('nuRole', v),
+              placeholder: 'e.g. Sales Executive',
+              icon: 'building',
+              capitalization: TextCapitalization.words,
             ),
           ),
           Fld(
@@ -1203,11 +1248,66 @@ class NewUserSheet extends ConsumerWidget {
               keyboard: TextInputType.phone,
             ),
           ),
-          Btn(
-            label: 'Add to team',
-            icon: 'check',
-            enabled: c.f('nuName').trim().isNotEmpty,
-            onTap: c.saveUser,
+          Fld(
+            label: 'Temporary password',
+            req: true,
+            child: Inp(
+              value: c.f('nuPass'),
+              onChanged: (String v) => c.setF('nuPass', v),
+              placeholder: 'At least ${AppController.kMinTempPass} characters',
+              icon: 'shield',
+              obscure: !c.showNuPass,
+              trailing: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => c.update(() => c.showNuPass = !c.showNuPass),
+                child: SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: Center(
+                    child: Ic(
+                      c.showNuPass ? 'eyeOff' : 'eye',
+                      color: p.ink3,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: ChipBtn(
+              'Suggest a password',
+              icon: 'key',
+              height: 36,
+              fontSize: 13.5,
+              onTap: c.suggestTempPass,
+            ),
+          ),
+          if (touched && err != null)
+            InfoBox(err, icon: 'info', margin: const EdgeInsets.only(top: 12)),
+          const InfoBox(
+            'They log in with this email and temporary password. Share it '
+            'with them and ask them to change it.',
+            icon: 'info',
+            margin: EdgeInsets.only(top: 12, bottom: 14),
+          ),
+          Row(
+            children: <Widget>[
+              Expanded(
+                flex: 10,
+                child: Btn(label: 'Cancel', kind: BtnKind.g, onTap: c.closeOv),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 17,
+                child: Btn(
+                  label: c.busy ? 'Creating…' : 'Create user',
+                  icon: 'check',
+                  enabled: err == null && !c.busy,
+                  onTap: c.saveUser,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1784,8 +1884,224 @@ class ToastView extends ConsumerWidget {
 
 // --------------------------------------------------------------- reminder
 
+/// Every voucher type in one sheet: the main ones and this company's other
+/// Tally types; the chosen one is ticked.
+class VoucherTypesSheet extends ConsumerWidget {
+  const VoucherTypesSheet({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    Widget row(String f, String label) {
+      final bool on = c.vFilter == f;
+      return RowX(
+        minHeight: 54,
+        onTap: () => c.pickVoucherType(f),
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: ts(16, w: on ? w800 : w600, c: on ? p.acc : p.ink),
+            ),
+          ),
+          if (on) Ic('check', color: p.acc),
+        ],
+      );
+    }
+
+    return Sheet(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SheetHead(
+            'Voucher types',
+            sub: c.vTypeOptions.isEmpty
+                ? 'Pick the vouchers to show'
+                : '${kVF.length + c.vTypeOptions.length} types in this company',
+          ),
+          GlassList(
+            children: <Widget>[
+              for (final (String, String) x in kVF) row(x.$1, x.$2),
+            ],
+          ),
+          if (c.vTypeOptions.isNotEmpty) ...<Widget>[
+            const Sec('More Tally types'),
+            GlassList(
+              children: <Widget>[
+                for (final String t in c.vTypeOptions) row('type:$t', t),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Every reminder of the active company: bill / party, amount, date and
+/// time, status (Scheduled / Due / Done) and its actions.
+class RemindersSheet extends ConsumerWidget {
+  const RemindersSheet({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    final List<Reminder> active = c.activeReminders;
+    final List<Reminder> done = c.companyReminders
+        .where((Reminder r) => r.done)
+        .toList();
+    Widget card(Reminder r) {
+      final bool recv = r.kind == 'recv';
+      final String st = c.reminderStatus(r);
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Glass(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Tap(
+                onTap: () => c.openReminderBill(r),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Ico(
+                      'bell',
+                      size: IcoSize.xs,
+                      color: p.cat(recv ? 'receipt' : 'payment'),
+                      icon: IcSize.s,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: RTx(
+                        r.party,
+                        'Bill ${r.billNo} · ${recv ? 'to receive' : 'to pay'}',
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: MediaQuery.sizeOf(context).width * .36,
+                      ),
+                      child: AmtText(
+                        '${recv ? '+' : '−'}${inr(r.amount)}',
+                        style: amtStyle(context, cls: recv ? 'in' : 'out'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: <Widget>[
+                  Ic('clock', size: IcSize.xs, color: p.ink3),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      c.reminderWhen(r),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: ts(13.5, w: w600, c: p.ink2),
+                    ),
+                  ),
+                  Bdg(
+                    st,
+                    kind: switch (st) {
+                      'Due' => BadgeKind.bad,
+                      'Done' => BadgeKind.ok,
+                      _ => BadgeKind.acc,
+                    },
+                    dot: true,
+                  ),
+                ],
+              ),
+              if (r.note.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(r.note, style: rsStyle(context, 13)),
+                ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: <Widget>[
+                  if (!r.done)
+                    ChipBtn(
+                      'Mark done',
+                      icon: 'check',
+                      height: 36,
+                      fontSize: 13.5,
+                      onTap: () => c.markReminderDone(r.id),
+                    ),
+                  if (st == 'Due')
+                    ChipBtn(
+                      'Snooze 10 min',
+                      icon: 'clock',
+                      height: 36,
+                      fontSize: 13.5,
+                      onTap: () => c.snoozeReminder(r.id),
+                    ),
+                  if (!r.done)
+                    ChipBtn(
+                      'Edit',
+                      icon: 'edit',
+                      height: 36,
+                      fontSize: 13.5,
+                      onTap: () => c.editReminder(r),
+                    ),
+                  ChipBtn(
+                    'Remove',
+                    icon: 'trash',
+                    height: 36,
+                    fontSize: 13.5,
+                    color: p.neg,
+                    onTap: () => c.deleteReminder(r.id, keepOpen: true),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Sheet(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SheetHead(
+            'Reminders',
+            sub: active.isEmpty
+                ? 'No active reminders'
+                : '${active.length} active · rings on this phone at the set time',
+          ),
+          if (active.isEmpty)
+            const InfoBox(
+              'Open a bill in Receivable or Payable and tap Remind to set one.',
+              icon: 'info',
+              margin: EdgeInsets.only(bottom: 12),
+            ),
+          for (final Reminder r in active) card(r),
+          if (done.isNotEmpty) ...<Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 8, 4, 10),
+              child: Text('Done (${done.length})', style: rtStyle(context, 16)),
+            ),
+            for (final Reminder r in done) card(r),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// Set / edit / remove a reminder on an outstanding bill. Saved on this
-/// phone only (the backend has no reminder endpoint).
+/// phone only (the backend has no reminder endpoint); rings as a device
+/// notification at the set date and time.
 class ReminderSheet extends ConsumerWidget {
   const ReminderSheet({super.key});
 
@@ -1869,7 +2185,7 @@ class ReminderSheet extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.only(top: 10),
             child: Text(
-              'Reminders are kept on this phone and show in Outstanding.',
+              'Rings on this phone at the set time, even when the app is closed.',
               textAlign: TextAlign.center,
               style: rsStyle(context, 12.5),
             ),

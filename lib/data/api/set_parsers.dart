@@ -138,18 +138,40 @@ Object? parseSetText(ParseIn a) {
         body,
       ).map((Map<String, Object?> r) => actFrom(r, a.now)).toList();
     case 'notifications':
-      return rows(
-        body,
-        'notifications',
-      ).map((Map<String, Object?> r) => notifFrom(r, a.now)).toList();
+      // {"mobile": <mobile list>, "web": <web list>} (older cache: the
+      // mobile list alone). Newest first across both.
+      final bool both = body is Map && body.containsKey('mobile');
+      final List<(DateTime?, Notif)> all = <(DateTime?, Notif)>[
+        for (final Map<String, Object?> r in rows(
+          both ? body['mobile'] : body,
+          'notifications',
+        ))
+          (instant(r['created_at']), notifFrom(r, a.now)),
+        if (both)
+          for (final Map<String, Object?> r in rows(body['web']))
+            if (kWebNotifTypes.containsKey(str(r['type'])))
+              (instant(r['created_at']), webNotifFrom(r, a.now)),
+      ];
+      all.sort(
+        ((DateTime?, Notif) x, (DateTime?, Notif) y) =>
+            (y.$1 ?? DateTime(0)).compareTo(x.$1 ?? DateTime(0)),
+      );
+      return <Notif>[for (final (DateTime?, Notif) n in all) n.$2];
     case 'alerts':
-      final Object? c = body is Map ? body['config'] : null;
-      return c is Map
-          ? <String, bool>{
-              for (final MapEntry<Object?, Object?> e in c.entries)
-                '${e.key}': e.value == true,
-            }
-          : null;
+      // {"mobile": {config}, "web": {prefs}} (older cache: {config}).
+      final bool both = body is Map && body.containsKey('mobile');
+      final Object? m = both ? body['mobile'] : body;
+      final Object? c = m is Map ? m['config'] : null;
+      final Object? w = both ? body['web'] : null;
+      if (c is! Map && w is! Map) return null;
+      return <String, bool>{
+        if (c is Map)
+          for (final MapEntry<Object?, Object?> e in c.entries)
+            '${e.key}': e.value == true,
+        if (w is Map)
+          for (final MapEntry<Object?, Object?> e in w.entries)
+            '$kWebPref${e.key}': e.value == true,
+      };
     case 'team':
       return rows(body).map(memberFrom).toList();
     case 'companies':

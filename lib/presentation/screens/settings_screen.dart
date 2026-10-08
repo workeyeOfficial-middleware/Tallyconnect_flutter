@@ -19,6 +19,7 @@ import '../../core/design/tc_palette.dart';
 import '../../core/design/tc_wall_spec.dart';
 import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
+import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../widgets/common.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -141,6 +142,10 @@ class _Profile extends ConsumerWidget {
   }
 }
 
+/// Notification preferences: one switch per alert type, grouped. Changes
+/// are kept as a draft until "Save preferences"; server types are saved to
+/// this user's account (the server then shows only enabled types), phone
+/// types (due reminders, out-of-stock) on this phone.
 class _Alerts extends ConsumerWidget {
   const _Alerts();
 
@@ -148,30 +153,70 @@ class _Alerts extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    const List<(String, String, String, String, String)>
-    prefs = <(String, String, String, String, String)>[
-      ('pay', 'Money received', 'When a customer pays you', 'in', 'receipt'),
-      ('sync', 'Sent to Tally', 'When entries reach Tally', 'sync', 'activity'),
-      (
-        'due',
-        'Bills due soon',
-        '3 days before a bill is due',
-        'calendar',
-        'payment',
-      ),
-      ('team', 'Team updates', 'Invites and new members', 'team', 'team'),
-    ];
+    if (!c.alertsReady) {
+      return Rise(
+        child: EmptyBox(
+          c.emptyText(DataSet.alerts, 'Loading your notification settings…'),
+        ),
+      );
+    }
+    final List<String> groups = <String>[];
+    for (final NotifPref x in c.notifPrefs) {
+      if (!groups.contains(x.group)) groups.add(x.group);
+    }
     return Rise(
-      child: GlassList(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          for (final (String, String, String, String, String) x in prefs)
-            RowX(
-              onTap: () => c.toggleAlert(x.$1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+            child: RTx(
+              'Notification preferences',
+              'Choose exactly which alerts you get. Only switched-on types '
+                  'appear in Alerts.',
+              titleSize: 17,
+            ),
+          ),
+          for (final String g in groups) ...<Widget>[
+            Sec(g),
+            GlassList(
               children: <Widget>[
-                Ico(x.$4, size: IcoSize.xs, color: p.cat(x.$5), icon: IcSize.s),
-                Expanded(child: RTx(x.$2, x.$3)),
-                Sw(c.alertOn(x.$1)),
+                for (final NotifPref x in c.notifPrefs)
+                  if (x.group == g)
+                    RowX(
+                      key: ValueKey<String>('pref-${x.key}'),
+                      onTap: () => c.toggleAlert(x.key),
+                      children: <Widget>[
+                        Ico(
+                          x.ic,
+                          size: IcoSize.xs,
+                          color: p.cat(x.c),
+                          icon: IcSize.s,
+                        ),
+                        Expanded(child: RTx(x.t, x.s)),
+                        Sw(c.alertOn(x.key)),
+                      ],
+                    ),
               ],
+            ),
+          ],
+          Padding(
+            padding: const EdgeInsets.only(top: 18),
+            child: Btn(
+              label: c.alertSaving ? 'Saving…' : 'Save preferences',
+              icon: 'check',
+              enabled: c.alertDirty && !c.alertSaving,
+              onTap: c.saveAlertPrefs,
+            ),
+          ),
+          if (c.alertDirty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'You have unsaved changes',
+                textAlign: TextAlign.center,
+                style: rsStyle(context, 12.5),
+              ),
             ),
         ],
       ),
