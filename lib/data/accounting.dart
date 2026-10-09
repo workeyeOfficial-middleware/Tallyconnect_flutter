@@ -58,31 +58,33 @@ OutstandingSummary summarise(
   DateTime today, {
   num? serverTotal,
 }) {
-  num total = 0, late = 0;
+  // Added up in whole paise (exact for any number of bills).
+  int total = 0, late = 0;
   int lateBills = 0;
-  final List<num> ageing = <num>[0, 0, 0, 0];
+  final List<int> ageing = <int>[0, 0, 0, 0];
   final Set<String> parties = <String>{};
   for (final Bill b in bills) {
-    total += b.amt;
+    final int p = toPaise(b.amt);
+    total += p;
     // By ledger name (unique per company in Tally): a party's bills with
     // and without a resolved ledger_guid are still one party.
     parties.add(b.party.trim().toLowerCase());
     final DateTime? due = b.dueDate;
     final int daysLate = due == null ? 0 : -dayDiff(today, due);
     if (daysLate <= 0) {
-      ageing[0] += b.amt;
+      ageing[0] += p;
     } else {
-      late += b.amt;
+      late += p;
       lateBills++;
-      ageing[daysLate <= 30 ? 1 : (daysLate <= 60 ? 2 : 3)] += b.amt;
+      ageing[daysLate <= 30 ? 1 : (daysLate <= 60 ? 2 : 3)] += p;
     }
   }
   return OutstandingSummary(
-    total: paise(total),
+    total: total / 100,
     parties: parties.length,
-    late: paise(late),
+    late: late / 100,
     lateBills: lateBills,
-    ageing: ageing.map(paise).toList(),
+    ageing: <num>[for (final int a in ageing) a / 100],
     serverTotal: serverTotal,
   );
 }

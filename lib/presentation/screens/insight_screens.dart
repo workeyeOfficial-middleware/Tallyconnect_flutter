@@ -32,7 +32,7 @@ const List<(String, String)> kRC = <(String, String)>[
 ];
 
 String stockValue(AppController c) =>
-    inr(c.repo.items().fold<num>(0, (num s, Item x) => s + x.worth));
+    inr(sumRupees(c.repo.items().map((Item x) => x.worth)));
 
 class ReportsScreen extends ConsumerWidget {
   const ReportsScreen({super.key});
@@ -102,6 +102,7 @@ class ReportsScreen extends ConsumerWidget {
                 list: 'reports',
                 lk: r.id,
                 radius: 22,
+                pinCorner: true,
                 child: Tap(
                   onTap: () {
                     if (c.guardTap('reports', r.id)) {
@@ -263,7 +264,7 @@ class ActivityScreen extends ConsumerWidget {
       ('purchase', 'Purchase'),
       ('receipt', 'Receipt'),
       ('payment', 'Payment'),
-      ('journal', 'Adjustment'),
+      ('journal', 'Journal'),
     ];
     final ({List<Act> rows, int hidden, VoidCallback unhide}) v = c
         .listView<Act>(
@@ -416,14 +417,6 @@ class ActivityScreen extends ConsumerWidget {
                     ),
                   ),
                 ),
-                if (a.status == 'fail')
-                  ChipBtn(
-                    'Try again',
-                    height: 38,
-                    fontSize: 13.5,
-                    color: p.navy,
-                    onTap: () => c.retry(a.id),
-                  ),
               ],
             ),
           ),
@@ -682,15 +675,6 @@ class ActDetailScreen extends ConsumerWidget {
             ],
           ),
         ],
-        if (a0.status == 'fail')
-          Padding(
-            padding: const EdgeInsets.only(top: 18),
-            child: Btn(
-              label: 'Try sending again',
-              icon: 'sync',
-              onTap: () => c.retry(a0.id),
-            ),
-          ),
       ],
     );
   }

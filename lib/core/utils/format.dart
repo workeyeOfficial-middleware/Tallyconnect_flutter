@@ -43,6 +43,19 @@ String inr2(num? value) {
 /// Rounds to paise (2 decimals) — the precision Tally keeps.
 num paise(num v) => (v * 100).round() / 100;
 
+/// [v] in whole paise (for exact sums of rupee amounts).
+int toPaise(num v) => (v * 100).round();
+
+/// Exact sum of rupee amounts (added in paise, so thousands of values
+/// never drift by a fraction of a paisa).
+num sumRupees(Iterable<num> vs) {
+  int p = 0;
+  for (final num v in vs) {
+    p += toPaise(v);
+  }
+  return p / 100;
+}
+
 const List<String> kMonths = <String>[
   'Jan',
   'Feb',

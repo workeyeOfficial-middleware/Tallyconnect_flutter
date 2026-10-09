@@ -421,7 +421,9 @@ Act actFrom(Map<String, Object?> m, DateTime now) {
         if (e is Map)
           (
             str(e['ledger_name']),
-            e['is_debit'] == true ? 'Goes to (Dr)' : 'Comes from (Cr)',
+            e['is_debit'] == true
+                ? 'Debit (Money goes to)'
+                : 'Credit (Money comes from)',
             toNum(e['amount']) ?? 0,
           ),
   ];

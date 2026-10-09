@@ -271,7 +271,7 @@ ReportData reportData(TallyRepository repo, String id) {
             RowTarget.voucher(v),
           ),
       ];
-      tot = inr(d.fold<num>(0, (num s, Voucher v) => s + v.amt));
+      tot = inr(sumRupees(d.map((Voucher v) => v.amt)));
       tl = '${d.length} entries · value';
       card = '${d.length} entries';
       // Day Book charts the value per day (oldest → newest).
@@ -301,7 +301,7 @@ ReportData reportData(TallyRepository repo, String id) {
             RowTarget.voucher(v),
           ),
       ];
-      tot = inr(l2.fold<num>(0, (num s, Voucher v) => s + v.amt));
+      tot = inr(sumRupees(l2.map((Voucher v) => v.amt)));
       tl = '${l2.length} bills';
       card = tot;
     default:
@@ -317,7 +317,7 @@ ReportData reportData(TallyRepository repo, String id) {
             RowTarget.item(x.name),
           ),
       ];
-      tot = inr(items.fold<num>(0, (num s, Item x) => s + x.worth));
+      tot = inr(sumRupees(items.map((Item x) => x.worth)));
       tl = 'Stock value';
       card = tot;
   }

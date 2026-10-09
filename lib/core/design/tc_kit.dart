@@ -239,11 +239,22 @@ class _GlassBoxPainter extends BoxPainter {
     canvas.translate(offset.dx, offset.dy);
     if (d.shadows.isNotEmpty) OuterShadow(br, d.shadows).paint(canvas, size);
     canvas.drawRRect(br.toRRect(Offset.zero & size), Paint()..color = d.fill);
-    _Sheen(br, null).paint(canvas, size);
+    // The sheen is a card-sized highlight. A long lazy list is one very tall
+    // box (1,000+ rows → 100,000 px); stretched over that, the visible rows
+    // all fell in the sheen's white start and looked solid white. Keep it
+    // at card height at the top, so every row shows the same glass.
+    final double sh = math.min(size.height, kSheenMaxH);
+    canvas.save();
+    canvas.clipRRect(br.toRRect(Offset.zero & size));
+    _Sheen(br, null).paint(canvas, Size(size.width, sh));
+    canvas.restore();
     _GlassEdge(br, null).paint(canvas, size);
     canvas.restore();
   }
 }
+
+/// Tallest box the glass sheen spans (see [GlassDecoration]).
+const double kSheenMaxH = 1200;
 
 /// Paints box shadows only outside the rounded box (CSS semantics), so a
 /// translucent surface is not darkened by its own shadow.
@@ -312,12 +323,29 @@ class _GlassEdge extends CustomPainter {
     final RRect rr = br.toRRect(Offset.zero & size);
     canvas.save();
     canvas.clipRRect(rr);
+    // The 1 px inner rims are worked out on a corner-high strip at the top
+    // and at the bottom (same shapes): on a very tall box (a long lazy list,
+    // 80,000 px) subtracting two full-height shapes lost float precision and
+    // filled the whole list with the white rim colour.
+    final double h0 = math.min(
+      size.height,
+      math.max(
+                math.max(br.topLeft.y, br.topRight.y),
+                math.max(br.bottomLeft.y, br.bottomRight.y),
+              ) *
+              2 +
+          4,
+    );
+    final RRect top = br.toRRect(Rect.fromLTWH(0, 0, size.width, h0));
+    final RRect bot = br.toRRect(
+      Rect.fromLTWH(0, size.height - h0, size.width, h0),
+    );
     // inset 0 1px 0 rgba(255,255,255,.95)
     canvas.drawPath(
       Path.combine(
         PathOperation.difference,
-        Path()..addRRect(rr),
-        Path()..addRRect(rr.shift(const Offset(0, 1))),
+        Path()..addRRect(top),
+        Path()..addRRect(top.shift(const Offset(0, 1))),
       ),
       Paint()..color = whiteA(.95),
     );
@@ -325,8 +353,8 @@ class _GlassEdge extends CustomPainter {
     canvas.drawPath(
       Path.combine(
         PathOperation.difference,
-        Path()..addRRect(rr),
-        Path()..addRRect(rr.shift(const Offset(0, -1))),
+        Path()..addRRect(bot),
+        Path()..addRRect(bot.shift(const Offset(0, -1))),
       ),
       Paint()..color = navyA(.05),
     );

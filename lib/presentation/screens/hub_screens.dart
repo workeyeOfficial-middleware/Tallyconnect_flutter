@@ -422,6 +422,9 @@ class _BoldLine extends StatelessWidget {
   );
 }
 
+/// New Entry cards. Long-press a card: Pin (pinned first), Open, Drag to
+/// reorder, Hide. Order / pins / hidden are saved (list `entries`); hidden
+/// cards come back from "N hidden · Unhide" here or Settings → Layout.
 class NewEntryScreen extends ConsumerWidget {
   const NewEntryScreen({super.key});
 
@@ -429,15 +432,16 @@ class NewEntryScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    const List<(String, String, String, String, String)> tiles =
-        <(String, String, String, String, String)>[
-          ('Sale', 'You sold goods', 'bag', 'sales', 'sales'),
-          ('Purchase', 'You bought goods', 'cart', 'purchase', 'purchase'),
-          ('Receipt', 'Money received', 'in', 'receipt', 'receipt'),
-          ('Payment', 'Money paid', 'out', 'payment', 'payment'),
-          ('Journal', 'Between accounts', 'book', 'journal', 'journal'),
-          ('Contra', 'Bank ↔ Cash', 'swap', 'contra', 'contra'),
-        ];
+    final ({
+      List<(String, String, String, String, String)> rows,
+      int hidden,
+      VoidCallback unhide,
+    })
+    v = c.listView<(String, String, String, String, String)>(
+      'entries',
+      kEntryTiles,
+      ((String, String, String, String, String) e) => e.$1,
+    );
     return Scr(
       children: <Widget>[
         const BackNav(),
@@ -446,54 +450,65 @@ class NewEntryScreen extends ConsumerWidget {
         Grid(
           cols: 2,
           children: <Widget>[
-            for (final (String, String, String, String, String) e in tiles)
-              Tap(
-                // Contra: the server has no Contra entry (its create routes
-                // take Sales, Purchase, Receipt, Payment and Journal only),
-                // so nothing is posted under another voucher type.
-                onTap: e.$5 == 'contra'
-                    ? () => c.say(
-                        'Contra (Bank ↔ Cash) cannot be sent to Tally yet. The server does not accept Contra entries.',
-                      )
-                    : () => c.startFlow(e.$5),
-                child: Glass(
-                  child: Container(
-                    constraints: const BoxConstraints(minHeight: 168),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 18,
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: <Widget>[
-                        Ico(
-                          e.$3,
-                          color: p.cat(e.$4),
-                          box: 66,
-                          radius: 22,
-                          icon: IcSize.xl,
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          e.$1,
-                          textAlign: TextAlign.center,
-                          style: ts(19, w: w800, h: 1.1, c: p.ink),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          e.$2,
-                          textAlign: TextAlign.center,
-                          style: ts(14, c: p.ink3),
-                        ),
-                      ],
+            for (final (String, String, String, String, String) e in v.rows)
+              LRow(
+                list: 'entries',
+                lk: e.$1,
+                radius: 22,
+                pinCorner: true,
+                child: Tap(
+                  onTap: () {
+                    if (c.guardTap('entries', e.$1)) c.openEntryTile(e.$1);
+                  },
+                  child: Glass(
+                    child: Container(
+                      constraints: const BoxConstraints(minHeight: 168),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 18,
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: <Widget>[
+                          Ico(
+                            e.$4,
+                            color: p.cat(e.$5),
+                            box: 66,
+                            radius: 22,
+                            icon: IcSize.xl,
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            e.$2,
+                            textAlign: TextAlign.center,
+                            style: ts(19, w: w800, h: 1.1, c: p.ink),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            e.$3,
+                            textAlign: TextAlign.center,
+                            style: ts(14, c: p.ink3),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
           ],
         ),
+        if (v.hidden > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: HidRow(
+              '${v.hidden} hidden · Unhide',
+              onTap: v.unhide,
+              inGrid: true,
+            ),
+          ),
         const InfoBox(
-          'Tap a picture to start. You can go back at any step — nothing is sent until you tap Save.',
+          'Tap a picture to start. Long-press a card to pin, move or hide it. '
+          'Nothing is sent until you tap Save.',
           margin: EdgeInsets.only(top: 18, bottom: 14),
         ),
       ],

@@ -79,6 +79,10 @@ abstract class ReminderAlarms {
   /// Schedules [a], replacing a pending one with the same id.
   Future<void> schedule(AlarmSpec a);
 
+  /// Shows an alert now (server alerts: entry created / failed, sync …) as
+  /// a heads-up, lock-screen notification. [payload] opens it when tapped.
+  Future<void> showNow(int id, String title, String body, String payload);
+
   Future<void> cancel(int id);
 }
 
@@ -102,6 +106,16 @@ class NoReminderAlarms implements ReminderAlarms {
   Future<AlarmAccess> requestAccess() async => AlarmAccess.exact;
   @override
   Future<void> schedule(AlarmSpec a) async => pending[a.id] = a;
+
+  /// Alerts shown now, for tests.
+  final List<(String, String, String)> shown = <(String, String, String)>[];
+  @override
+  Future<void> showNow(
+    int id,
+    String title,
+    String body,
+    String payload,
+  ) async => shown.add((title, body, payload));
   @override
   Future<void> cancel(int id) async => pending.remove(id);
 }
@@ -251,6 +265,48 @@ class DeviceReminderAlarms implements ReminderAlarms {
           presentBanner: true,
           presentSound: true,
           interruptionLevel: InterruptionLevel.timeSensitive,
+        ),
+      ),
+    );
+  }
+
+  /// Server alerts channel: heads-up, default notification sound and
+  /// vibration, shown on the lock screen (the user can change sound /
+  /// vibration / pop-up per channel in Android's settings).
+  static const String alertChannelId = 'tc_alerts_v1';
+
+  @override
+  Future<void> showNow(
+    int id,
+    String title,
+    String body,
+    String payload,
+  ) async {
+    await init();
+    await _plugin.show(
+      id: id,
+      title: title,
+      body: body,
+      payload: payload,
+      notificationDetails: NotificationDetails(
+        android: AndroidNotificationDetails(
+          alertChannelId,
+          'TallyConnect alerts',
+          channelDescription:
+              'Entries sent to Tally, sync problems and other alerts you switched on',
+          importance: Importance.high,
+          priority: Priority.high,
+          category: AndroidNotificationCategory.status,
+          enableVibration: true,
+          visibility: NotificationVisibility.public,
+          color: const Color(0xFF8C1D3F),
+          styleInformation: BigTextStyleInformation(body),
+          ticker: title,
+        ),
+        iOS: const DarwinNotificationDetails(
+          presentAlert: true,
+          presentBanner: true,
+          presentSound: true,
         ),
       ),
     );

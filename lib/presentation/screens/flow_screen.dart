@@ -1,5 +1,5 @@
 // ENTRY FLOW (Main.dc.html 718–867; view model 2399–2469): Sales, Purchase,
-// Money In, Money Out and Adjustment, with steps, GST totals, payment modes,
+// Money In, Money Out and Journal, with steps, GST totals, payment modes,
 // journal balancing and the summary check.
 library;
 
@@ -537,7 +537,10 @@ class _LineText extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(line.name, style: ts(16, w: w700, h: 1.25, c: p.ink)),
+        Text(
+          line.name,
+          style: ts(16, w: w700, h: 1.25, c: p.ink),
+        ),
         const SizedBox(height: 2),
         Wrap(
           crossAxisAlignment: WrapCrossAlignment.center,
@@ -830,8 +833,17 @@ class _Ledgers extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
                           Text(
-                            'Goes to (Dr)',
-                            style: ts(13.5, w: w700, c: p.pos),
+                            'Debit',
+                            style: ts(13.5, w: w800, c: p.pos),
+                          ),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Money goes to',
+                              maxLines: 1,
+                              style: ts(12, w: w600, c: p.pos),
+                            ),
                           ),
                           AmtText(
                             inr(dr),
@@ -850,8 +862,17 @@ class _Ledgers extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
                           Text(
-                            'Comes from (Cr)',
-                            style: ts(13.5, w: w700, c: p.navy),
+                            'Credit',
+                            style: ts(13.5, w: w800, c: p.navy),
+                          ),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Money comes from',
+                              maxLines: 1,
+                              style: ts(12, w: w600, c: p.navy),
+                            ),
                           ),
                           AmtText(
                             inr(cr),
@@ -876,58 +897,58 @@ class _Ledgers extends ConsumerWidget {
                 Container(
                   constraints: const BoxConstraints(minHeight: 60),
                   padding: const EdgeInsets.symmetric(vertical: 10),
-                  child: Row(
-                    children: <Widget>[
-                      Tap(
-                        onTap: () => c.updJl(
-                          i,
-                          (JLine x) =>
-                              x.copyWith(side: x.side == 'Dr' ? 'Cr' : 'Dr'),
+                  // Narrow phones: side + account on one line, amount and
+                  // delete below, so the account name keeps its width.
+                  child: _JRow(
+                    side: Tap(
+                      onTap: () => c.updJl(
+                        i,
+                        (JLine x) =>
+                            x.copyWith(side: x.side == 'Dr' ? 'Cr' : 'Dr'),
+                      ),
+                      radius: 11,
+                      child: Container(
+                        constraints: const BoxConstraints(minWidth: 58),
+                        height: 34,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: c.jl[i].side == 'Dr'
+                              ? mix(p.pos, .12)
+                              : navyA(.1),
+                          borderRadius: BorderRadius.circular(11),
                         ),
-                        radius: 11,
-                        child: Container(
-                          constraints: const BoxConstraints(minWidth: 62),
-                          height: 34,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: c.jl[i].side == 'Dr'
-                                ? mix(p.pos, .12)
-                                : navyA(.1),
-                            borderRadius: BorderRadius.circular(11),
+                        child: Text(
+                          c.jl[i].side == 'Dr' ? 'Debit' : 'Credit',
+                          style: ts(
+                            12.5,
+                            w: w800,
+                            c: c.jl[i].side == 'Dr' ? p.pos : p.navy,
                           ),
-                          child: Text(
-                            c.jl[i].side == 'Dr' ? 'Goes to' : 'From',
-                            style: ts(
-                              12.5,
-                              w: w800,
-                              c: c.jl[i].side == 'Dr' ? p.pos : p.navy,
-                            ),
-                          ),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: RTx(
-                          c.jl[i].name,
-                          c.jl[i].grp,
-                          titleSize: 15,
-                          ell: true,
-                        ),
+                    ),
+                    name: Expanded(
+                      child: RTx(
+                        c.jl[i].name,
+                        c.jl[i].grp,
+                        titleSize: 15,
+                        ell: true,
                       ),
-                      const SizedBox(width: 12),
-                      _JInp(
-                        value: c.jl[i].amt == 0 && c.repo.isRemote
-                            ? ''
-                            : qty(c.jl[i].amt),
-                        onChanged: (String v) => c.updJl(
-                          i,
-                          (JLine x) => x.copyWith(amt: num.tryParse(v) ?? 0),
-                        ),
+                    ),
+                    amount: _JInp(
+                      value: c.jl[i].amt == 0 && c.repo.isRemote
+                          ? ''
+                          : qty(c.jl[i].amt),
+                      onChanged: (String v) => c.updJl(
+                        i,
+                        (JLine x) => x.copyWith(amt: num.tryParse(v) ?? 0),
                       ),
-                      const SizedBox(width: 12),
-                      DelBtn(size: 38, onTap: () => c.updJl(i, (_) => null)),
-                    ],
+                    ),
+                    delete: DelBtn(
+                      size: 38,
+                      onTap: () => c.updJl(i, (_) => null),
+                    ),
                   ),
                 ),
               ],
@@ -958,6 +979,45 @@ class _Ledgers extends ConsumerWidget {
 }
 
 /// `.jinp` amount box.
+/// One journal account line: one row, or two rows below 360 px.
+class _JRow extends StatelessWidget {
+  const _JRow({
+    required this.side,
+    required this.name,
+    required this.amount,
+    required this.delete,
+  });
+  final Widget side, name, amount, delete;
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.sizeOf(context).width >= 360) {
+      return Row(
+        children: <Widget>[
+          side,
+          const SizedBox(width: 12),
+          name,
+          const SizedBox(width: 8),
+          amount,
+          const SizedBox(width: 8),
+          delete,
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Row(children: <Widget>[side, const SizedBox(width: 12), name]),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: <Widget>[amount, const SizedBox(width: 8), delete],
+        ),
+      ],
+    );
+  }
+}
+
 class _JInp extends StatefulWidget {
   const _JInp({required this.value, required this.onChanged});
   final String value;
@@ -1099,7 +1159,7 @@ class _Summary extends ConsumerWidget {
           <(String, String, bool)>[
             for (final JLine j in c.jl)
               (
-                '${j.side == 'Dr' ? 'Goes to · ' : 'Comes from · '}${j.name}',
+                '${j.side == 'Dr' ? 'Debit (money goes to) · ' : 'Credit (money comes from) · '}${j.name}',
                 inr(j.amt),
                 false,
               ),

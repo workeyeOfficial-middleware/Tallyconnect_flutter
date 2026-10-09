@@ -76,7 +76,7 @@ InvoiceSpec invoiceOf(PdfInfo pd) {
             : '${pd.kind.toUpperCase()} VOUCHER');
   final num? sub = pd.lines.isEmpty
       ? null
-      : paise(pd.lines.fold<num>(0, (num s, BillLine l) => s + l.amt));
+      : paise(sumRupees(pd.lines.map((BillLine l) => l.amt)));
   final num diff = sub == null ? 0 : paise(pd.total - sub);
   final List<(String, num)> taxes = <(String, num)>[
     if (sample) ...<(String, num)>[
@@ -360,7 +360,7 @@ ShareDoc docVouchers(
   ),
   totals: <(String, String)>[
     ('Entries', '${rows.length}'),
-    ('Total value', inr(rows.fold<num>(0, (num s, Voucher v) => s + v.amt))),
+    ('Total value', inr(sumRupees(rows.map((Voucher v) => v.amt)))),
   ],
 );
 
@@ -379,7 +379,7 @@ ShareDoc docBills(bool recv, List<Bill> rows, String company, DateTime today) =>
         right: const <int>{4},
       ),
       totals: <(String, String)>[
-        ('Total', inr(rows.fold<num>(0, (num s, Bill b) => s + b.amt))),
+        ('Total', inr(sumRupees(rows.map((Bill b) => b.amt)))),
       ],
     );
 
@@ -397,10 +397,7 @@ ShareDoc docItems(List<Item> rows, String company) => ShareDoc(
     right: const <int>{2, 3},
   ),
   totals: <(String, String)>[
-    (
-      'Total stock value',
-      inr(rows.fold<num>(0, (num s, Item x) => s + x.worth)),
-    ),
+    ('Total stock value', inr(sumRupees(rows.map((Item x) => x.worth)))),
   ],
 );
 

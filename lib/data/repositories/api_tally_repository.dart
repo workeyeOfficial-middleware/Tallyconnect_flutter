@@ -435,8 +435,12 @@ class ApiTallyRepository extends TallyRepository {
   /// stays visible until the fresh data replaces it). A forced refresh also
   /// restarts the voucher lists from page 1.
   Future<void> _refreshAll(bool force) async {
-    // Counts are recounted when next shown (old ones stay until then).
+    // Counts are recounted when next shown; until then they show as
+    // updating ("…"), never as the old figure.
     _countsStale.addAll(_counts.keys);
+    for (final VoucherCounts c in _counts.values) {
+      c.stale = true;
+    }
     if (force) {
       // Lists restart from page 1 now (not after the other sets reload), so
       // a list opened during a long refresh is never blanked at its end.
@@ -924,6 +928,14 @@ class ApiTallyRepository extends TallyRepository {
       c.kindAmt['other'] = (c.kindAmt['other'] ?? 0) + rest;
       c.totalAmt = c.totalAmt! + rest;
     }
+    // Cross-check: voucher values are sizes. If some types' server sums
+    // have the opposite sign to the others, stored amounts carry mixed
+    // signs and SUM() nets them — those totals would be wrong, so amounts
+    // are shown as unavailable instead (counts stay exact).
+    final num sizes = paise(c.totalAmt!);
+    if ((sizes - paise(totalSum.abs())).abs() > .01) {
+      c.amountsUnsure = true;
+    }
     return c;
   }
 
@@ -1028,6 +1040,30 @@ class ApiTallyRepository extends TallyRepository {
   String? get activeCompanyId => _active;
   @override
   SyncInfo? syncInfo(String companyId) => _sync[companyId];
+
+  /// Asks the server when the agent last finished a sync of the active
+  /// company (one small request). True when it is newer than what the app
+  /// has loaded — the caller then reloads, so totals include new entries.
+  @override
+  Future<bool> checkNewSync() async {
+    final String? id = _active;
+    if (_client.token == null || id == null) return false;
+    try {
+      final SyncInfo now = syncFrom(await _api.syncStatus(id));
+      final DateTime? had = _sync[id]?.lastSyncAt;
+      _sync[id] = now;
+      final DateTime? at = now.lastSyncAt;
+      return at != null && (had == null || at.isAfter(had));
+    } on ApiException catch (e) {
+      if (e.kind == ApiErrorKind.unauthorized) {
+        await _endSession();
+        _notify();
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
 
   @override
   Future<void> setActiveCompany(String id) async {
@@ -1434,6 +1470,8 @@ Map<String, Object?> salesBody(EntryDraft d) {
     'voucher_no':
         _opt(d.no) ?? (d.type == 'purchase' ? _opt(d.supplierInvoice) : null),
     'party_name': d.party,
+    // Party created in this entry: the agent creates the ledger first.
+    'new_party': d.newParty?.toJson(),
     'due_date': _opt(d.due),
     'narration': _opt(d.note),
     'items': items,

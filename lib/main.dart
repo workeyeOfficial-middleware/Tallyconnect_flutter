@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app_state.dart';
 import 'app/providers.dart';
+import 'core/app_icon/app_icon.dart';
 import 'core/design/tc_kit.dart';
 import 'core/notify/reminder_alarms.dart';
 import 'core/storage/local_storage.dart';
@@ -60,7 +61,16 @@ Future<Widget> _boot() async {
     alarms: Platform.isAndroid || Platform.isIOS
         ? DeviceReminderAlarms()
         : NoReminderAlarms(),
+    // Theme-matched launcher icon (Android launcher aliases).
+    appIcon: Platform.isAndroid ? DeviceAppIcon() : NoAppIcon(),
   );
+  // The launcher icon is switched when the app goes to the background;
+  // back in front, the app checks for a new Tally sync / new alerts.
+  _iconLifecycle = AppLifecycleListener(
+    onPause: controller.applyAppIcon,
+    onResume: controller.liveCheck,
+  );
+  if (!kUseMock) controller.startLive();
   // Saved data (snapshot cache) is already on screen; fresh data replaces it
   // in the background. Errors keep the saved data and show a toast.
   if (restored) {
@@ -78,6 +88,10 @@ Future<Widget> _boot() async {
 }
 
 const bool kUseMock = bool.fromEnvironment('TC_MOCK');
+
+/// Kept alive for the whole app (applies the matching app icon on pause).
+// ignore: unused_element
+AppLifecycleListener? _iconLifecycle;
 
 class TallyConnectApp extends StatelessWidget {
   const TallyConnectApp({super.key});

@@ -58,6 +58,26 @@ class FakeBackend {
             .where((String t) => t.toLowerCase().contains(type.toLowerCase()))
             .length;
 
+  /// Agent's last finished sync (GET /agent-status/sync-status).
+  String lastSync = '2026-10-03T04:00:00.000Z';
+
+  /// `SUM(net_amount)` the server reports per type filter (null: 0).
+  Map<String, num>? typeTotals;
+  num totalFor(String? type) {
+    final Map<String, num>? t = typeTotals;
+    if (t == null) return 0;
+    num s = 0;
+    t.forEach((String k, num v) {
+      if (type == null || k.toLowerCase().contains(type.toLowerCase())) {
+        s += v;
+      }
+    });
+    return s;
+  }
+
+  /// Extra mobile alerts (newest arrive after start).
+  List<Map<String, Object?>> moreNotifs = <Map<String, Object?>>[];
+
   /// Users removed with DELETE /users/:id.
   final Set<String> deletedUsers = <String>{};
 
@@ -137,7 +157,7 @@ class FakeBackend {
       case '/agent-status/sync-status':
         body = <String, Object?>{
           'success': true,
-          'last_sync_at': '2026-10-03T04:00:00.000Z',
+          'last_sync_at': lastSync,
           'sync_in_progress': false,
         };
       case '/users/me':
@@ -355,7 +375,7 @@ class FakeBackend {
             'page': page,
             'limit': limit,
             'hasMore': page == 1,
-            'totalAmount': 0,
+            'totalAmount': monthQ ? 0 : '${totalFor(vq['type'])}',
             'types': <Object?>['Payment', 'Receipt', 'Sales', 'Sales Order'],
             'years': <Object?>[],
           },
@@ -455,6 +475,7 @@ class FakeBackend {
               'created_at': '2026-10-03T05:00:00.000Z',
               'type': 'entry_failed',
             },
+            ...moreNotifs,
           ],
         };
       case '/api/mobile/notifications/config':

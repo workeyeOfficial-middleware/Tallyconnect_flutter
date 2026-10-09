@@ -54,6 +54,17 @@ class LocalStorage {
   static const String kNavHidden = 'tc-nav-hidden';
   static const String kGlass = 'tc-liquid-glass';
 
+  /// Theme-matched app icon: switch on/off, launcher variant last applied,
+  /// exact-colour shortcut pinned + its last colours.
+  static const String kIconMatch = 'tc-icon-match';
+
+  /// Server alert ids already shown as phone notifications; notification
+  /// permission asked once.
+  static const String kSeenAlerts = 'tc-seen-alerts';
+  static const String kNotifAsked = 'tc-notif-asked';
+  static const String kIconApplied = 'tc-icon-applied';
+  static const String kIconShortcut = 'tc-icon-shortcut';
+
   /// Low-stock alerts switch, and per company the items last seen out of
   /// stock (so only items that newly run out raise an alert).
   static const String kLowStockOn = 'tc-low-stock-alerts-on';

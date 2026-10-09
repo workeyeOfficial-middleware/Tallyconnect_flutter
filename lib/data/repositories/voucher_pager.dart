@@ -148,8 +148,7 @@ class VoucherPager extends ChangeNotifier {
   }
 
   /// Sum of the loaded rows (exact for the filter once [complete]).
-  num get loadedTotal =>
-      paise(rows.fold<num>(0, (num s, Voucher v) => s + v.amt));
+  num get loadedTotal => paise(sumRupees(rows.map((Voucher v) => v.amt)));
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -274,6 +273,13 @@ class VoucherCounts {
   bool complete;
   String? error;
 
+  /// Data reloaded since these were counted: not shown until recounted.
+  bool stale = false;
+
+  /// The amounts could not be trusted (server sums disagree): amounts show
+  /// as unavailable, never as a wrong figure.
+  bool amountsUnsure = false;
+
   /// Display name of each type key (as Tally spells it).
   final Map<String, String> names = <String, String>{};
 
@@ -292,23 +298,30 @@ class VoucherCounts {
       totalAmt: 0,
       complete: true,
     );
+    // Added up in whole paise (exact for any number of vouchers).
+    int all = 0;
+    final Map<String, int> kp = <String, int>{}, tp = <String, int>{};
     for (final Voucher v in vs) {
+      final int p = toPaise(v.amt);
       c.total = c.total! + 1;
-      c.totalAmt = c.totalAmt! + v.amt;
+      all += p;
       c.kind[v.kind] = (c.kind[v.kind] ?? 0) + 1;
-      c.kindAmt[v.kind] = (c.kindAmt[v.kind] ?? 0) + v.amt;
+      kp[v.kind] = (kp[v.kind] ?? 0) + p;
       final String t = (v.type ?? '').toLowerCase();
       c.type[t] = (c.type[t] ?? 0) + 1;
-      c.typeAmt[t] = (c.typeAmt[t] ?? 0) + v.amt;
+      tp[t] = (tp[t] ?? 0) + p;
       c.names[t] ??= v.type ?? '';
     }
+    c.totalAmt = all / 100;
+    kp.forEach((String k, int p) => c.kindAmt[k] = p / 100);
+    tp.forEach((String k, int p) => c.typeAmt[k] = p / 100);
     return c;
   }
 
   /// Total value for a list filter (`all`, a kind or `type:X`); null until
   /// complete.
   num? amountFor(String filter) {
-    if (!complete || totalAmt == null) return null;
+    if (!complete || stale || amountsUnsure || totalAmt == null) return null;
     if (filter == 'all') return paise(totalAmt!);
     if (filter.startsWith('type:')) {
       return paise(typeAmt[filter.substring(5).trim().toLowerCase()] ?? 0);
@@ -319,7 +332,7 @@ class VoucherCounts {
   /// Count for a list filter (`all`, a kind or `type:X`); null until
   /// complete.
   int? forFilter(String filter) {
-    if (!complete) return null;
+    if (!complete || stale) return null;
     if (filter == 'all') return total;
     if (filter.startsWith('type:')) {
       return type[filter.substring(5).trim().toLowerCase()] ?? 0;

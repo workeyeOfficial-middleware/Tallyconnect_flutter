@@ -17,6 +17,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../core/design/tc_color_math.dart';
+import '../core/app_icon/app_icon.dart';
 import '../core/network/api_client.dart';
 import '../core/notify/reminder_alarms.dart';
 import '../core/design/tc_palette.dart';
@@ -328,9 +329,11 @@ class AppController extends ChangeNotifier {
     double glassLevel = 20,
     DocExporter? exporter,
     ReminderAlarms? alarms,
+    AppIconService? appIcon,
   }) : repo = repo ?? MockTallyRepository(),
        exporter = exporter ?? PlatformDocExporter(),
-       alarms = alarms ?? NoReminderAlarms() {
+       alarms = alarms ?? NoReminderAlarms(),
+       appIcon = appIcon ?? NoAppIcon() {
     final int ti = kTabs.indexWhere(
       (({String k, String t, String ic}) t) => t.k == startScreen,
     );
@@ -381,6 +384,7 @@ class AppController extends ChangeNotifier {
     team = _labelTeam(repo.team());
     company = repo.activeCompanyId ?? '';
     _armDueAlerts();
+    _notifyNewAlerts();
     _checkStock();
     if (repo.sessionExpired && loggedIn) {
       _endSession('Your session has ended. Please log in again.');
@@ -397,6 +401,9 @@ class AppController extends ChangeNotifier {
 
   /// Device notifications for reminders and due-bill alerts.
   final ReminderAlarms alarms;
+
+  /// Launcher icon / home-screen shortcut (theme-matched TC icon).
+  final AppIconService appIcon;
   final HitRegistry reg = HitRegistry();
 
   // ---------------------------------------------------------------- state
@@ -602,6 +609,7 @@ class AppController extends ChangeNotifier {
     }
     _stopRoute();
     _alarmSub?.cancel();
+    _live?.cancel();
     for (final Timer t in _qTimers.values) {
       t.cancel();
     }
@@ -663,6 +671,7 @@ class AppController extends ChangeNotifier {
     final Object? ht = store.load<Object?>(LocalStorage.kHiddenTabs, null);
     if (ht is List) hiddenTabs = ht.whereType<String>().toSet()..remove('home');
     navBarHidden = store.load<Object?>(LocalStorage.kNavHidden, false) == true;
+    iconMatch = store.load<Object?>(LocalStorage.kIconMatch, true) != false;
     bgShade =
         ((store.load<Object?>(LocalStorage.kBgShade, kDefaultShade) as num?) ??
                 kDefaultShade)
@@ -756,6 +765,124 @@ class AppController extends ChangeNotifier {
   /// or hidden by the user; Home is never hidden).
   bool tabHidden(int i) =>
       !canOpen(kTabs[i].k) || hiddenTabs.contains(kTabs[i].k);
+
+  // --------------------------------------------- theme-matched app icon
+  /// The TC icon's letters follow the background (launcher icon variant;
+  /// optional exact-colour shortcut). Saved on this phone.
+  bool iconMatch = true;
+
+  /// Dominant colour per photo path (worked out once).
+  final Map<String, Color> _photoColor = <String, Color>{};
+
+  /// The background's main colour: the dominant colour of the user's photo,
+  /// else the most colourful colour of the chosen wallpaper / look.
+  Future<Color> iconBaseColor() async {
+    final Photo? ph = photo;
+    if (wallK == 'photo' && ph != null) {
+      final Color? known = _photoColor[ph.path];
+      if (known != null) return known;
+      try {
+        final Color c = await dominantColor(await File(ph.path).readAsBytes());
+        _photoColor[ph.path] = c;
+        return c;
+      } catch (_) {
+        return palette.acc;
+      }
+    }
+    final TcPalette p = palette;
+    Color best = p.acc;
+    double bs = -1;
+    for (final Color k in <Color>[p.o1, p.o2, p.o3, p.acc]) {
+      final HSVColor h = HSVColor.fromColor(k.withValues(alpha: 1));
+      final double sc = h.saturation * h.value;
+      if (sc > bs) {
+        bs = sc;
+        best = k.withValues(alpha: 1);
+      }
+    }
+    return best;
+  }
+
+  /// Icon the current background asks for: launcher variant + the exact
+  /// letter colours (original icon when matching is off).
+  Future<({IconVariant variant, Color t, Color c})> iconTarget() async {
+    if (!iconMatch) {
+      return (variant: kIconVariants.first, t: kBrandT, c: kBrandC);
+    }
+    final Color base = await iconBaseColor();
+    final (Color t, Color c) = lettersFor(base);
+    return (variant: variantFor(base), t: t, c: c);
+  }
+
+  bool _iconBusy = false;
+
+  /// Applies the matching icon. Called when the app goes to the background
+  /// (switching a launcher icon while the app is open can restart it on
+  /// some phones). Only acts when something changed.
+  Future<void> applyAppIcon() async {
+    if (_iconBusy) return;
+    _iconBusy = true;
+    try {
+      final ({IconVariant variant, Color t, Color c}) w = await iconTarget();
+      final String applied = store.load<String>(
+        LocalStorage.kIconApplied,
+        'IconBrand',
+      );
+      if (applied != w.variant.alias && await appIcon.set(w.variant.alias)) {
+        store.save(LocalStorage.kIconApplied, w.variant.alias);
+      }
+      // A pinned exact-colour shortcut follows too.
+      final Object? sc = store.load<Object?>(LocalStorage.kIconShortcut, null);
+      final String sig =
+          '${w.t.toARGB32().toRadixString(16)}${w.c.toARGB32().toRadixString(16)}';
+      if (sc is Map && sc['pinned'] == true && sc['sig'] != sig) {
+        final String r = await appIcon.pin(
+          await renderIconPng(w.t, w.c),
+          updateOnly: true,
+        );
+        store.save(LocalStorage.kIconShortcut, <String, Object?>{
+          'pinned': r == 'updated',
+          'sig': sig,
+        });
+      }
+    } catch (_) {
+      // Never disturb the app for the icon.
+    } finally {
+      _iconBusy = false;
+    }
+  }
+
+  void setIconMatch(bool on) {
+    _set(() => iconMatch = on);
+    store.save(LocalStorage.kIconMatch, on);
+    say(
+      on
+          ? 'App icon will match your background when you leave the app'
+          : 'Original app icon will be back when you leave the app',
+    );
+  }
+
+  /// Adds (or updates) a home-screen shortcut with the exact colours.
+  Future<void> pinIconShortcut() async {
+    if (!await appIcon.pinSupported()) {
+      say('Your home screen does not allow adding shortcuts from apps');
+      return;
+    }
+    final ({IconVariant variant, Color t, Color c}) w = await iconTarget();
+    final String r = await appIcon.pin(await renderIconPng(w.t, w.c));
+    if (r == 'requested' || r == 'updated') {
+      store.save(LocalStorage.kIconShortcut, <String, Object?>{
+        'pinned': true,
+        'sig':
+            '${w.t.toARGB32().toRadixString(16)}${w.c.toARGB32().toRadixString(16)}',
+      });
+    }
+    say(switch (r) {
+      'requested' => 'Confirm on the pop-up to add the shortcut',
+      'updated' => 'Shortcut colours updated',
+      _ => 'Your home screen does not allow adding shortcuts from apps',
+    });
+  }
 
   // ------------------------------------------- hide / show tabs and bar
   /// Bottom-bar tabs hidden by the user (tab keys). Their screens still open
@@ -1284,6 +1411,7 @@ class AppController extends ChangeNotifier {
         dir = 'fwd';
       });
       say('Welcome back, ${u.username}');
+      _askNotificationsOnce();
       await repo.refreshAll();
       afterRefresh(quietOk: true);
       _openPendingTap();
@@ -1565,6 +1693,7 @@ class AppController extends ChangeNotifier {
       supplierInvoice: (form['pSupInv'] ?? '').trim(),
       lines: List<Line>.of(lines[flowType] ?? <Line>[]),
       journal: List<JLine>.of(jl),
+      newParty: _pendingParty(v('Party')),
     );
   }
 
@@ -1757,18 +1886,66 @@ class AppController extends ChangeNotifier {
     overlay = 'newParty';
     npKey = key;
     npType = type;
+    npFlowType = key == null ? null : type;
     form['npName'] = '';
     form['npPhone'] = '';
     form['npCity'] = '';
   });
 
+  /// Party type the open entry needs (sale / receipt → customer, purchase /
+  /// payment → supplier); null outside an entry.
+  String? npFlowType;
+
+  /// Parties created in an entry but not yet in Tally (by lower-case name);
+  /// sent with the voucher as `new_party`.
+  final Map<String, NewParty> newParties = <String, NewParty>{};
+
+  /// The inline-created party [name], while Tally does not have it yet.
+  NewParty? _pendingParty(String name) {
+    final NewParty? np = newParties[name.toLowerCase()];
+    if (np == null) return null;
+    final bool synced = repo.parties().any(
+      (Party x) => x.name.toLowerCase() == name.toLowerCase(),
+    );
+    return synced ? null : np;
+  }
+
+  /// Why the Add party form cannot be saved, or null.
+  String? get newPartyError {
+    final String nm = (form['npName'] ?? '').trim();
+    if (nm.isEmpty) return 'Enter the party name';
+    if (nm.length > 99) return 'Name is too long for Tally (max 99)';
+    if (RegExp(r'[<>&"]').hasMatch(nm)) {
+      return 'Name cannot contain < > & or "';
+    }
+    final String ph = (form['npPhone'] ?? '').replaceAll(RegExp(r'[\s-]'), '');
+    if (ph.isNotEmpty && !RegExp(r'^\+?\d{7,15}$').hasMatch(ph)) {
+      return 'Enter a valid mobile number';
+    }
+    final String? need = npFlowType;
+    if (need != null && npType != need) {
+      final String what = switch (flowType) {
+        'sales' => 'A sale',
+        'purchase' => 'A purchase',
+        'receipt' => 'Money received',
+        _ => 'A payment',
+      };
+      return need == 'c'
+          ? '$what needs a customer. Choose Customer.'
+          : '$what needs a supplier. Choose Supplier.';
+    }
+    return null;
+  }
+
   void saveParty() {
     final String nm = (form['npName'] ?? '').trim();
-    if (nm.isEmpty) return;
+    final String? err = newPartyError;
+    if (err != null) {
+      say(err);
+      return;
+    }
     if (repo.isRemote) {
-      say(
-        'Adding a party is not available yet — the server cannot create parties',
-      );
+      _savePartyRemote(nm);
       return;
     }
     final String city = form['npCity'] ?? '';
@@ -1779,6 +1956,76 @@ class AppController extends ChangeNotifier {
       overlay = null;
     });
     say('$nm added');
+  }
+
+  /// Real data: there is no "create ledger" endpoint, so a new party is
+  /// created in Tally by the sync agent together with the first entry made
+  /// for it (`new_party` / missing party). The party is usable in this
+  /// entry at once.
+  void _savePartyRemote(String nm) {
+    final String key = nm.toLowerCase();
+    // Already in Tally (ledger names are unique in a company).
+    final Party? same = partyPool()
+        .where((Party x) => x.name.toLowerCase() == key)
+        .firstOrNull;
+    final bool ledger = repo.ledgers().any((Opt o) => o.t.toLowerCase() == key);
+    if (same != null && !newParties.containsKey(key)) {
+      if (same.type != npType && same.type != 'o') {
+        say(
+          '${same.name} is already a ${same.type == 'c' ? 'customer' : 'supplier'} in Tally',
+        );
+        return;
+      }
+      _set(() {
+        if (npKey != null) form[npKey!] = same.name;
+        overlay = null;
+      });
+      say('${same.name} is already in Tally · selected');
+      return;
+    }
+    if (same == null && ledger) {
+      say('A ledger named "$nm" already exists in Tally');
+      return;
+    }
+    if (npKey == null) {
+      // Party screen (no entry): nothing to send it with.
+      say(
+        'A new party is created in Tally with its first entry. Start a '
+        'Sale, Purchase, Receipt or Payment and tap + next to the party.',
+      );
+      return;
+    }
+    final String phone = (form['npPhone'] ?? '').replaceAll(
+      RegExp(r'[\s-]'),
+      '',
+    );
+    final String city = (form['npCity'] ?? '').trim();
+    final NewParty np = NewParty(
+      name: nm,
+      type: npType,
+      phone: phone,
+      city: city,
+    );
+    newParties[key] = np;
+    _set(() {
+      form[npKey!] = nm;
+      extraParties = <Party>[
+        ...extraParties.where((Party x) => x.name.toLowerCase() != key),
+        Party(
+          nm,
+          npType,
+          city.isEmpty ? '—' : city,
+          0,
+          group: np.group,
+          phone: phone.isEmpty ? null : phone,
+        ),
+      ];
+      overlay = null;
+    });
+    say(
+      '$nm added · it will be created in Tally as a '
+      '${npType == 's' ? 'supplier' : 'customer'} with this entry',
+    );
   }
 
   void setMode(String m) => _set(() {
@@ -2289,6 +2536,13 @@ class AppController extends ChangeNotifier {
             'partyTab': 'summary',
           }),
         );
+      case 'entries':
+        final (String, String, String, String, String)? e = kEntryTiles
+            .where(((String, String, String, String, String) x) => x.$1 == key)
+            .firstOrNull;
+        return e == null
+            ? null
+            : CardInfo(e.$2, e.$4, e.$5, () => openEntryTile(key));
       case 'reports':
         final Report? rp = repo
             .reports()
@@ -2738,6 +2992,31 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  /// Opens a New Entry card's flow. Contra: the server has no Contra entry
+  /// (its create routes take Sales, Purchase, Receipt, Payment and Journal
+  /// only), so nothing is posted under another voucher type.
+  void openEntryTile(String key) {
+    if (key == 'contra') {
+      say(
+        'Contra entries cannot be sent to Tally yet. The server does not accept Contra entries.',
+      );
+      return;
+    }
+    startFlow(key);
+  }
+
+  /// Shows hidden New Entry card [key] again (null: all of them).
+  void restoreEntryTile([String? key]) {
+    updPref('entries', (ListPref pr) {
+      if (key == null) {
+        pr.hidden.clear();
+      } else {
+        pr.hidden.remove(key);
+      }
+    });
+    say(key == null ? 'All entry cards restored' : 'Entry card restored');
+  }
+
   void cmHide() {
     final CMenu? c = cmenu;
     if (c == null) return;
@@ -2945,7 +3224,8 @@ class AppController extends ChangeNotifier {
       if (tk == d.id) continue;
       final Rect? b = HitRegistry.rectOf(e.value);
       if (b == null || !b.contains(pt)) continue;
-      final bool after = d.list == 'reports'
+      // Grids (Reports, New Entry cards): left / right half of a card.
+      final bool after = d.list == 'reports' || d.list == 'entries'
           ? pt.dx > b.left + b.width / 2
           : pt.dy > b.top + b.height / 2;
       final String key = '$tk${after ? '>' : '<'}';
@@ -4433,6 +4713,87 @@ class AppController extends ChangeNotifier {
   /// Bills behind the armed due alerts (re-armed only when they change).
   String _dueSig = '';
 
+  // ------------------------------------- live check: new sync / alerts
+  Timer? _live;
+
+  /// While the app runs: every 90 s (and when it comes back to the front)
+  /// asks the server whether the Tally agent finished a new sync (reloads
+  /// so every total includes the new entries) and fetches new alerts
+  /// (shown as phone notifications while the app is in the background).
+  static const Duration kLiveEvery = Duration(seconds: 90);
+
+  void startLive() {
+    _live?.cancel();
+    _live = Timer.periodic(kLiveEvery, (_) => liveCheck());
+  }
+
+  bool _liveBusy = false;
+
+  Future<void> liveCheck() async {
+    if (_disposed || !loggedIn || !repo.isRemote || _liveBusy) return;
+    _liveBusy = true;
+    try {
+      if (await repo.checkNewSync()) {
+        await repo.refreshAll(force: true);
+      } else {
+        await repo.refreshNotifications();
+      }
+    } catch (_) {
+      // Next tick tries again.
+    } finally {
+      _liveBusy = false;
+    }
+  }
+
+  /// Server alerts already shown (or present before this phone started
+  /// showing them) — each alert pops up once.
+  Set<String>? _seenNotifs;
+
+  /// New unread server alerts → phone notifications (only while the app is
+  /// not on screen; on screen they are in Alerts). The server already
+  /// leaves out the types switched off in Settings → Alerts.
+  void _notifyNewAlerts() {
+    if (!repo.isRemote || !loggedIn) return;
+    final List<Notif> fresh = notifs.where((Notif n) => n.unread).toList();
+    Set<String>? seen = _seenNotifs;
+    if (seen == null) {
+      final Object? s = store.load<Object?>(LocalStorage.kSeenAlerts, null);
+      if (s is List) {
+        seen = s.whereType<String>().toSet();
+      } else {
+        // First time on this phone: no flood of old alerts.
+        seen = <String>{for (final Notif n in notifs) n.id};
+        store.save(LocalStorage.kSeenAlerts, seen.toList());
+      }
+      _seenNotifs = seen;
+    }
+    final List<Notif> show = <Notif>[
+      for (final Notif n in fresh)
+        if (!seen.contains(n.id)) n,
+    ];
+    if (show.isEmpty) return;
+    seen.addAll(show.map((Notif n) => n.id));
+    // Keep the list small (newest ids are what matter).
+    final List<String> keep = seen.toList();
+    if (keep.length > 400) keep.removeRange(0, keep.length - 400);
+    store.save(LocalStorage.kSeenAlerts, keep);
+    final AppLifecycleState? life = WidgetsBinding.instance.lifecycleState;
+    if (life == AppLifecycleState.resumed) return;
+    for (final Notif n in show.take(5)) {
+      unawaited(
+        alarms.showNow(alarmId('alert:${n.id}'), n.t, n.b, 'alert:${n.id}'),
+      );
+    }
+  }
+
+  /// Asks once (after login) for notification permission, so reminders,
+  /// due-date alerts and server alerts can show on Android 13+.
+  void _askNotificationsOnce() {
+    if (store.load<Object?>(LocalStorage.kNotifAsked, false) == true) return;
+    store.save(LocalStorage.kNotifAsked, true);
+    unawaited(alarms.requestAccess());
+  }
+
   void _startAlarms() {
     _alarmSub = alarms.taps.listen(onAlarmTap);
     alarms.init().then((AlarmTap? launch) {
@@ -4443,6 +4804,7 @@ class AppController extends ChangeNotifier {
         unawaited(_arm(r));
       }
       _armDueAlerts();
+      if (loggedIn) _askNotificationsOnce();
       if (launch != null) onAlarmTap(launch);
     }, onError: (Object _) {});
   }
@@ -4451,6 +4813,17 @@ class AppController extends ChangeNotifier {
   void onAlarmTap(AlarmTap t) {
     if (_disposed) return;
     final String p = t.payload;
+    if (p.startsWith('alert:')) {
+      final String id = p.substring(6);
+      final Notif? n = notifs.where((Notif x) => x.id == id).firstOrNull;
+      if (!loggedIn) return;
+      if (n != null) {
+        openNotif(n);
+      } else {
+        go('notifs');
+      }
+      return;
+    }
     if (p.startsWith('rem:')) {
       final String id = p.substring(4);
       if (t.action == 'done') return markReminderDone(id);

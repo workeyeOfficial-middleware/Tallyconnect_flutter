@@ -165,13 +165,15 @@ class SideMenu extends ConsumerWidget {
               translation: Offset(-(1 - t) * 1.05, 0),
               child: ch,
             ),
+            // Liquid glass like the cards (see-through tint + light blur),
+            // not the milky sheet frosting.
             child: ClipRRect(
               borderRadius: br,
               child: BackdropFilter(
-                filter: backdrop(26, 1.85),
+                filter: backdrop(12, 2.1, 1.04),
                 child: Glass(
                   borderRadius: br,
-                  fill: p.sheetFill,
+                  fill: p.glassFill,
                   shadows: const <BoxShadow>[],
                   child: SingleChildScrollView(
                     padding: EdgeInsets.fromLTRB(
@@ -635,6 +637,8 @@ class NewPartySheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
+    final String? err = c.newPartyError;
+    final bool typed = c.f('npName').trim().isNotEmpty;
     return Sheet(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -644,6 +648,17 @@ class NewPartySheet extends ConsumerWidget {
             sub: c.npType == 's'
                 ? 'A supplier you buy from'
                 : 'A customer you sell to',
+          ),
+          Fld(
+            label: 'Type',
+            req: true,
+            child: Seg(
+              key: const ValueKey<String>('npTypeSeg'),
+              margin: EdgeInsets.zero,
+              items: const <String>['Customer', 'Supplier'],
+              selected: c.npType == 's' ? 1 : 0,
+              onPick: (int i) => c.update(() => c.npType = i == 1 ? 's' : 'c'),
+            ),
           ),
           Fld(
             label: 'Name',
@@ -671,10 +686,22 @@ class NewPartySheet extends ConsumerWidget {
               placeholder: 'e.g. Mumbai',
             ),
           ),
+          if (typed && err != null)
+            InfoBox(
+              err,
+              icon: 'info',
+              margin: const EdgeInsets.only(bottom: 12),
+            ),
+          if (c.repo.isRemote && c.npKey != null)
+            const InfoBox(
+              'The party is created in Tally together with this entry.',
+              icon: 'info',
+              margin: EdgeInsets.only(bottom: 12),
+            ),
           Btn(
             label: 'Save party',
             icon: 'check',
-            enabled: c.f('npName').trim().isNotEmpty,
+            enabled: typed && err == null,
             onTap: c.saveParty,
           ),
         ],
@@ -1508,7 +1535,8 @@ class CardMenu extends ConsumerWidget {
           ('Open', 'open', c.cmOpen),
           ('Drag', 'move', c.cmDrag),
           ('Hide', 'eyeOff', c.cmHide),
-          ('Share', 'share', c.cmShare),
+          // New Entry cards have nothing to share.
+          if (m.list != 'entries') ('Share', 'share', c.cmShare),
         ];
     return Stack(
       children: <Widget>[

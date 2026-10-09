@@ -38,6 +38,9 @@ flutter:
   assets:
     - assets/images/splash_globe.jpg
     - assets/images/splash_logo.png
+    # Letter masks for the theme-matched TC shortcut icon.
+    - assets/images/tc_icon_t.png
+    - assets/images/tc_icon_c.png
 
   # Figtree (SIL OFL 1.1, github.com/erikdkennedy/figtree) — the prototype's
   # only typeface, bundled so the app never depends on a network font.

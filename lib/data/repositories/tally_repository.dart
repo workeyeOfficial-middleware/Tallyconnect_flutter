@@ -22,6 +22,32 @@ export 'voucher_pager.dart'
 
 /// Everything the entry flow collected, before it is mapped to a backend
 /// request body by the repository.
+/// A party created inline in an entry: sent with the voucher; the sync
+/// agent creates the ledger in Tally (customer → Sundry Debtors, supplier →
+/// Sundry Creditors) before posting the voucher.
+class NewParty {
+  const NewParty({
+    required this.name,
+    required this.type,
+    this.phone = '',
+    this.city = '',
+  });
+  final String name, phone, city;
+
+  /// `c` customer | `s` supplier.
+  final String type;
+
+  String get group => type == 's' ? 'Sundry Creditors' : 'Sundry Debtors';
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'name': name,
+    'group': group,
+    'type': type == 's' ? 'supplier' : 'customer',
+    if (phone.isNotEmpty) 'phone': phone,
+    if (city.isNotEmpty) 'city': city,
+  };
+}
+
 class EntryDraft {
   const EntryDraft({
     required this.type,
@@ -39,7 +65,11 @@ class EntryDraft {
     this.supplierInvoice = '',
     this.lines = const <Line>[],
     this.journal = const <JLine>[],
+    this.newParty,
   });
+
+  /// Set when [party] was created in this entry (not in Tally yet).
+  final NewParty? newParty;
 
   /// sales | purchase | receipt | payment | journal
   final String type;
@@ -83,6 +113,9 @@ abstract class TallyRepository extends ChangeNotifier {
   Future<void> refreshAll({bool force = false});
   Future<void> refreshActivity();
   Future<void> refreshNotifications();
+
+  /// True when the Tally agent finished a sync newer than the loaded data.
+  Future<bool> checkNewSync() async => false;
   DataStatus status(String set);
 
   /// True once the set has real data (from the server or the local cache).

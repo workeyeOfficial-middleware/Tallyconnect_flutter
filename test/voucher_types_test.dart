@@ -51,7 +51,7 @@ Map<String, Object?> row(String type, {bool active = true, num amt = 100}) =>
 void main() {
   setUpAll(loadFigtree);
 
-  test('every type chip loads its vouchers (Adjustment, Bank ↔ Cash, '
+  test('every type chip loads its vouchers (Journal, Contra, '
       'Physical Stock included)', () async {
     // Newest first, as the server sends them. Journal / Contra / Physical
     // Stock rows carry the start-of-sync reset flag (is_active:false); one
@@ -115,7 +115,7 @@ void main() {
     final List<Voucher> j = await load('journal');
     expect(j, hasLength(3));
     expect(j.every((Voucher v) => v.type == 'Journal'), isTrue);
-    expect(await load('contra'), hasLength(2)); // Bank ↔ Cash
+    expect(await load('contra'), hasLength(2)); // Contra
     expect(await load('type:Physical Stock'), hasLength(2));
     expect(await load('type:Stock Journal'), hasLength(1));
   });

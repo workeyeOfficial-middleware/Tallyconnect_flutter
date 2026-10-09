@@ -87,8 +87,8 @@ class VHubScreen extends ConsumerWidget {
           ('purchase', 'Purchase', 'cart', 'purchase'),
           ('receipt', 'Receipt', 'in', 'receipt'),
           ('payment', 'Payment', 'out', 'payment'),
-          ('journal', 'Adjustment', 'book', 'journal'),
-          ('contra', 'Bank ↔ Cash', 'swap', 'contra'),
+          ('journal', 'Journal', 'book', 'journal'),
+          ('contra', 'Contra', 'swap', 'contra'),
           for (final String t in otherTypes)
             ('type:$t', t, 'receipt', 'vouchers'),
         ];
@@ -206,8 +206,8 @@ const List<(String, String)> kVF = <(String, String)>[
   ('purchase', 'Purchase'),
   ('receipt', 'Receipt'),
   ('payment', 'Payment'),
-  ('journal', 'Adjustment'),
-  ('contra', 'Bank ↔ Cash'),
+  ('journal', 'Journal'),
+  ('contra', 'Contra'),
 ];
 
 /// One voucher row (shared by the list and reports).
@@ -492,9 +492,7 @@ class _VList extends StatelessWidget {
       // Every matching row is loaded: count and total of exactly the rows
       // the list shows.
       countText = grouped(vrows.length);
-      totalText = inr(
-        paise(vrows.fold<num>(0, (num s, Voucher x) => s + x.amt)),
-      );
+      totalText = inr(paise(sumRupees(vrows.map((Voucher x) => x.amt))));
     } else if (exact != null) {
       // Still paging: the complete matching count and total value.
       countText = grouped(exact);

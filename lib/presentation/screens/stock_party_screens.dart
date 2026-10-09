@@ -194,7 +194,7 @@ class ItemsScreen extends ConsumerWidget {
       'items-stats',
       '${c.repo.version}|${all.length}',
       () => (
-        all.fold<num>(0, (num s, Item x) => s + x.worth),
+        sumRupees(all.map((Item x) => x.worth)),
         all.where((Item x) => x.st == 'low').length,
         all.where((Item x) => x.st == 'out').length,
       ),

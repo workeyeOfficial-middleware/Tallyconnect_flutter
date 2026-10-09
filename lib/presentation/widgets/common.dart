@@ -917,10 +917,16 @@ class LRow extends ConsumerStatefulWidget {
     required this.child,
     this.radius = 16,
     this.pinOverlay = true,
+    this.pinCorner = false,
   });
   final String list, lk;
   final Widget child;
   final double radius;
+
+  /// Grid cards: the pin sits in the card's (empty) top-right corner.
+  /// List rows (default): the row keeps a narrow lane on the right for the
+  /// pin, so it never covers amounts, badges or buttons.
+  final bool pinCorner;
 
   /// Draws the pin badge over the row's top-right corner. Rows that lay the
   /// badge out themselves (so it never covers their text) pass false.
@@ -970,13 +976,23 @@ class _LRowState extends ConsumerState<LRow> {
         c.cmenu != null && c.cmenu!.list == list && c.cmenu!.id == lk;
     final bool dim = c.cmenu != null && !lift;
     final bool pinned = c.isPinned(list, lk);
+    final bool lane = pinned && widget.pinOverlay && !widget.pinCorner;
     Widget w = Stack(
       fit: StackFit.passthrough,
       clipBehavior: Clip.none,
       children: <Widget>[
-        child,
+        lane
+            ? Padding(padding: const EdgeInsets.only(right: 18), child: child)
+            : child,
         if (pinned && widget.pinOverlay)
-          const Positioned(top: 6, right: 8, child: PinBadge()),
+          widget.pinCorner
+              ? const Positioned(top: 6, right: 8, child: PinBadge())
+              : const Positioned(
+                  top: 0,
+                  bottom: 0,
+                  right: 4,
+                  child: Center(child: PinBadge()),
+                ),
       ],
     );
     if (lift) {

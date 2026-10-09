@@ -4,6 +4,7 @@
 library;
 
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -11,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/app_state.dart';
 import '../../app/providers.dart';
+import '../../core/app_icon/app_icon.dart';
 import '../../core/design/tc_color_math.dart';
 import '../../core/design/tc_fields.dart';
 import '../../core/design/tc_icons.dart';
@@ -318,7 +320,47 @@ class _Layout extends ConsumerWidget {
                 ),
             ],
           ),
-          if (tabs.isNotEmpty || cards.isNotEmpty || c.navBarHidden)
+          const Sec('Hidden New Entry cards'),
+          Builder(
+            builder: (BuildContext context) {
+              final List<String> hid =
+                  c.listPrefs['entries']?.hidden ?? const <String>[];
+              return GlassList(
+                children: <Widget>[
+                  if (hid.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        'No hidden entry cards. Long-press a card on New '
+                        'Entry and choose Hide.',
+                        style: rsStyle(context, 14),
+                      ),
+                    ),
+                  for (final (String, String, String, String, String) e
+                      in kEntryTiles)
+                    if (hid.contains(e.$1))
+                      RowX(
+                        children: <Widget>[
+                          Ico(
+                            e.$4,
+                            size: IcoSize.xs,
+                            color: p.cat(e.$5),
+                            icon: IcSize.s,
+                          ),
+                          Expanded(child: RTx(e.$2, e.$3)),
+                          restore(() => c.restoreEntryTile(e.$1)),
+                        ],
+                      ),
+                ],
+              );
+            },
+          ),
+          const Sec('App icon'),
+          const _AppIconCard(),
+          if (tabs.isNotEmpty ||
+              cards.isNotEmpty ||
+              c.navBarHidden ||
+              (c.listPrefs['entries']?.hidden.isNotEmpty ?? false))
             Padding(
               padding: const EdgeInsets.only(top: 16),
               child: Btn(
@@ -328,6 +370,9 @@ class _Layout extends ConsumerWidget {
                 onTap: () {
                   if (c.navBarHidden) c.setNavBarHidden(false);
                   if (tabs.isNotEmpty) c.restoreTab();
+                  if (c.listPrefs['entries']?.hidden.isNotEmpty ?? false) {
+                    c.restoreEntryTile();
+                  }
                   if (cards.isNotEmpty) {
                     c.restoreHidden(<String>[
                       for (final HiddenCard h in cards) h.id,
@@ -336,6 +381,105 @@ class _Layout extends ConsumerWidget {
                 },
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Preview of the home-screen icon (same background; the "Tc" letters in
+/// the background's colours), the on/off switch and the exact-colour
+/// shortcut.
+class _AppIconCard extends ConsumerWidget {
+  const _AppIconCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    final String key =
+        '${c.iconMatch}|${c.wallK}|${c.photo?.path}|${c.preset}|${c.accent}|${c.mode}|${c.customBase}';
+    return Glass(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          FutureBuilder<(IconVariant, Uint8List)>(
+            key: ValueKey<String>(key),
+            future: () async {
+              final ({IconVariant variant, Color t, Color c}) w = await c
+                  .iconTarget();
+              return (w.variant, await renderIconPng(w.t, w.c, size: 216));
+            }(),
+            builder:
+                (
+                  BuildContext context,
+                  AsyncSnapshot<(IconVariant, Uint8List)> s,
+                ) => Row(
+                  children: <Widget>[
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: SizedBox(
+                        width: 72,
+                        height: 72,
+                        child: s.data == null
+                            ? ColoredBox(color: whiteA(.6))
+                            : Image.memory(
+                                s.data!.$2,
+                                gaplessPlayback: true,
+                                filterQuality: FilterQuality.high,
+                              ),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: RTx(
+                        'Home-screen icon',
+                        s.data == null
+                            ? 'Matching your background…'
+                            : (!c.iconMatch
+                                  ? 'Original TallyConnect icon'
+                                  : (s.data!.$1.key == 'brand'
+                                        ? 'The original colours already match your background'
+                                        : 'Letters in ${s.data!.$1.label.toLowerCase()} tones to match your background')),
+                      ),
+                    ),
+                  ],
+                ),
+          ),
+          const SizedBox(height: 12),
+          Tap(
+            key: const ValueKey<String>('iconMatchSwitch'),
+            onTap: () => c.setIconMatch(!c.iconMatch),
+            radius: 14,
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: RTx(
+                    'Match icon to background',
+                    'Only the Tc letters change; the icon background stays',
+                  ),
+                ),
+                Sw(c.iconMatch),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Text(
+              'The icon updates when you leave the app. Some home screens '
+              'take a moment or move the icon back to the app list.',
+              style: rsStyle(context, 12.5),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Btn(
+            label: 'Add exact-colour shortcut',
+            icon: 'plus',
+            kind: BtnKind.g,
+            color: p.navy,
+            onTap: c.pinIconShortcut,
+          ),
         ],
       ),
     );

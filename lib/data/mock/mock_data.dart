@@ -231,8 +231,9 @@ const Map<String, Kind> kKinds = <String, Kind>{
   'purchase': Kind('Purchase', 'Purchase', 'cart', 'purchase', -1),
   'receipt': Kind('Receipt', 'Receipt', 'in', 'receipt', 1),
   'payment': Kind('Payment', 'Payment', 'out', 'payment', -1),
-  'journal': Kind('Adjustment', 'Adjustment (Journal)', 'book', 'journal', 0),
-  'contra': Kind('Bank ↔ Cash', 'Bank ↔ Cash (Contra)', 'swap', 'contra', 0),
+  // Tally's own voucher names.
+  'journal': Kind('Journal', 'Journal', 'book', 'journal', 0),
+  'contra': Kind('Contra', 'Contra', 'swap', 'contra', 0),
   // Any other Tally voucher type (orders, notes, returns …): listed under
   // All, never added to Sales / Purchase / Receipt / Payment totals.
   'other': Kind('Voucher', 'Other voucher', 'receipt', 'vouchers', 0),
@@ -788,6 +789,18 @@ const List<Workspace> kWorkspaces = <Workspace>[
     <String>['cash', 'bank', 'toGive', 'mOut'],
   ),
 ];
+
+/// New Entry cards: (key, title, subtitle, icon, colour). The key is the
+/// flow type; the cards' order / pins / hidden are saved as list `entries`.
+const List<(String, String, String, String, String)> kEntryTiles =
+    <(String, String, String, String, String)>[
+      ('sales', 'Sale', 'You sold goods', 'bag', 'sales'),
+      ('purchase', 'Purchase', 'You bought goods', 'cart', 'purchase'),
+      ('receipt', 'Receipt', 'Money received', 'in', 'receipt'),
+      ('payment', 'Payment', 'Money paid', 'out', 'payment'),
+      ('journal', 'Journal', 'Between accounts', 'book', 'journal'),
+      ('contra', 'Contra', 'Bank ↔ Cash', 'swap', 'contra'),
+    ];
 
 /// Common questions, from the FAQ on https://tally-connect.com/ (answers
 /// as published there; app steps added only where the app works
