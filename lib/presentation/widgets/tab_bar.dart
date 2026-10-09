@@ -64,7 +64,11 @@ class TcTabBar extends ConsumerWidget {
       final bool dragging = c.tdrag != null && c.tdrag!.i == i;
       final bool on = c.tab == i;
       final bool hov = c.hovOn && pos == c.hovPos;
-      final Color col = on ? p.acc : (hov ? p.ink : kTabInk);
+      // Labels sit on the see-through bar: they follow the page ink so they
+      // stay readable on a dark background.
+      final Color col = on
+          ? p.acc
+          : (hov ? p.pageInk : (p.pageDark ? p.pageInk2 : kTabInk));
       tabs.add(
         AnimatedPositioned(
           key: ValueKey<int>(i),
@@ -117,19 +121,35 @@ class TcTabBar extends ConsumerWidget {
                     AnimatedDefaultTextStyle(
                       duration: const Duration(milliseconds: 300),
                       style: ts(11.5, w: w700, c: col).copyWith(
-                        shadows: const <Shadow>[
-                          Shadow(
-                            color: Color.fromRGBO(255, 255, 255, .9),
-                            offset: Offset(0, 1),
-                            blurRadius: 1,
-                          ),
-                          Shadow(
-                            color: Color.fromRGBO(255, 255, 255, .7),
-                            blurRadius: 8,
-                          ),
-                        ],
+                        shadows: p.pageDark && !on
+                            ? const <Shadow>[
+                                Shadow(
+                                  color: Color.fromRGBO(0, 0, 0, .55),
+                                  offset: Offset(0, 1),
+                                  blurRadius: 2,
+                                ),
+                              ]
+                            : const <Shadow>[
+                                Shadow(
+                                  color: Color.fromRGBO(255, 255, 255, .9),
+                                  offset: Offset(0, 1),
+                                  blurRadius: 1,
+                                ),
+                                Shadow(
+                                  color: Color.fromRGBO(255, 255, 255, .7),
+                                  blurRadius: 8,
+                                ),
+                              ],
                       ),
-                      child: Text(kTabs[i].t),
+                      // One line; shrinks on narrow phones instead of
+                      // wrapping ("Outstanding" at 320 px).
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 2),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(kTabs[i].t, maxLines: 1, softWrap: false),
+                        ),
+                      ),
                     ),
                   ],
                 ),

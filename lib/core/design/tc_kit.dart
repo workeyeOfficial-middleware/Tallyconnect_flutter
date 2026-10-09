@@ -2,10 +2,12 @@
 // .glass, .tap, .ico, .btn, .chip, .seg, .inp, .badge, .sw, .av, .kv, .row …
 library;
 
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -173,7 +175,9 @@ class Glass extends StatelessWidget {
       child: CustomPaint(
         foregroundPainter: _GlassEdge(br, border),
         painter: sheen ? _Sheen(br, sheenGradient) : null,
-        child: Padding(padding: padding ?? EdgeInsets.zero, child: child),
+        child: OnSurface(
+          child: Padding(padding: padding ?? EdgeInsets.zero, child: child),
+        ),
       ),
     );
     if (blur) {
@@ -934,6 +938,7 @@ class Seg extends StatelessWidget {
     required this.onPick,
     this.fontSize = 15,
     this.margin = const EdgeInsets.only(bottom: 14),
+    this.hoverSelect = false,
   });
 
   final List<String> items;
@@ -941,6 +946,10 @@ class Seg extends StatelessWidget {
   final ValueChanged<int> onPick;
   final double fontSize;
   final EdgeInsets margin;
+
+  /// With a mouse / trackpad, resting on an option selects it (taps work
+  /// as before; touch screens have no hover).
+  final bool hoverSelect;
 
   @override
   Widget build(BuildContext context) {
@@ -955,30 +964,34 @@ class Seg extends StatelessWidget {
             for (int i = 0; i < items.length; i++) ...<Widget>[
               if (i > 0) const SizedBox(width: 4),
               Expanded(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => onPick(i),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    height: 42,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: i == selected
-                          ? Colors.white
-                          : Colors.white.withValues(alpha: 0),
-                      borderRadius: BorderRadius.circular(13),
-                      boxShadow: i == selected
-                          ? <BoxShadow>[css(0, 3, 10, 0, navyA(.14))]
-                          : const <BoxShadow>[],
-                    ),
-                    child: Text(
-                      items[i],
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: ts(
-                        fontSize,
-                        w: w700,
-                        c: i == selected ? p.ink : p.ink2,
+                child: HoverDwell(
+                  enabled: hoverSelect && i != selected,
+                  onDwell: () => onPick(i),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => onPick(i),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      height: 42,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: i == selected
+                            ? Colors.white
+                            : Colors.white.withValues(alpha: 0),
+                        borderRadius: BorderRadius.circular(13),
+                        boxShadow: i == selected
+                            ? <BoxShadow>[css(0, 3, 10, 0, navyA(.14))]
+                            : const <BoxShadow>[],
+                      ),
+                      child: Text(
+                        items[i],
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: ts(
+                          fontSize,
+                          w: w700,
+                          c: i == selected ? p.ink : p.ink2,
+                        ),
                       ),
                     ),
                   ),
@@ -1207,6 +1220,31 @@ class Thck extends StatelessWidget {
 
 // -------------------------------------------------------------- typography
 
+/// Marks content drawn on a glass card / sheet (a light surface) — text
+/// there keeps the card ink; outside it, text sits on the background and
+/// uses the page ink ([TcPalette.pageInk]).
+class OnSurface extends InheritedWidget {
+  const OnSurface({super.key, required super.child});
+
+  static bool of(BuildContext c) =>
+      c.dependOnInheritedWidgetOfExactType<OnSurface>() != null;
+
+  @override
+  bool updateShouldNotify(OnSurface old) => false;
+}
+
+/// Readable text colour for [level] 1 (ink) / 2 (ink2) / 3 (ink3): the card
+/// ink on a glass surface, else the page ink chosen for the background.
+Color inkFor(BuildContext c, [int level = 1]) {
+  final TcPalette p = Tc.of(c);
+  final bool card = OnSurface.of(c);
+  return switch (level) {
+    1 => card ? p.ink : p.pageInk,
+    2 => card ? p.ink2 : p.pageInk2,
+    _ => card ? p.ink3 : p.pageInk3,
+  };
+}
+
 class H1 extends StatelessWidget {
   const H1(
     this.text, {
@@ -1231,13 +1269,7 @@ class H1 extends StatelessWidget {
     child: Text(
       text,
       textAlign: center ? TextAlign.center : TextAlign.start,
-      style: ts(
-        size,
-        w: w800,
-        h: 1.08,
-        ls: -.025 * size,
-        c: Tc.of(context).ink,
-      ),
+      style: ts(size, w: w800, h: 1.08, ls: -.025 * size, c: inkFor(context)),
     ),
   );
 }
@@ -1259,7 +1291,7 @@ class Sub extends StatelessWidget {
     child: Text(
       text,
       textAlign: center ? TextAlign.center : TextAlign.start,
-      style: ts(15.5, h: 1.4, c: Tc.of(context).ink2),
+      style: ts(15.5, h: 1.4, c: inkFor(context, 2)),
     ),
   );
 }
@@ -1279,7 +1311,7 @@ class Sec extends StatelessWidget {
     padding: margin,
     child: Text(
       text.toUpperCase(),
-      style: ts(12.5, w: w800, ls: .07 * 12.5, c: Tc.of(context).ink3),
+      style: ts(12.5, w: w800, ls: .07 * 12.5, c: inkFor(context, 3)),
     ),
   );
 }
@@ -1295,7 +1327,7 @@ class H2Row extends StatelessWidget {
     padding: EdgeInsets.fromLTRB(4, top, 4, 12),
     child: Text(
       text,
-      style: ts(20, w: w800, ls: -.2, c: Tc.of(context).ink),
+      style: ts(20, w: w800, ls: -.2, c: inkFor(context)),
     ),
   );
 }
@@ -1631,7 +1663,7 @@ class EmptyBox extends StatelessWidget {
       child: Text(
         text,
         textAlign: TextAlign.center,
-        style: ts(15, c: Tc.of(context).ink2),
+        style: ts(15, c: inkFor(context, 2)),
       ),
     ),
   );
@@ -2034,3 +2066,57 @@ class HeroBox extends StatelessWidget {
 
 /// Haptic tick (`navigator.vibrate`).
 void buzz() => HapticFeedback.selectionClick();
+
+/// With a mouse / trackpad, resting on [child] for a moment runs [onDwell]
+/// (e.g. opens the tab or selects the filter under the pointer). Touch
+/// screens have no hover, so on phones only taps act.
+class HoverDwell extends StatefulWidget {
+  const HoverDwell({
+    super.key,
+    required this.child,
+    required this.onDwell,
+    this.enabled = true,
+    this.delay = const Duration(milliseconds: 650),
+  });
+  final Widget child;
+  final VoidCallback onDwell;
+  final bool enabled;
+  final Duration delay;
+
+  @override
+  State<HoverDwell> createState() => _HoverDwellState();
+}
+
+class _HoverDwellState extends State<HoverDwell> {
+  Timer? _t;
+
+  void _cancel() {
+    _t?.cancel();
+    _t = null;
+  }
+
+  @override
+  void didUpdateWidget(HoverDwell old) {
+    super.didUpdateWidget(old);
+    if (!widget.enabled) _cancel();
+  }
+
+  @override
+  void dispose() {
+    _cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+    onEnter: (PointerEnterEvent e) {
+      if (!widget.enabled || e.kind == PointerDeviceKind.touch) return;
+      _cancel();
+      _t = Timer(widget.delay, () {
+        if (mounted && widget.enabled) widget.onDwell();
+      });
+    },
+    onExit: (_) => _cancel(),
+    child: widget.child,
+  );
+}

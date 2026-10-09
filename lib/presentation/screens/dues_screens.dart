@@ -320,11 +320,15 @@ class OutListScreen extends ConsumerWidget {
     final num totO = sm.total, late30 = sm.late;
     int pct(num v) => totO <= 0 ? 0 : (v / totO * 100).round();
     final List<Bill> lateBills = bl.where((Bill b) => b.st == 'late').toList();
-    const List<(String, String)> of = <(String, String)>[
+    // Paid / settled in Tally: own tab, never part of the totals above.
+    final List<Bill> settled = c.repo.settledBills(isR);
+    final bool showSettled = c.outFilter == 'settled';
+    final List<(String, String)> of = <(String, String)>[
       ('all', 'All'),
       ('late', 'Late'),
       ('soon', 'Due soon'),
       ('ok', 'Later'),
+      ('settled', 'Settled (${grouped(settled.length)})'),
     ];
     final List<(String, num, int, Color)> ageing = <(String, num, int, Color)>[
       ('On time (not due yet)', sm.ageing[0], pct(sm.ageing[0]), p.pos),
@@ -351,12 +355,15 @@ class OutListScreen extends ConsumerWidget {
     final ({List<Bill> rows, int hidden, VoidCallback unhide})
     v = c.memo<({List<Bill> rows, int hidden, VoidCallback unhide})>(
       'bills-view',
-      '${c.repo.version}|${bl.length}|${c.outKind}|${c.outFilter}|${c.prefsVersion}|${c.outQuery}',
+      '${c.repo.version}|${bl.length}|${settled.length}|${c.outKind}|${c.outFilter}|${c.prefsVersion}|${c.outQuery}',
       () => c.listView<Bill>(
         'bills',
         c
-            .searchBills(bl)
-            .where((Bill b) => c.outFilter == 'all' || b.st == c.outFilter)
+            .searchBills(showSettled ? settled : bl)
+            .where(
+              (Bill b) =>
+                  showSettled || c.outFilter == 'all' || b.st == c.outFilter,
+            )
             .map((Bill b) => b.withKind(c.outKind))
             .toList(),
         (Bill b) => b.key,
@@ -554,7 +561,13 @@ class OutListScreen extends ConsumerWidget {
               ),
           ],
         ),
-        if (c.outView == 'graph')
+        if (showSettled)
+          const InfoBox(
+            'Bills paid or settled in Tally. They are not part of the '
+            'outstanding total above.',
+            icon: 'info',
+          ),
+        if (c.outView == 'graph' && !showSettled)
           _OutGraph(
             recv: isR,
             // Exactly the bills the list shows (same kind and filter).
@@ -586,12 +599,25 @@ class OutListScreen extends ConsumerWidget {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: <Widget>[
-                      Text(
-                        '${isR ? '+' : '−'}${inr(b.amt)}',
-                        style: amtStyle(context, cls: isR ? 'in' : 'out'),
-                      ),
+                      if (b.st == 'settled')
+                        // Last pending amount when the server has it.
+                        Text(
+                          b.billAmt == null ? '—' : inr(b.billAmt),
+                          style: amtStyle(context).copyWith(color: p.ink3),
+                        )
+                      else
+                        Text(
+                          '${isR ? '+' : '−'}${inr(b.amt)}',
+                          style: amtStyle(context, cls: isR ? 'in' : 'out'),
+                        ),
                       const SizedBox(height: 4),
-                      Bdg(b.txt, kind: billKind(b.st), dot: true),
+                      Bdg(
+                        b.txt,
+                        kind: b.st == 'settled'
+                            ? BadgeKind.info
+                            : billKind(b.st),
+                        dot: true,
+                      ),
                     ],
                   ),
                 ],
@@ -600,8 +626,10 @@ class OutListScreen extends ConsumerWidget {
             hidden: v.hidden,
             unhide: v.unhide,
             empty: c.outQuery.trim().isNotEmpty
-                ? 'No pending bill matches “${c.outQuery.trim()}”.'
-                : c.emptyText(DataSet.bills, 'No pending bills.'),
+                ? 'No ${showSettled ? 'settled' : 'pending'} bill matches “${c.outQuery.trim()}”.'
+                : (showSettled
+                      ? 'No settled bills yet.'
+                      : c.emptyText(DataSet.bills, 'No pending bills.')),
           ),
       ],
     );
@@ -695,6 +723,8 @@ class BillDetailScreen extends ConsumerWidget {
     }
     final Bill b = b0;
     final bool r = b.kind == 'recv';
+    // Paid / settled in Tally: nothing to collect, pay or remind.
+    final bool settled = b.st == 'settled';
     final PdfInfo info = PdfInfo(
       party: b.party,
       no: b.no,
@@ -732,39 +762,41 @@ class BillDetailScreen extends ConsumerWidget {
       ),
     );
     return FlowScr(
-      foot: <Widget>[
-        // Local reminder on this bill (receivable or payable).
-        Expanded(
-          flex: 10,
-          child: Btn(
-            label: rem == null
-                ? 'Remind'
-                : 'Remind · ${rem.day == null ? rem.date : dm(rem.day!)}',
-            icon: 'bell',
-            kind: BtnKind.g,
-            onTap: () => c.openReminder(b),
-          ),
-        ),
-        Expanded(
-          flex: 17,
-          child: Btn(
-            label: r ? 'Record Receipt' : 'Record Payment',
-            icon: r ? 'in' : 'out',
-            kind: BtnKind.a,
-            onTap: () => r
-                ? c.startFlow('receipt', <String, String>{
-                    'rParty': b.party,
-                    'rAmt': '${b.amt}',
-                    'rRef': 'Against ${b.no}',
-                  })
-                : c.startFlow('payment', <String, String>{
-                    'yParty': b.party,
-                    'yAmt': '${b.amt}',
-                    'yRef': 'Against ${b.no}',
-                  }),
-          ),
-        ),
-      ],
+      foot: settled
+          ? null
+          : <Widget>[
+              // Local reminder on this bill (receivable or payable).
+              Expanded(
+                flex: 10,
+                child: Btn(
+                  label: rem == null
+                      ? 'Remind'
+                      : 'Remind · ${rem.day == null ? rem.date : dm(rem.day!)}',
+                  icon: 'bell',
+                  kind: BtnKind.g,
+                  onTap: () => c.openReminder(b),
+                ),
+              ),
+              Expanded(
+                flex: 17,
+                child: Btn(
+                  label: r ? 'Record Receipt' : 'Record Payment',
+                  icon: r ? 'in' : 'out',
+                  kind: BtnKind.a,
+                  onTap: () => r
+                      ? c.startFlow('receipt', <String, String>{
+                          'rParty': b.party,
+                          'rAmt': '${b.amt}',
+                          'rRef': 'Against ${b.no}',
+                        })
+                      : c.startFlow('payment', <String, String>{
+                          'yParty': b.party,
+                          'yAmt': '${b.amt}',
+                          'yRef': 'Against ${b.no}',
+                        }),
+                ),
+              ),
+            ],
       children: <Widget>[
         BackNav(actions: <Widget>[CBtn('share', onTap: share)]),
         const H1('Bill details', afterNav: true),
@@ -818,15 +850,21 @@ class BillDetailScreen extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: <Widget>[
                         Text(
-                          r ? 'Still to get' : 'Still to pay',
+                          settled
+                              ? 'Last pending amount'
+                              : (r ? 'Still to get' : 'Still to pay'),
                           style: rsStyle(context),
                         ),
                         AmtText(
-                          inr(b.amt),
-                          style: amtStyle(
-                            context,
-                            cls: r ? 'big in' : 'big out',
-                          ),
+                          settled
+                              ? (b.billAmt == null ? '—' : inr(b.billAmt))
+                              : inr(b.amt),
+                          style: settled
+                              ? amtStyle(context, cls: 'big')
+                              : amtStyle(
+                                  context,
+                                  cls: r ? 'big in' : 'big out',
+                                ),
                         ),
                       ],
                     ),
@@ -836,13 +874,24 @@ class BillDetailScreen extends ConsumerWidget {
                     constraints: BoxConstraints(
                       maxWidth: MediaQuery.sizeOf(context).width * .38,
                     ),
-                    child: Bdg(b.txt, kind: billKind(b.st), dot: true),
+                    child: Bdg(
+                      b.txt,
+                      kind: settled ? BadgeKind.info : billKind(b.st),
+                      dot: true,
+                    ),
                   ),
                 ],
               ),
             ],
           ),
         ),
+        if (settled)
+          const InfoBox(
+            'This bill is paid or settled in Tally, so it is not in the '
+            'outstanding total.',
+            icon: 'check',
+            margin: EdgeInsets.only(top: 12),
+          ),
         Sec('Bill PDF · ${b.no.replaceFirst(' ', '_')}.pdf'),
         Grid(
           cols: 3,
@@ -865,7 +914,7 @@ class BillDetailScreen extends ConsumerWidget {
           ('Bill date', b.bill, false),
           ('Pay by', b.due, false),
           ('Credit time', b.credit, false),
-          if (b.billAmt != null && b.billAmt != b.amt)
+          if (!settled && b.billAmt != null && b.billAmt != b.amt)
             ('Bill amount', inr(b.billAmt), false),
           ('Status', b.txt, false),
         ]),

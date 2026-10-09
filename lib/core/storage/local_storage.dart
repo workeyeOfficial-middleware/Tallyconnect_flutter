@@ -48,6 +48,12 @@ class LocalStorage {
   /// server's create-user endpoint stores only email + password).
   static const String kMemberInfo = 'tc-team-member-info';
 
+  /// Bottom-bar tabs the user hid (tab keys), the whole bar hidden, and the
+  /// glass level (Settings → Look → Glass).
+  static const String kHiddenTabs = 'tc-hidden-tabs';
+  static const String kNavHidden = 'tc-nav-hidden';
+  static const String kGlass = 'tc-liquid-glass';
+
   /// Low-stock alerts switch, and per company the items last seen out of
   /// stock (so only items that newly run out raise an alert).
   static const String kLowStockOn = 'tc-low-stock-alerts-on';

@@ -25,9 +25,19 @@ class ParseIn {
 
 /// Pending bills of the active company, split and sorted by due date.
 class BillsParsed {
-  const BillsParsed(this.recv, this.pay, this.serverRecv, this.serverPay);
+  const BillsParsed(
+    this.recv,
+    this.pay,
+    this.serverRecv,
+    this.serverPay, [
+    this.settledRecv = const <Bill>[],
+    this.settledPay = const <Bill>[],
+  ]);
   final List<Bill> recv, pay;
   final num? serverRecv, serverPay;
+
+  /// Bills paid / settled in Tally (pending 0, kept by the server).
+  final List<Bill> settledRecv, settledPay;
 }
 
 /// The current month's vouchers (active, de-duplicated, server order).
@@ -93,18 +103,28 @@ Object? parseSetText(ParseIn a) {
           ? body
           : const <Object?, Object?>{};
       final List<Bill> recv = <Bill>[], pay = <Bill>[];
+      final List<Bill> sRecv = <Bill>[], sPay = <Bill>[];
       for (final Map<String, Object?> b in rows(m['bills'])) {
         if (a.active == null || str(b['company_guid']) != a.active) continue;
         final Bill? x = billFrom(b, a.today);
-        if (x == null) continue;
-        (x.kind == 'pay' ? pay : recv).add(x);
+        if (x != null) {
+          (x.kind == 'pay' ? pay : recv).add(x);
+          continue;
+        }
+        final Bill? s = settledBillFrom(b);
+        if (s != null) (s.kind == 'pay' ? sPay : sRecv).add(s);
       }
+      // Settled: newest due date first.
+      int byDueDesc(Bill x, Bill y) =>
+          (y.dueDate ?? DateTime(0)).compareTo(x.dueDate ?? DateTime(0));
       final Object? s = m['summary'];
       return BillsParsed(
         recv..sort(_byDue),
         pay..sort(_byDue),
         s is Map ? toNum(s['receivables']) : null,
         s is Map ? toNum(s['payables']) : null,
+        sRecv..sort(byDueDesc),
+        sPay..sort(byDueDesc),
       );
     case 'vouchers':
       // {"year":Y,"month":M,"complete":b,"pages":[<page JSON>, …]}

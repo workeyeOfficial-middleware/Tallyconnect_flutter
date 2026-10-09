@@ -296,6 +296,23 @@ class VoucherTypeRow extends StatelessWidget {
       for (final String t in otherTypes)
         if (t != sel) t,
     ];
+    // The selected chip is scrolled fully into view (only when it is not).
+    final GlobalKey selKey = GlobalKey();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final BuildContext? sc = selKey.currentContext;
+      if (sc == null || !sc.mounted) return;
+      for (final ScrollPositionAlignmentPolicy pol
+          in <ScrollPositionAlignmentPolicy>[
+            ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+            ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+          ]) {
+        Scrollable.ensureVisible(
+          sc,
+          alignmentPolicy: pol,
+          duration: const Duration(milliseconds: 250),
+        );
+      }
+    });
     // 42 px chips + 16 px below them inside the row (the selected chip's
     // shadow is not clipped), same total height as before.
     return Padding(
@@ -310,28 +327,44 @@ class VoucherTypeRow extends StatelessWidget {
                 // Soft fade at the right edge: more chips to swipe to.
                 shaderCallback: (Rect r) => const LinearGradient(
                   colors: <Color>[Color(0xFFFFFFFF), Color(0x00FFFFFF)],
-                  stops: <double>[.92, 1],
+                  stops: <double>[.96, 1],
                 ).createShader(r),
                 blendMode: BlendMode.dstIn,
+                // Clipped to its own width: chips scroll under the fade and
+                // never paint under / over the "+" button.
                 child: ListView(
                   key: const PageStorageKey<String>('vTypeRow'),
                   scrollDirection: Axis.horizontal,
-                  clipBehavior: Clip.none,
-                  padding: const EdgeInsets.only(right: 16, bottom: 16),
+                  clipBehavior: Clip.hardEdge,
+                  padding: const EdgeInsets.only(
+                    left: 2,
+                    right: 16,
+                    bottom: 16,
+                  ),
                   children: <Widget>[
                     for (final (String, String) x in kVF) ...<Widget>[
-                      ChipBtn(
-                        x.$2,
-                        on: c.vFilter == x.$1,
-                        onTap: () => c.update(() => c.vFilter = x.$1),
+                      HoverDwell(
+                        key: c.vFilter == x.$1 ? selKey : null,
+                        enabled: c.vFilter != x.$1,
+                        onDwell: () => c.update(() => c.vFilter = x.$1),
+                        child: ChipBtn(
+                          x.$2,
+                          on: c.vFilter == x.$1,
+                          onTap: () => c.update(() => c.vFilter = x.$1),
+                        ),
                       ),
                       const SizedBox(width: 8),
                     ],
                     for (final String t in extra) ...<Widget>[
-                      ChipBtn(
-                        t,
-                        on: c.vFilter == 'type:$t',
-                        onTap: () => c.update(() => c.vFilter = 'type:$t'),
+                      HoverDwell(
+                        key: c.vFilter == 'type:$t' ? selKey : null,
+                        enabled: c.vFilter != 'type:$t',
+                        onDwell: () => c.update(() => c.vFilter = 'type:$t'),
+                        child: ChipBtn(
+                          t,
+                          on: c.vFilter == 'type:$t',
+                          onTap: () => c.update(() => c.vFilter = 'type:$t'),
+                        ),
                       ),
                       const SizedBox(width: 8),
                     ],
@@ -516,6 +549,7 @@ class _VList extends StatelessWidget {
         ),
         VoucherTypeRow(c: c, otherTypes: otherTypes),
         Seg(
+          hoverSelect: true,
           items: periods.map(((String, String) e) => e.$2).toList(),
           selected: periods.indexWhere(
             ((String, String) e) => e.$1 == c.vPeriod,

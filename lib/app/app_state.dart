@@ -325,7 +325,7 @@ class AppController extends ChangeNotifier {
     required this.store,
     TallyRepository? repo,
     String startScreen = 'login',
-    double glassLevel = 60,
+    double glassLevel = 20,
     DocExporter? exporter,
     ReminderAlarms? alarms,
   }) : repo = repo ?? MockTallyRepository(),
@@ -409,7 +409,7 @@ class AppController extends ChangeNotifier {
   PillTr pillT = PillTr.none;
   String? overlay;
   String company = 'gi';
-  double glass = 60;
+  double glass = 20;
 
   Map<String, List<List<String>>> pagesByWs = <String, List<List<String>>>{};
   int page = 0;
@@ -504,6 +504,17 @@ class AppController extends ChangeNotifier {
       partyTab = 'summary';
   String repCat = 'all', report = 'top';
 
+  /// Items page: `items` (all items) or `groups` (stock groups); the open
+  /// stock group (null: all groups).
+  String itemsView = 'items';
+  String? itemsGroup;
+
+  /// Opens stock group [g] (its items) / back to the group list.
+  void openItemGroup(String? g) => _set(() {
+    itemsGroup = g;
+    itemsView = 'groups';
+  });
+
   /// Item detail: selected item name and tab (summary | customers | suppliers).
   String itemSel = '', itemTab = 'summary';
 
@@ -512,7 +523,9 @@ class AppController extends ChangeNotifier {
 
   /// Wallpaper opacity (20–100 %) and shade (−100 lighter … +100 darker),
   /// independent of the glass / card level. Saved on this phone.
-  double bgOpacity = 100, bgShade = 0;
+  /// Fresh install: Match theme, opacity 100 %, shade +100 (darker).
+  static const double kDefaultShade = 100;
+  double bgOpacity = 100, bgShade = kDefaultShade;
 
   /// Outstanding reminders (this phone only — no backend endpoint).
   List<Reminder> reminders = <Reminder>[];
@@ -645,9 +658,16 @@ class AppController extends ChangeNotifier {
         ((store.load<Object?>(LocalStorage.kBgOpacity, 100) as num?) ?? 100)
             .toDouble()
             .clamp(0, 100);
-    bgShade = ((store.load<Object?>(LocalStorage.kBgShade, 0) as num?) ?? 0)
-        .toDouble()
-        .clamp(-100, 100);
+    final Object? gl = store.load<Object?>(LocalStorage.kGlass, null);
+    if (gl is num) glass = gl.toDouble().clamp(0, 100);
+    final Object? ht = store.load<Object?>(LocalStorage.kHiddenTabs, null);
+    if (ht is List) hiddenTabs = ht.whereType<String>().toSet()..remove('home');
+    navBarHidden = store.load<Object?>(LocalStorage.kNavHidden, false) == true;
+    bgShade =
+        ((store.load<Object?>(LocalStorage.kBgShade, kDefaultShade) as num?) ??
+                kDefaultShade)
+            .toDouble()
+            .clamp(-100, 100);
     final Object? rm = store.load<Object?>(LocalStorage.kReminders, null);
     reminders = rm is List
         ? rm.map(Reminder.fromJson).whereType<Reminder>().toList()
@@ -692,9 +712,12 @@ class AppController extends ChangeNotifier {
     photoPath: photo?.path,
     photoLum: photo?.lum ?? 1,
     glass: glass,
+    // Text adapts to how light / dark the background actually is.
+    opacity: bgOpacity / 100,
+    shade: bgShade / 100,
   );
 
-  bool get showTabs => loggedIn && !kNoTab.contains(screen);
+  bool get showTabs => loggedIn && !navBarHidden && !kNoTab.contains(screen);
   String get backLabel =>
       kTitles[history.isNotEmpty ? history.last : 'home'] ?? 'Home';
   Company get companyObj {
@@ -716,6 +739,7 @@ class AppController extends ChangeNotifier {
   int get unread => notifs.where((Notif n) => n.unread).length;
   bool get scrollLock =>
       drag != null || ldrag != null || _lpActive || tdrag != null;
+
   /// Screens only an admin may open (the team and its settings). A USER
   /// never sees them: no tab, no menu row, no search hit, no navigation.
   static const Set<String> kAdminScreens = <String>{
@@ -728,8 +752,74 @@ class AppController extends ChangeNotifier {
   /// Screen [s] is allowed for the logged-in user (from its server role).
   bool canOpen(String s) => isAdmin || !kAdminScreens.contains(s);
 
-  /// Tab [i] is not shown in the bottom bar for this user.
-  bool tabHidden(int i) => !canOpen(kTabs[i].k);
+  /// Tab [i] is not shown in the bottom bar for this user (no permission,
+  /// or hidden by the user; Home is never hidden).
+  bool tabHidden(int i) =>
+      !canOpen(kTabs[i].k) || hiddenTabs.contains(kTabs[i].k);
+
+  // ------------------------------------------- hide / show tabs and bar
+  /// Bottom-bar tabs hidden by the user (tab keys). Their screens still open
+  /// from the menu and links (as normal screens).
+  Set<String> hiddenTabs = <String>{};
+
+  /// The whole bottom navigation bar is hidden (Settings → Layout).
+  bool navBarHidden = false;
+
+  /// Tab whose "hide" menu is open (long-press, lifted without moving).
+  int? tabMenu;
+
+  void _saveTabs() {
+    store.save(LocalStorage.kHiddenTabs, hiddenTabs.toList());
+    store.save(LocalStorage.kNavHidden, navBarHidden);
+  }
+
+  /// Hides tab [i] from the bar (Home stays). If it is the open tab, Home
+  /// opens.
+  void hideTab(int i) {
+    final String k = kTabs[i].k;
+    if (k == 'home') return;
+    final bool wasOpen = tab == i && screen == k;
+    _set(() {
+      hiddenTabs = <String>{...hiddenTabs, k};
+      tabMenu = null;
+      overlay = null;
+      pillPos = posOf(tab).clamp(0, barCount - 1).toDouble();
+      pillSpan = 1;
+      pillT = PillTr.none;
+    });
+    _saveTabs();
+    if (wasOpen) selectTab(0);
+    say('${kTabs[i].t} hidden from the bar · restore it in Settings → Layout');
+  }
+
+  /// Shows hidden tab [key] again (null: every hidden tab).
+  void restoreTab([String? key]) {
+    _set(() {
+      hiddenTabs = key == null
+          ? <String>{}
+          : (Set<String>.of(hiddenTabs)..remove(key));
+      pillPos = posOf(tab).clamp(0, barCount - 1).toDouble();
+      pillSpan = 1;
+      pillT = PillTr.none;
+    });
+    _saveTabs();
+    say(key == null ? 'All tabs restored' : 'Tab restored');
+  }
+
+  void setNavBarHidden(bool hidden) {
+    _set(() => navBarHidden = hidden);
+    _saveTabs();
+    say(
+      hidden
+          ? 'Bottom bar hidden · use the menu to move around'
+          : 'Bottom bar shown',
+    );
+  }
+
+  void closeTabMenu() => _set(() {
+    tabMenu = null;
+    if (overlay == 'tabMenu') overlay = null;
+  });
 
   /// The bottom bar's tabs in the user's order (hidden tabs left out).
   List<int> get barOrder => <int>[
@@ -847,7 +937,7 @@ class AppController extends ChangeNotifier {
     final int ti = kTabs.indexWhere(
       (({String k, String t, String ic}) t) => t.k == s,
     );
-    if (ti >= 0) {
+    if (ti >= 0 && !tabHidden(ti)) {
       loggedIn = true;
       selectTab(ti);
       return;
@@ -864,7 +954,12 @@ class AppController extends ChangeNotifier {
   }
 
   void selectTab(int i, [Map<String, Object?>? extra]) {
-    if (tabHidden(i)) i = 0;
+    if (!canOpen(kTabs[i].k)) i = 0;
+    if (tabHidden(i)) {
+      // Hidden from the bar: open as a normal screen.
+      go(kTabs[i].k, extra);
+      return;
+    }
     _onEnter(kTabs[i].k);
     final int cur = tab;
     final double a = posOf(cur).toDouble(), b = posOf(i).toDouble();
@@ -905,7 +1000,7 @@ class AppController extends ChangeNotifier {
     final int ti = kTabs.indexWhere(
       (({String k, String t, String ic}) t) => t.k == s,
     );
-    if (ti >= 0) {
+    if (ti >= 0 && !tabHidden(ti)) {
       selectTab(ti, extra);
       return;
     }
@@ -2338,7 +2433,8 @@ class AppController extends ChangeNotifier {
         final int i = msg.indexOf('sync failed: ');
         final String err = i < 0 ? '' : msg.substring(i + 13).trim();
         final Act? a = await findAct(
-          (Act a) => a.status == 'fail' && err.isNotEmpty && a.note.trim() == err,
+          (Act a) =>
+              a.status == 'fail' && err.isNotEmpty && a.note.trim() == err,
         );
         if (a != null) {
           go('actDetail', <String, Object?>{'act': a.id});
@@ -3041,6 +3137,22 @@ class AppController extends ChangeNotifier {
   double _slot = 70;
   double _barLeft = 14;
 
+  /// Centre x (screen) of tab [i] in the bottom bar.
+  double tabCenterX(int i) =>
+      _barLeft + 6 + posOf(i).clamp(0, barCount - 1) * _slot + _slot / 2;
+
+  /// Long-press menu "Move": tells how (dragging works exactly as before).
+  void tabMenuMove() {
+    closeTabMenu();
+    say('Long-press a tab, then drag it left or right to move it');
+  }
+
+  /// Long-press menu "Open".
+  void tabMenuOpen(int i) {
+    closeTabMenu();
+    selectTab(i);
+  }
+
   void setBarGeometry(double slot, double barLeft) {
     _slot = slot;
     _barLeft = barLeft;
@@ -3052,6 +3164,8 @@ class AppController extends ChangeNotifier {
     _tlp?.cancel();
     final Offset p0 = e.position;
     final int ptr = e.pointer;
+    // Lifted (long-press) and let go without moving: offer to hide the tab.
+    bool movedTab = false;
     double barX(double gx) => gx - _barLeft;
     late final PointerRoute r;
     r = (PointerEvent ev) {
@@ -3073,6 +3187,7 @@ class AppController extends ChangeNotifier {
         _set(() {
           tdrag = (i: i, x: left);
           if (pos != cur) {
+            movedTab = true;
             order.removeAt(cur);
             order.insert(pos, i);
             // Hidden tabs keep their place after the visible ones.
@@ -3092,7 +3207,16 @@ class AppController extends ChangeNotifier {
         GestureBinding.instance.pointerRouter.removeGlobalRoute(r);
         if (tdrag != null) {
           store.save(LocalStorage.kTabs, tabOrder);
-          _set(() => tdrag = null);
+          final double dist =
+              (ev.position.dx - p0.dx).abs() + (ev.position.dy - p0.dy).abs();
+          final bool menu = !movedTab && dist < 24;
+          _set(() {
+            tdrag = null;
+            if (menu) {
+              tabMenu = i;
+              overlay = 'tabMenu';
+            }
+          });
         }
       }
     };
@@ -3281,7 +3405,8 @@ class AppController extends ChangeNotifier {
 
   /// Fills a random 10-character temporary password (shown, to share).
   void suggestTempPass() {
-    const String abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    const String abc =
+        'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
     final math.Random r = math.Random.secure();
     _set(() {
       form['nuPass'] = <String>[
@@ -3546,11 +3671,15 @@ class AppController extends ChangeNotifier {
     store.save(LocalStorage.kMode, 'look');
   }
 
-  void setGlass(double v) => _set(() => glass = v);
+  void setGlass(double v) {
+    _set(() => glass = v);
+    store.save(LocalStorage.kGlass, v);
+  }
 
   void resetLook() {
+    store.save(LocalStorage.kGlass, 20);
     _set(() {
-      glass = 60;
+      glass = 20;
       preset = 'aurora';
       accent = 'look';
       mode = 'look';
@@ -3562,7 +3691,7 @@ class AppController extends ChangeNotifier {
     store.save(LocalStorage.kMode, 'look');
     store.save(LocalStorage.kWall, 'theme');
     setBgOpacity(100);
-    setBgShade(0);
+    setBgShade(kDefaultShade);
     say('Look set back to default');
   }
 
@@ -4100,8 +4229,7 @@ class AppController extends ChangeNotifier {
     ]);
     add(<SearchHit>[
       for (final SearchEntry e in kSearch)
-        if (hit('${e.t} ${e.s}') &&
-            (e.a == null || canOpen(e.a!.screen)))
+        if (hit('${e.t} ${e.s}') && (e.a == null || canOpen(e.a!.screen)))
           SearchHit(e.t, e.s, e.ic, e.c, () {
             if (e.f != null) {
               startFlow(e.f!);
@@ -4265,9 +4393,11 @@ class AppController extends ChangeNotifier {
     final Reminder? r = reminders.where((Reminder x) => x.id == id).firstOrNull;
     if (r == null) return;
     final Reminder d = r.copyWith(done: true);
-    _set(() => reminders = <Reminder>[
-      for (final Reminder x in reminders) x.id == id ? d : x,
-    ]);
+    _set(
+      () => reminders = <Reminder>[
+        for (final Reminder x in reminders) x.id == id ? d : x,
+      ],
+    );
     _saveReminders();
     unawaited(_arm(d));
     say('Reminder done · ${r.party}');
@@ -4284,9 +4414,11 @@ class AppController extends ChangeNotifier {
           '${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}',
       done: false,
     );
-    _set(() => reminders = <Reminder>[
-      for (final Reminder x in reminders) x.id == id ? s : x,
-    ]);
+    _set(
+      () => reminders = <Reminder>[
+        for (final Reminder x in reminders) x.id == id ? s : x,
+      ],
+    );
     _saveReminders();
     unawaited(_arm(s));
     say('Snoozed · rings again at ${clock(at)}');
@@ -4389,7 +4521,9 @@ class AppController extends ChangeNotifier {
     _armDueAlerts();
     if (on) unawaited(alarms.requestAccess());
     if (quiet) return;
-    say(on ? 'Alert 3 days before each bill is due' : 'Due-date alerts are off');
+    say(
+      on ? 'Alert 3 days before each bill is due' : 'Due-date alerts are off',
+    );
   }
 
   /// Most due alerts kept armed at once (the soonest ones).

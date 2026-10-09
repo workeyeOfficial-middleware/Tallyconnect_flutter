@@ -46,6 +46,7 @@ class OverlayLayer extends ConsumerWidget {
       'reminder' => const ReminderSheet(),
       'reminders' => const RemindersSheet(),
       'vTypes' => const VoucherTypesSheet(),
+      'tabMenu' => const TabMenuSheet(),
       'doc' => const DocViewer(),
       _ => const SizedBox.shrink(),
     };
@@ -1264,10 +1265,7 @@ class NewUserSheet extends ConsumerWidget {
                   width: 44,
                   height: 44,
                   child: Center(
-                    child: Ic(
-                      c.showNuPass ? 'eyeOff' : 'eye',
-                      color: p.ink3,
-                    ),
+                    child: Ic(c.showNuPass ? 'eyeOff' : 'eye', color: p.ink3),
                   ),
                 ),
               ),
@@ -1478,7 +1476,7 @@ class WaterGlass extends StatelessWidget {
       ),
       shadows: <BoxShadow>[css(0, 24, 44, -18, navyA(.45))],
       padding: padding,
-      child: child,
+      child: OnSurface(child: child),
     );
   }
 }
@@ -1883,6 +1881,155 @@ class ToastView extends ConsumerWidget {
 }
 
 // --------------------------------------------------------------- reminder
+
+/// Long-press a bottom-bar tab and let go without moving it: a glass
+/// pop-up above that tab (same style as the Home card menu) — open it,
+/// move it, hide it from the bar or hide the whole bar. Hidden tabs and
+/// the bar come back from Settings → Layout.
+class TabMenuSheet extends ConsumerWidget {
+  const TabMenuSheet({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    final int? i = c.tabMenu;
+    if (i == null) return const SizedBox.shrink();
+    final ({String k, String t, String ic}) t = kTabs[i];
+    final bool home = t.k == 'home';
+    final MediaQueryData mq = MediaQuery.of(context);
+    const double mw = 236;
+    final double left = (c.tabCenterX(i) - mw / 2)
+        .clamp(16, math.max(16, mq.size.width - 16 - mw))
+        .toDouble();
+    final List<(String, String, VoidCallback, Key?)> items =
+        <(String, String, VoidCallback, Key?)>[
+          ('Open', 'open', () => c.tabMenuOpen(i), null),
+          ('Move', 'move', c.tabMenuMove, null),
+          if (!home)
+            (
+              'Hide from bar',
+              'eyeOff',
+              () => c.hideTab(i),
+              const ValueKey<String>('hideTabBtn'),
+            ),
+          (
+            'Hide whole bar',
+            'eyeOff',
+            () {
+              c.closeTabMenu();
+              c.setNavBarHidden(true);
+            },
+            const ValueKey<String>('hideBarBtn'),
+          ),
+        ];
+    return Stack(
+      children: <Widget>[
+        Positioned.fill(
+          child: Scrim(onTap: c.closeTabMenu, alpha: .06, ms: 200),
+        ),
+        Positioned(
+          left: left,
+          bottom: barBottom(context) + 78,
+          width: mw,
+          child: Enter(
+            ms: 380,
+            builder: (double v, Widget ch) {
+              final double k = const Cubic(.3, 1.5, .5, 1).transform(v);
+              return Opacity(
+                opacity: v.clamp(0, 1),
+                child: Transform.scale(
+                  scale: .84 + .16 * k,
+                  alignment: Alignment.bottomCenter,
+                  child: ch,
+                ),
+              );
+            },
+            child: WaterGlass(
+              radius: 24,
+              padding: const EdgeInsets.all(6),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 4),
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
+                    decoration: BoxDecoration(
+                      border: Border(bottom: BorderSide(color: whiteA(.55))),
+                    ),
+                    child: Row(
+                      children: <Widget>[
+                        Ico(
+                          t.ic,
+                          size: IcoSize.xs,
+                          color: p.acc,
+                          icon: IcSize.s,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            '${t.t} tab',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: ts(
+                              16,
+                              w: w700,
+                              c: p.ink,
+                            ).copyWith(shadows: kMilk),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  for (final (String, String, VoidCallback, Key?) it in items)
+                    Tap(
+                      key: it.$4,
+                      onTap: it.$3,
+                      radius: 14,
+                      child: SizedBox(
+                        height: 48,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Row(
+                            children: <Widget>[
+                              Ic(it.$2, color: p.navy),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  it.$1,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: ts(
+                                    16,
+                                    w: w700,
+                                    c: p.ink,
+                                  ).copyWith(shadows: kMilk),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                    child: Text(
+                      home
+                          ? 'Home always stays in the bar. Restore hidden tabs in Settings → Layout.'
+                          : 'Restore hidden tabs in Settings → Layout.',
+                      style: rsStyle(context, 12.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 /// Every voucher type in one sheet: the main ones and this company's other
 /// Tally types; the chosen one is ticked.

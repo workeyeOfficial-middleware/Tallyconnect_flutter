@@ -1282,10 +1282,10 @@ void main() {
       expect(q.map((Map<String, String> x) => x['page']), <String>['1', '2']);
       // Real rows (page 1 and the September row of page 2), duplicates
       // dropped; count and total exact for the complete list.
-      expect(find.text('S/101 · 2 Oct'), findsOneWidget);
-      expect(find.text('R/5 · 3 Oct'), findsOneWidget);
-      expect(find.text('P/0 · 29 Sep'), findsOneWidget);
-      expect(find.text('P/1 · 1 Oct'), findsOneWidget); // reset-flagged row
+      expect(find.text('S/101 · 2 Oct · Sales'), findsOneWidget);
+      expect(find.text('R/5 · 3 Oct · Receipt'), findsOneWidget);
+      expect(find.text('P/0 · 29 Sep · Payment'), findsOneWidget);
+      expect(find.text('P/1 · 1 Oct · Payment'), findsOneWidget); // reset-flagged row
       expect(find.text('5'), findsOneWidget);
       expect(find.text('₹1,15,399.25'), findsOneWidget);
       expect(find.textContaining('No entries'), findsNothing);
@@ -1307,21 +1307,21 @@ void main() {
       final List<Map<String, String>> qs = pagedSince(f, mark);
       expect(qs.first['page'], '1');
       expect(qs.first['type'], 'sale');
-      expect(find.text('S/101 · 2 Oct'), findsOneWidget);
-      expect(find.text('R/5 · 3 Oct'), findsNothing);
+      expect(find.text('S/101 · 2 Oct · Sales'), findsOneWidget);
+      expect(find.text('R/5 · 3 Oct · Receipt'), findsNothing);
       mark = f.to('/voucher-entry/paged').length;
       c.update(() => c.vFilter = 'receipt');
       await ticks(t, 10);
       expect(pagedSince(f, mark).first['type'], 'receipt');
-      expect(find.text('R/5 · 3 Oct'), findsOneWidget);
-      expect(find.text('S/101 · 2 Oct'), findsNothing);
+      expect(find.text('R/5 · 3 Oct · Receipt'), findsOneWidget);
+      expect(find.text('S/101 · 2 Oct · Sales'), findsNothing);
       // Back to All: its pages are kept (no reload, no stale rows).
       mark = f.to('/voucher-entry/paged').length;
       c.update(() => c.vFilter = 'all');
       await ticks(t, 10);
       expect(pagedSince(f, mark), isEmpty);
-      expect(find.text('S/101 · 2 Oct'), findsOneWidget);
-      expect(find.text('R/5 · 3 Oct'), findsOneWidget);
+      expect(find.text('S/101 · 2 Oct · Sales'), findsOneWidget);
+      expect(find.text('R/5 · 3 Oct · Receipt'), findsOneWidget);
       // Refresh: the list restarts from page 1 and shows the rows again.
       mark = f.to('/voucher-entry/paged').length;
       c.refreshNow();
@@ -1333,7 +1333,7 @@ void main() {
         ),
         isNotEmpty,
       );
-      expect(find.text('S/101 · 2 Oct'), findsOneWidget);
+      expect(find.text('S/101 · 2 Oct · Sales'), findsOneWidget);
       expect(find.textContaining('No entries'), findsNothing);
       expect(f.violations, isEmpty);
       await t.pump(const Duration(seconds: 6));

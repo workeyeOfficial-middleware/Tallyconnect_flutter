@@ -141,6 +141,9 @@ abstract class TallyRepository extends ChangeNotifier {
   bool get vouchersComplete;
   List<Bill> receivables();
   List<Bill> payables();
+
+  /// Bills paid / settled in Tally (not part of Outstanding totals).
+  List<Bill> settledBills(bool recv);
   OutstandingSummary outstanding(bool recv);
   MonthTotals monthTotals();
   List<Party> parties();
@@ -328,6 +331,9 @@ class MockTallyRepository extends TallyRepository {
       ),
   ];
   static final List<Bill> _recv = _dated(kRecv), _pay = _dated(kPayb);
+
+  @override
+  List<Bill> settledBills(bool recv) => const <Bill>[];
 
   @override
   List<Voucher> vouchers() => _vs;

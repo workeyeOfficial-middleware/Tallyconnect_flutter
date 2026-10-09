@@ -33,6 +33,7 @@ class SettingsScreen extends ConsumerWidget {
       ('alerts', 'Alerts'),
       ('plan', 'Plan'),
       ('look', 'Look'),
+      ('layout', 'Layout'),
     ];
     return Scr(
       children: <Widget>[
@@ -51,6 +52,7 @@ class SettingsScreen extends ConsumerWidget {
             'alerts' => const _Alerts(),
             'plan' => const _Plan(),
             'look' => const _Look(),
+            'layout' => const _Layout(),
             _ => const _Profile(),
           },
         ),
@@ -216,6 +218,122 @@ class _Alerts extends ConsumerWidget {
                 'You have unsaved changes',
                 textAlign: TextAlign.center,
                 style: rsStyle(context, 12.5),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Bottom bar and Home cards the user hid (long-press), with Restore.
+class _Layout extends ConsumerWidget {
+  const _Layout();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    final List<({String k, String t, String ic})> tabs =
+        <({String k, String t, String ic})>[
+          for (final ({String k, String t, String ic}) t in kTabs)
+            if (c.hiddenTabs.contains(t.k) && c.canOpen(t.k)) t,
+        ];
+    final List<HiddenCard> cards = c.hidList();
+    Widget restore(VoidCallback f) =>
+        ChipBtn('Restore', icon: 'eye', height: 36, fontSize: 13.5, onTap: f);
+    return Rise(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          GlassRow(
+            key: const ValueKey<String>('navBarSwitch'),
+            onTap: () => c.setNavBarHidden(!c.navBarHidden),
+            children: <Widget>[
+              Ico('grid', size: IcoSize.xs, color: p.navy, icon: IcSize.s),
+              Expanded(
+                child: RTx(
+                  'Bottom navigation bar',
+                  c.navBarHidden
+                      ? 'Hidden · open screens from the menu'
+                      : 'Shown at the bottom of main screens',
+                ),
+              ),
+              Sw(!c.navBarHidden),
+            ],
+          ),
+          const Sec('Hidden tabs'),
+          GlassList(
+            children: <Widget>[
+              if (tabs.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    'No hidden tabs. Long-press a tab in the bar, let go '
+                    'without moving it, then choose Hide.',
+                    style: rsStyle(context, 14),
+                  ),
+                ),
+              for (final ({String k, String t, String ic}) t in tabs)
+                RowX(
+                  children: <Widget>[
+                    Ico(t.ic, size: IcoSize.xs, color: p.acc, icon: IcSize.s),
+                    Expanded(child: RTx(t.t, 'Hidden from the bottom bar')),
+                    restore(() => c.restoreTab(t.k)),
+                  ],
+                ),
+            ],
+          ),
+          Sec('Hidden Home cards · ${c.curWs.name}'),
+          GlassList(
+            children: <Widget>[
+              if (cards.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    'No hidden cards. Long-press a card on Home and choose '
+                    'Hide.',
+                    style: rsStyle(context, 14),
+                  ),
+                ),
+              for (final HiddenCard h in cards)
+                Builder(
+                  builder: (BuildContext context) {
+                    final CardInfo? info = c.infoFor('home', h.id);
+                    return RowX(
+                      children: <Widget>[
+                        Ico(
+                          info?.ic ?? 'grid',
+                          size: IcoSize.xs,
+                          color: p.cat(info?.c ?? 'acc'),
+                          icon: IcSize.s,
+                        ),
+                        Expanded(
+                          child: RTx(info?.label ?? h.id, 'Page ${h.page + 1}'),
+                        ),
+                        restore(() => c.restoreHidden(<String>[h.id])),
+                      ],
+                    );
+                  },
+                ),
+            ],
+          ),
+          if (tabs.isNotEmpty || cards.isNotEmpty || c.navBarHidden)
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: Btn(
+                label: 'Restore everything',
+                icon: 'eye',
+                kind: BtnKind.g,
+                onTap: () {
+                  if (c.navBarHidden) c.setNavBarHidden(false);
+                  if (tabs.isNotEmpty) c.restoreTab();
+                  if (cards.isNotEmpty) {
+                    c.restoreHidden(<String>[
+                      for (final HiddenCard h in cards) h.id,
+                    ]);
+                  }
+                },
               ),
             ),
         ],
@@ -880,12 +998,12 @@ class _BackgroundLevels extends ConsumerWidget {
             Padding(
               padding: const EdgeInsets.only(top: 12),
               child: Btn(
-                label: 'Background back to normal',
+                label: 'Background back to default',
                 icon: 'sync',
                 kind: BtnKind.g,
                 onTap: () {
                   c.setBgOpacity(100);
-                  c.setBgShade(0);
+                  c.setBgShade(AppController.kDefaultShade);
                 },
               ),
             ),

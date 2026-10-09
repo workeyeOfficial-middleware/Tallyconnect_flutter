@@ -82,6 +82,10 @@ class ApiTallyRepository extends TallyRepository {
 
   /// …and the bills this user may see (USER: permitted ledgers only).
   List<Bill> _recv = const <Bill>[], _pay = const <Bill>[];
+
+  /// Settled bills (pending 0), same visibility rule.
+  List<Bill> _sRecvAll = const <Bill>[], _sPayAll = const <Bill>[];
+  List<Bill> _sRecv = const <Bill>[], _sPay = const <Bill>[];
   num? _serverRecv, _serverPay;
   List<Party> _parties = const <Party>[];
   List<Voucher> _vouchers = const <Voucher>[];
@@ -249,6 +253,7 @@ class ApiTallyRepository extends TallyRepository {
     }
     _ledgers = const <LedgerRow>[];
     _recvAll = _payAll = _recv = _pay = const <Bill>[];
+    _sRecvAll = _sPayAll = _sRecv = _sPay = const <Bill>[];
     _serverRecv = _serverPay = null;
     _parties = const <Party>[];
     _vouchers = const <Voucher>[];
@@ -527,8 +532,9 @@ class ApiTallyRepository extends TallyRepository {
         String nWeb = 'null';
         try {
           nWeb = await _api.webNotificationsText();
-        } on ApiException catch (e) {
-          if (e.kind == ApiErrorKind.unauthorized) rethrow;
+        } on ApiException {
+          // Optional list: any failure only leaves the web alerts out (the
+          // mobile request above already reports a real expired session).
         }
         return '{"mobile":$nMobile,"web":$nWeb}';
       case DataSet.alerts:
@@ -538,8 +544,8 @@ class ApiTallyRepository extends TallyRepository {
         String aWeb = 'null';
         try {
           aWeb = await _api.webNotificationPrefsText();
-        } on ApiException catch (e) {
-          if (e.kind == ApiErrorKind.unauthorized) rethrow;
+        } on ApiException {
+          // Optional: web switches stay unknown (shown off) on failure.
         }
         return '{"mobile":$aMobile,"web":$aWeb}';
       case DataSet.team:
@@ -664,6 +670,8 @@ class ApiTallyRepository extends TallyRepository {
         final BillsParsed b = parsed! as BillsParsed;
         _recvAll = b.recv;
         _payAll = b.pay;
+        _sRecvAll = b.settledRecv;
+        _sPayAll = b.settledPay;
         _serverRecv = b.serverRecv;
         _serverPay = b.serverPay;
       case DataSet.vouchers:
@@ -713,6 +721,8 @@ class ApiTallyRepository extends TallyRepository {
         admin || seen.contains(b.ledgerGuid ?? '') || seen.contains(b.party);
     _recv = _recvAll.where(ok).toList();
     _pay = _payAll.where(ok).toList();
+    _sRecv = _sRecvAll.where(ok).toList();
+    _sPay = _sPayAll.where(ok).toList();
 
     final Map<String, num> recvBy = <String, num>{}, payBy = <String, num>{};
     String key(Bill b) => b.ledgerGuid ?? b.party;
@@ -1037,6 +1047,8 @@ class ApiTallyRepository extends TallyRepository {
   List<Bill> receivables() => _recv;
   @override
   List<Bill> payables() => _pay;
+  @override
+  List<Bill> settledBills(bool recv) => recv ? _sRecv : _sPay;
 
   @override
   OutstandingSummary outstanding(bool recv) {
@@ -1342,8 +1354,7 @@ class ApiTallyRepository extends TallyRepository {
     if (block != null) return SubmitResult(ok: false, message: block);
     try {
       final Object? body = switch (d.type) {
-        'sales' ||
-        'purchase' => await _api.createSalesPurchase(salesBody(d)),
+        'sales' || 'purchase' => await _api.createSalesPurchase(salesBody(d)),
         'receipt' => await _api.createReceipt(receiptBody(d)),
         'payment' => await _api.createPayment(paymentBody(d)),
         'journal' => await _api.createJournal(journalBody(d)),

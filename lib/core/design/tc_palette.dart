@@ -3,6 +3,8 @@
 // rootCls 2752, applyTheme 1958).
 library;
 
+import 'dart:math' as math;
+
 import 'package:flutter/widgets.dart';
 
 import 'tc_color_math.dart';
@@ -508,9 +510,27 @@ class TcPalette {
     this.gb = 0,
     this.photoPath,
     this.photoDark = false,
-  });
+    Color? pageInk,
+    Color? pageInk2,
+    Color? pageInk3,
+    this.fillFloor = 0,
+  }) : pageInk = pageInk ?? ink,
+       pageInk2 = pageInk2 ?? ink2,
+       pageInk3 = pageInk3 ?? ink3;
 
   final Color acc, acc2, acc3, navy, navy2, navy3, ink, ink2, ink3, gt;
+
+  /// Text drawn straight on the background (titles, sub-titles, section
+  /// labels, tab labels, empty notes): dark on a light background, light on
+  /// a dark one — always readable (see [resolvePalette]).
+  final Color pageInk, pageInk2, pageInk3;
+
+  /// Least glass / sheet opacity so dark text inside cards stays readable
+  /// over a dark or busy background.
+  final double fillFloor;
+
+  /// The background behind the screens is dark (light page text).
+  bool get pageDark => pageInk.computeLuminance() > .5;
   final Color pos, neg, warn;
   final WallSpec wall;
   final Color o1, o2, o3;
@@ -525,10 +545,14 @@ class TcPalette {
   bool get hasPhoto => photoPath != null;
 
   /// `.glass` fill: rgba(--gt, g*.9+.06+gb).
-  Color get glassFill => gt.withValues(alpha: (g * .9 + .06 + gb).clamp(0, 1));
+  Color get glassFill => gt.withValues(
+    alpha: math.max(g * .9 + .06 + gb, fillFloor).clamp(0, 1).toDouble(),
+  );
 
   /// `.sheet` / `.drawer` fill: rgba(--gt, g*.45+.5).
-  Color get sheetFill => gt.withValues(alpha: (g * .45 + .5).clamp(0, 1));
+  Color get sheetFill => gt.withValues(
+    alpha: math.max(g * .45 + .5, fillFloor).clamp(0, 1).toDouble(),
+  );
 
   /// `C.*` with `.icmatch` always on: every category colour is the accent.
   Color cat(String k) => k == 'navy' ? navy : acc;
@@ -555,6 +579,10 @@ class TcPalette {
     gb: gb ?? this.gb,
     photoPath: photoPath,
     photoDark: photoDark,
+    pageInk: pageInk,
+    pageInk2: pageInk2,
+    pageInk3: pageInk3,
+    fillFloor: fillFloor,
   );
 
   @override
@@ -568,15 +596,108 @@ class TcPalette {
       other.g == g &&
       other.gb == gb &&
       other.photoPath == photoPath &&
-      other.pos == pos;
+      other.pos == pos &&
+      other.pageInk == pageInk &&
+      other.ink3 == ink3 &&
+      other.fillFloor == fillFloor;
 
   @override
-  int get hashCode =>
-      Object.hash(acc, navy, ink, gt, wall, g, gb, photoPath, pos);
+  int get hashCode => Object.hash(
+    acc,
+    navy,
+    ink,
+    gt,
+    wall,
+    g,
+    gb,
+    photoPath,
+    pos,
+    pageInk,
+    ink3,
+    fillFloor,
+  );
 }
 
 /// The root-class cascade: `g{n} ps-{preset} [ac-{accent}] icmatch [photo]`
 /// plus applyTheme's inline overrides (custom mode, wallpaper key, photo).
+// ---------------------------------------------------- readable text
+
+/// The screen's base colour under the wallpaper (see [TcWallpaper]).
+const Color kBaseBg = Color(0xFFE9EDF7);
+
+Color _over(Color under, Color c, double a) => Color.from(
+  alpha: 1,
+  red: under.r + (c.r - under.r) * a,
+  green: under.g + (c.g - under.g) * a,
+  blue: under.b + (c.b - under.b) * a,
+);
+
+/// Average colour of a wallpaper, painted over [kBaseBg]: full-cover layers
+/// count by their stops' average alpha; soft radial glows by about a third.
+Color wallAverage(WallSpec spec) {
+  Color acc = kBaseBg;
+  for (final WallLayer l in spec.layers.reversed) {
+    final List<Color> cs = switch (l) {
+      LinearLayer() => l.stops.map((GStop s) => s.color).toList(),
+      RepeatingLinearLayer() => l.stops.map((GStop s) => s.color).toList(),
+      RadialLayer() => l.stops.map((GStop s) => s.color).toList(),
+      ConicLayer() => l.colors,
+    };
+    if (cs.isEmpty) continue;
+    double a = 0, r = 0, g = 0, b = 0;
+    for (final Color c in cs) {
+      a += c.a;
+      r += c.r * c.a;
+      g += c.g * c.a;
+      b += c.b * c.a;
+    }
+    if (a <= 0) continue;
+    final Color avg = Color.from(
+      alpha: 1,
+      red: r / a,
+      green: g / a,
+      blue: b / a,
+    );
+    final double cover = (a / cs.length) * (l is RadialLayer ? .35 : 1);
+    acc = _over(acc, avg, cover.clamp(0, 1));
+  }
+  return acc;
+}
+
+double _contrast(double l1, double l2) {
+  final double hi = math.max(l1, l2), lo = math.min(l1, l2);
+  return (hi + .05) / (lo + .05);
+}
+
+/// [c] moved toward [to] just enough to reach [ratio] against a
+/// background of luminance [bgLum] (at most fully [to]).
+Color _readable(Color c, Color to, double bgLum, double ratio) {
+  for (int i = 0; i <= 10; i++) {
+    final Color x = Color.lerp(c, to, i / 10)!;
+    if (_contrast(x.computeLuminance(), bgLum) >= ratio) return x;
+  }
+  return to;
+}
+
+/// Luminance of the background behind the screens: wallpaper (or photo)
+/// at [opacity] over the base colour, then the Background shade veil.
+double backdropLum({
+  required WallSpec wall,
+  required bool photo,
+  required double photoLum,
+  double opacity = 1,
+  double shade = 0,
+}) {
+  final double op = opacity.clamp(0, 1).toDouble();
+  final double sh = shade.clamp(-1, 1).toDouble();
+  final double base = kBaseBg.computeLuminance();
+  final double w = photo ? photoLum : wallAverage(wall).computeLuminance();
+  double l = w * op + base * (1 - op);
+  if (sh > 0) l *= 1 - .45 * sh;
+  if (sh < 0) l += (1 - l) * .6 * -sh;
+  return l.clamp(0, 1).toDouble();
+}
+
 TcPalette resolvePalette({
   required String preset,
   String accent = 'look',
@@ -587,6 +708,8 @@ TcPalette resolvePalette({
   String? photoPath,
   double photoLum = 1,
   double glass = 60,
+  double opacity = 1,
+  double shade = 0,
 }) {
   final Look look = kLookDefs[preset] ?? kLookDefs['aurora']!;
   List<String> acc = look.acc;
@@ -629,6 +752,42 @@ TcPalette resolvePalette({
   }
   final bool dark = photo && photoLum < .35;
   final double gl = (glass / 10).round() * 10 / 100;
+  final double gbv = photo ? (dark ? .2 : .12) : 0;
+
+  // ---- Readable text on any background.
+  // Page text (on the background itself): dark or light, whichever reads
+  // better (WCAG contrast), then each shade nudged to at least 4.5:1.
+  final double bg = backdropLum(
+    wall: wall,
+    photo: photo,
+    photoLum: photoLum,
+    opacity: opacity,
+    shade: shade,
+  );
+  const Color light = Color(0xFFF5F7FC);
+  final bool lightText =
+      _contrast(light.computeLuminance(), bg) >
+      _contrast(ink.computeLuminance(), bg);
+  final Color pInk = lightText ? light : ink;
+  final Color pInk2 = lightText
+      ? _readable(const Color(0xFFDCE2EE), light, bg, 4.5)
+      : _readable(ink2, ink, bg, 4.5);
+  final Color pInk3 = lightText
+      ? _readable(const Color(0xFFBFC7D8), light, bg, 4.5)
+      : _readable(ink3, ink, bg, 4.5);
+  // Card text stays dark: the glass is made opaque enough that the card
+  // reads as light (luminance ≥ .6) over a dark / busy background, and the
+  // lighter text shades are nudged to 4.5:1 on it.
+  final double gtl = gt.computeLuminance();
+  final double a0 = (gl * .9 + .06 + gbv).clamp(0, 1).toDouble();
+  double floor = 0;
+  if (gtl > bg && bg + (gtl - bg) * a0 < .6) {
+    floor = ((.6 - bg) / (gtl - bg)).clamp(0, .96).toDouble();
+  }
+  final double cardLum = bg + (gtl - bg) * math.max(a0, floor);
+  ink2 = _readable(ink2, ink, cardLum, 4.5);
+  ink3 = _readable(ink3, ink, cardLum, 4.5);
+
   return TcPalette(
     acc: cAcc,
     acc2: cAcc2,
@@ -648,9 +807,13 @@ TcPalette resolvePalette({
     o2: o2,
     o3: o3,
     g: gl,
-    gb: photo ? (dark ? .2 : .12) : 0,
+    gb: gbv,
     photoPath: photo ? photoPath : null,
     photoDark: dark,
+    pageInk: pInk,
+    pageInk2: pInk2,
+    pageInk3: pInk3,
+    fillFloor: floor,
   );
 }
 

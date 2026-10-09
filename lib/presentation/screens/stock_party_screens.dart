@@ -120,6 +120,10 @@ class SearchRow extends StatelessWidget {
   );
 }
 
+/// The item's Tally stock group, or a label for items without one.
+String itemGroupOf(Item x) =>
+    (x.group ?? '').trim().isEmpty ? 'Not in a group' : x.group!.trim();
+
 class ItemsScreen extends ConsumerWidget {
   const ItemsScreen({super.key});
 
@@ -131,14 +135,19 @@ class ItemsScreen extends ConsumerWidget {
     // Debounced search over the search text built once per item; filtered
     // and ordered once per data / filter / search change.
     final String q = c.q('itemQ').toLowerCase();
+    // Group-wise browsing: the group list, or one group's items.
+    final bool byGroup = c.itemsView == 'groups';
+    final String? grp = byGroup ? c.itemsGroup : null;
+    final bool showGroups = byGroup && grp == null;
     final String mk =
-        '${c.repo.version}|${all.length}|${c.itemsFilter}|$q|${c.prefsVersion}';
+        '${c.repo.version}|${all.length}|${c.itemsFilter}|$q|${c.prefsVersion}|$grp';
     final List<Item> rows = c.memo<List<Item>>(
       'items-rows',
       mk,
       () => all
           .where(
             (Item x) =>
+                (grp == null || itemGroupOf(x) == grp) &&
                 (c.itemsFilter == 'all' || x.st == c.itemsFilter) &&
                 (q.isEmpty ||
                     (x.search.isNotEmpty ? x.search : x.name.toLowerCase())
@@ -146,6 +155,35 @@ class ItemsScreen extends ConsumerWidget {
           )
           .toList(),
     );
+    // Stock groups (from the items' Tally stock group), with item count,
+    // stock value and finished count; filtered by the search text.
+    final List<(String, int, num, int)> groups = c
+        .memo<List<(String, int, num, int)>>(
+          'items-groups',
+          '${c.repo.version}|${all.length}|$q',
+          () {
+            final Map<String, (int, num, int)> by = <String, (int, num, int)>{};
+            for (final Item x in all) {
+              final String g = itemGroupOf(x);
+              final (int, num, int) o = by[g] ?? (0, 0, 0);
+              by[g] = (
+                o.$1 + 1,
+                o.$2 + x.worth,
+                o.$3 + (x.st == 'out' ? 1 : 0),
+              );
+            }
+            final List<(String, int, num, int)> l = <(String, int, num, int)>[
+              for (final MapEntry<String, (int, num, int)> e in by.entries)
+                if (q.isEmpty || e.key.toLowerCase().contains(q))
+                  (e.key, e.value.$1, e.value.$2, e.value.$3),
+            ];
+            l.sort(
+              ((String, int, num, int) a, (String, int, num, int) b) =>
+                  a.$1.toLowerCase().compareTo(b.$1.toLowerCase()),
+            );
+            return l;
+          },
+        );
     final ({List<Item> rows, int hidden, VoidCallback unhide}) v = c
         .memo<({List<Item> rows, int hidden, VoidCallback unhide})>(
           'items-view',
@@ -161,10 +199,27 @@ class ItemsScreen extends ConsumerWidget {
         all.where((Item x) => x.st == 'out').length,
       ),
     );
+    // Counts of the open stock group (else of all items).
+    final (int, int, int) sc = grp == null
+        ? (all.length, stats.$2, stats.$3)
+        : c.memo<(int, int, int)>(
+            'items-group-counts',
+            '${c.repo.version}|${all.length}|$grp',
+            () {
+              final List<Item> g = all
+                  .where((Item x) => itemGroupOf(x) == grp)
+                  .toList();
+              return (
+                g.length,
+                g.where((Item x) => x.st == 'low').length,
+                g.where((Item x) => x.st == 'out').length,
+              );
+            },
+          );
     final List<(String, String)> segs = <(String, String)>[
-      ('all', 'All (${all.length})'),
-      ('low', 'Low (${stats.$2})'),
-      ('out', 'Finished (${stats.$3})'),
+      ('all', 'All (${sc.$1})'),
+      ('low', 'Low (${sc.$2})'),
+      ('out', 'Finished (${sc.$3})'),
     ];
     return Scr(
       children: <Widget>[
@@ -221,17 +276,43 @@ class ItemsScreen extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 18),
+        // All items, or browse by stock group.
         Seg(
-          items: segs.map(((String, String) e) => e.$2).toList(),
-          selected: segs.indexWhere(
-            ((String, String) e) => e.$1 == c.itemsFilter,
-          ),
-          onPick: (int i) => c.update(() => c.itemsFilter = segs[i].$1),
+          key: const ValueKey<String>('itemsViewSeg'),
+          items: const <String>['All items', 'By group'],
+          selected: byGroup ? 1 : 0,
+          onPick: (int i) => c.update(() {
+            c.itemsView = i == 1 ? 'groups' : 'items';
+            c.itemsGroup = null;
+          }),
         ),
+        if (grp != null)
+          GlassRow(
+            margin: const EdgeInsets.only(bottom: 14),
+            onTap: () => c.openItemGroup(null),
+            children: <Widget>[
+              Ic('chevL', color: p.acc),
+              Expanded(
+                child: RTx(
+                  grp,
+                  '${grouped(rows.length)} ${rows.length == 1 ? 'item' : 'items'} · tap for all groups',
+                  ell: true,
+                ),
+              ),
+            ],
+          ),
+        if (!showGroups)
+          Seg(
+            items: segs.map(((String, String) e) => e.$2).toList(),
+            selected: segs.indexWhere(
+              ((String, String) e) => e.$1 == c.itemsFilter,
+            ),
+            onPick: (int i) => c.update(() => c.itemsFilter = segs[i].$1),
+          ),
         SearchRow(
           value: c.f('itemQ'),
           onChanged: (String s) => c.setQuery('itemQ', s),
-          placeholder: 'Search item name',
+          placeholder: showGroups ? 'Search stock group' : 'Search item name',
           icon: 'scan',
           onAction: () => c.say(
             c.repo.isRemote
@@ -239,70 +320,101 @@ class ItemsScreen extends ConsumerWidget {
                 : 'Point the camera at a barcode',
           ),
         ),
-        lazyList<Item>(
-          rows: v.rows,
-          row: (BuildContext context, Item x) => LRow(
-            list: 'items',
-            lk: x.name,
-            child: RowX(
-              onTap: () {
-                if (c.guardTap('items', x.name)) c.openItem(x.name);
-              },
+        if (showGroups)
+          lazyList<(String, int, num, int)>(
+            rows: groups,
+            row: (BuildContext context, (String, int, num, int) g) => RowX(
+              onTap: () => c.openItemGroup(g.$1),
               children: <Widget>[
                 Ico(
-                  'box',
+                  'grid',
                   size: IcoSize.xs,
                   color: p.cat('items'),
                   icon: IcSize.s,
                 ),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        x.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: rtStyle(context),
-                      ),
-                      const SizedBox(height: 2),
-                      Row(
-                        children: <Widget>[
-                          Bdg(
-                            stockLabel(x),
-                            kind: x.st == 'ok'
-                                ? BadgeKind.ok
-                                : (x.st == 'low'
-                                      ? BadgeKind.warn
-                                      : BadgeKind.bad),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2,
-                            ),
-                          ),
-                          Flexible(
-                            child: Text(
-                              ' ${rateLabel(x)}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: rsStyle(context),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                  child: RTx(
+                    g.$1,
+                    '${grouped(g.$2)} ${g.$2 == 1 ? 'item' : 'items'}'
+                    '${g.$4 > 0 ? ' · ${grouped(g.$4)} finished' : ''}',
+                    ell: false,
                   ),
                 ),
-                Text(inr(x.worth), style: amtStyle(context)),
+                const SizedBox(width: 8),
+                Text(inr(g.$3), style: amtStyle(context)),
+                const SizedBox(width: 4),
+                chevR(),
               ],
             ),
+            empty: groups.isEmpty
+                ? c.emptyText(DataSet.items, 'No stock group found.')
+                : null,
+          )
+        else
+          lazyList<Item>(
+            rows: v.rows,
+            row: (BuildContext context, Item x) => LRow(
+              list: 'items',
+              lk: x.name,
+              child: RowX(
+                onTap: () {
+                  if (c.guardTap('items', x.name)) c.openItem(x.name);
+                },
+                children: <Widget>[
+                  Ico(
+                    'box',
+                    size: IcoSize.xs,
+                    color: p.cat('items'),
+                    icon: IcSize.s,
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          x.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: rtStyle(context),
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: <Widget>[
+                            Bdg(
+                              stockLabel(x),
+                              kind: x.st == 'ok'
+                                  ? BadgeKind.ok
+                                  : (x.st == 'low'
+                                        ? BadgeKind.warn
+                                        : BadgeKind.bad),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                            ),
+                            Flexible(
+                              child: Text(
+                                ' ${rateLabel(x)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: rsStyle(context),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(inr(x.worth), style: amtStyle(context)),
+                ],
+              ),
+            ),
+            hidden: v.hidden,
+            unhide: v.unhide,
+            empty: rows.isEmpty
+                ? c.emptyText(DataSet.items, 'No item found.')
+                : null,
           ),
-          hidden: v.hidden,
-          unhide: v.unhide,
-          empty: rows.isEmpty
-              ? c.emptyText(DataSet.items, 'No item found.')
-              : null,
-        ),
       ],
     );
   }
@@ -823,6 +935,8 @@ class ItemDetailScreen extends ConsumerWidget {
         rows: list,
         row: (BuildContext context, ItemParty x) => RowX(
           cross: CrossAxisAlignment.start,
+          // The customer's / supplier's own detail screen.
+          onTap: () => c.openParty(x.name),
           children: <Widget>[
             Av(initials(x.name), size: Av.sm),
             Expanded(
@@ -853,6 +967,8 @@ class ItemDetailScreen extends ConsumerWidget {
                 ),
               ],
             ),
+            const SizedBox(width: 4),
+            Padding(padding: const EdgeInsets.only(top: 10), child: chevR()),
           ],
         ),
       );

@@ -174,6 +174,40 @@ Bill? billFrom(Map<String, Object?> m, DateTime today) {
   );
 }
 
+/// A `GET /bill` row whose pending amount is 0 (paid / settled in Tally;
+/// the row is kept by the server) → [Bill] with status `settled`. [Bill.amt]
+/// is 0; [Bill.billAmt] is the server's `bill_amount` when it has one (for
+/// payables the last pending amount sent by the agent). Null for pending
+/// rows.
+Bill? settledBillFrom(Map<String, Object?> m) {
+  final num? pending = toNum(m['pending_amount']);
+  if (pending == null || pending != 0) return null;
+  if (str(m['ledger_name']).isEmpty || str(m['bill_name']).isEmpty) {
+    return null;
+  }
+  final DateTime? due = dateOnly(m['due_date']);
+  final DateTime? billDate = dateOnly(m['bill_date']);
+  final bool pay = str(m['bill_type']).toUpperCase() == 'PAYABLE';
+  final String guid = str(m['bill_guid']);
+  final num? amount = toNum(m['bill_amount']);
+  return Bill(
+    str(m['ledger_name']),
+    str(m['bill_name']),
+    dmy(billDate),
+    dmy(due),
+    (due != null && billDate != null) ? '${dayDiff(billDate, due)} days' : '—',
+    0,
+    'settled',
+    'Settled',
+    '',
+    pay ? 'pay' : 'recv',
+    '${str(m['ledger_guid'])}|${guid.isEmpty ? str(m['bill_name']) : guid}',
+    str(m['ledger_guid']).isEmpty ? null : str(m['ledger_guid']),
+    due,
+    (amount != null && amount > 0) ? amount : null,
+  );
+}
+
 List<BillLine> _billItems(Object? v) => <BillLine>[
   if (v is List)
     for (final Object? e in v)

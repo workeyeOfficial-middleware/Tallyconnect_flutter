@@ -516,8 +516,9 @@ class SliverGlassList extends ScrSliver {
           sliver: SliverList.builder(
             itemCount: itemCount,
             itemBuilder: (BuildContext context, int i) {
-              Widget w = itemBuilder(context, i);
-              if (i > 0 && divider && w is! HidRow) {
+              final Widget raw = itemBuilder(context, i);
+              Widget w = OnSurface(child: raw);
+              if (i > 0 && divider && raw is! HidRow) {
                 w = Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   mainAxisSize: MainAxisSize.min,
@@ -707,21 +708,25 @@ class NavRow extends StatelessWidget {
   final EdgeInsets margin;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: margin,
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 48),
-      child: Row(
-        children: <Widget>[
-          for (int i = 0; i < children.length; i++) ...<Widget>[
-            if (i > 0 && children[i] is! Spacer && children[i - 1] is! Spacer)
-              const SizedBox(width: 10),
-            children[i],
+  Widget build(BuildContext context) {
+    // Narrow phones (≈320 px): tighter gaps so the buttons fit one row.
+    final double gap = MediaQuery.sizeOf(context).width < 360 ? 6 : 10;
+    return Padding(
+      padding: margin,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 48),
+        child: Row(
+          children: <Widget>[
+            for (int i = 0; i < children.length; i++) ...<Widget>[
+              if (i > 0 && children[i] is! Spacer && children[i - 1] is! Spacer)
+                SizedBox(width: gap),
+              children[i],
+            ],
           ],
-        ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 /// Standard back pill row: `[pbtn backLabel] [grow] [...actions]`.
@@ -735,8 +740,18 @@ class BackNav extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     return NavRow(
       children: <Widget>[
-        PBtn(label ?? c.backLabel, onTap: c.back),
-        const Spacer(),
+        // Takes all room left by the actions; shrinks only when that room
+        // is smaller than the pill (very narrow phones).
+        Expanded(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: PBtn(label ?? c.backLabel, onTap: c.back),
+            ),
+          ),
+        ),
         ...actions,
       ],
     );
