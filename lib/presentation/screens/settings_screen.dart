@@ -19,6 +19,7 @@ import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
 import '../../core/design/tc_wall_spec.dart';
+import '../../core/design/tc_wallpaper.dart' show TcWallpaper;
 import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
@@ -1102,6 +1103,7 @@ class _BackgroundLevels extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final int sh = c.bgShade.round();
+    final int tt = c.textTone.round();
     return Padding(
       padding: const EdgeInsets.only(top: 18),
       child: Glass(
@@ -1132,10 +1134,25 @@ class _BackgroundLevels extends ConsumerWidget {
               onChanged: c.setBgShade,
               ends: const ('Lighter', 'Darker'),
             ),
+            const SizedBox(height: 18),
+            _LevelSlider(
+              title: 'Text colour',
+              sub: 'Lighter or darker text on every screen',
+              valueText: tt == 0 ? 'Auto' : (tt > 0 ? '+$tt' : '$tt'),
+              value: c.textTone,
+              min: -100,
+              max: 100,
+              onChanged: c.setTextTone,
+              ends: const ('Lighter', 'Darker'),
+            ),
+            const Padding(
+              padding: EdgeInsets.only(top: 12),
+              child: _TextPreview(),
+            ),
             Padding(
               padding: const EdgeInsets.only(top: 12),
               child: Text(
-                'Only the background changes. Cards keep their own glass level (Glass tab).',
+                'Cards keep their own glass level (Glass tab). Text never goes past the point where it stops being easy to read.',
                 style: rsStyle(context),
               ),
             ),
@@ -1148,7 +1165,98 @@ class _BackgroundLevels extends ConsumerWidget {
                 onTap: () {
                   c.setBgOpacity(100);
                   c.setBgShade(AppController.kDefaultShade);
+                  c.setTextTone(0);
                 },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Live preview of the text colour: page text on the background as set
+/// (opacity, shade), a glass card's text, and the bottom bar's labels.
+class _TextPreview extends ConsumerWidget {
+  const _TextPreview();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    return SizedBox(
+      height: 196,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: Stack(
+          children: <Widget>[
+            Positioned.fill(
+              child: TcWallpaper(
+                opacity: c.bgOpacity / 100,
+                shade: c.bgShade / 100,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Text(
+                    'Page title',
+                    style: ts(20, w: w800, c: p.pageInk),
+                  ),
+                  Text(
+                    'Sub-title on the background',
+                    style: ts(13, w: w600, c: p.pageInk2),
+                  ),
+                  const SizedBox(height: 10),
+                  Glass(
+                    radius: 16,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Text(
+                                'Card text',
+                                style: ts(15, w: w700, c: p.ink),
+                              ),
+                              Text(
+                                'Details on the glass',
+                                style: ts(12.5, w: w600, c: p.ink2),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Text('₹12,500', style: ts(15, w: w800, c: p.ink)),
+                      ],
+                    ),
+                  ),
+                  const Spacer(),
+                  Glass(
+                    radius: 20,
+                    height: 40,
+                    blur: true,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: <Widget>[
+                        Text('Home', style: ts(12, w: w800, c: p.acc)),
+                        for (final String t in const <String>[
+                          'Dues',
+                          'Team',
+                          'Reports',
+                        ])
+                          Text(t, style: ts(12, w: w700, c: p.tabInk)),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
           ],

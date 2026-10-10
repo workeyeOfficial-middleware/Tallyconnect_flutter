@@ -15,7 +15,6 @@ import '../../core/design/tc_palette.dart';
 import '../../data/mock/mock_data.dart';
 import 'common.dart';
 
-const Color kTabInk = Color(0xFF3C4763);
 
 class TcTabBar extends ConsumerWidget {
   const TcTabBar({super.key});
@@ -68,7 +67,7 @@ class TcTabBar extends ConsumerWidget {
       // stay readable on a dark background.
       final Color col = on
           ? p.acc
-          : (hov ? p.pageInk : (p.pageDark ? p.pageInk2 : kTabInk));
+          : (hov ? p.pageInk : p.tabInk);
       tabs.add(
         AnimatedPositioned(
           key: ValueKey<int>(i),
@@ -187,10 +186,16 @@ class TcTabBar extends ConsumerWidget {
               borderRadius: br,
               blur: true,
               filter: backdrop(6, 2.1, 1.06),
+              // Follows the Glass setting like every glass surface (clearer
+              // at a higher setting); stays light so the page-ink labels
+              // read on it.
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: <Color>[whiteA(.18), whiteA(.04)],
+                colors: <Color>[
+                  whiteA(.3 - .2 * p.clarity),
+                  whiteA(.08 - .06 * p.clarity),
+                ],
               ),
               border: Border.all(color: whiteA(.58)),
               sheenGradient: LinearGradient(
@@ -497,7 +502,7 @@ class _PillFilterState extends State<PillFilter> {
     final TcPalette p = Tc.of(context);
     final TextScaler sc = MediaQuery.textScalerOf(context);
     TextStyle style(bool on) =>
-        ts(14, w: on ? w800 : w700, c: on ? p.acc : kTabInk);
+        ts(14, w: on ? w800 : w700, c: on ? p.acc : p.filterInk);
     return Padding(
       padding: widget.margin,
       child: LayoutBuilder(

@@ -514,6 +514,8 @@ class TcPalette {
     Color? pageInk2,
     Color? pageInk3,
     this.fillFloor = 0,
+    this.tabInk = kTabInk0,
+    this.filterInk = kTabInk0,
   }) : pageInk = pageInk ?? ink,
        pageInk2 = pageInk2 ?? ink2,
        pageInk3 = pageInk3 ?? ink3;
@@ -524,6 +526,12 @@ class TcPalette {
   /// labels, tab labels, empty notes): dark on a light background, light on
   /// a dark one — always readable (see [resolvePalette]).
   final Color pageInk, pageInk2, pageInk3;
+
+  /// Unselected bottom-bar tab labels (on the see-through bar).
+  final Color tabInk;
+
+  /// Unselected labels of glass filter rows (on the glass).
+  final Color filterInk;
 
   /// Least glass / sheet opacity so dark text inside cards stays readable
   /// over a dark or busy background.
@@ -544,15 +552,31 @@ class TcPalette {
 
   bool get hasPhoto => photoPath != null;
 
-  /// `.glass` fill: rgba(--gt, g*.9+.06+gb).
-  Color get glassFill => gt.withValues(
-    alpha: math.max(g * .9 + .06 + gb, fillFloor).clamp(0, 1).toDouble(),
+  /// How see-through the glass is, 0 … 1, from the Glass setting (20–100 %):
+  /// a higher setting is clearer glass (less tint, softer sheen), never a
+  /// whiter one.
+  double get clarity => glassClarity(g);
+
+  /// `.glass` tint opacity (cards, lists, sidebar): 74 % at 20 → 12 % at
+  /// 100, never below the readability floor.
+  double get glassA =>
+      math.max(glassTint(g) + gb, fillFloor).clamp(0, 1).toDouble();
+
+  Color get glassFill => gt.withValues(alpha: glassA);
+
+  /// `.sheet` fill (bottom sheets, forms): a little denser than cards.
+  Color get sheetFill => gt.withValues(
+    alpha: math.max(.92 - .44 * clarity, fillFloor).clamp(0, 1).toDouble(),
   );
 
-  /// `.sheet` / `.drawer` fill: rgba(--gt, g*.45+.5).
-  Color get sheetFill => gt.withValues(
-    alpha: math.max(g * .45 + .5, fillFloor).clamp(0, 1).toDouble(),
+  /// Bars on top of content (sheet / screen footers).
+  Color get barFill => gt.withValues(
+    alpha: math.max(.66 - .4 * clarity, fillFloor * .8).clamp(0, 1).toDouble(),
   );
+
+  /// Strength of the glass sheen (top-left highlight): subtler on clearer
+  /// glass so it does not whiten the card.
+  double get sheen => 1 - .5 * clarity;
 
   /// `C.*` with `.icmatch` always on: every category colour is the accent.
   Color cat(String k) => k == 'navy' ? navy : acc;
@@ -583,6 +607,8 @@ class TcPalette {
     pageInk2: pageInk2,
     pageInk3: pageInk3,
     fillFloor: fillFloor,
+    tabInk: tabInk,
+    filterInk: filterInk,
   );
 
   @override
@@ -598,7 +624,12 @@ class TcPalette {
       other.photoPath == photoPath &&
       other.pos == pos &&
       other.pageInk == pageInk &&
+      other.pageInk2 == pageInk2 &&
+      other.pageInk3 == pageInk3 &&
+      other.ink2 == ink2 &&
       other.ink3 == ink3 &&
+      other.tabInk == tabInk &&
+      other.filterInk == filterInk &&
       other.fillFloor == fillFloor;
 
   @override
@@ -613,10 +644,36 @@ class TcPalette {
     photoPath,
     pos,
     pageInk,
+    ink2,
     ink3,
+    tabInk,
+    filterInk,
     fillFloor,
   );
 }
+
+/// Default unselected tab label colour (light background).
+const Color kTabInk0 = Color(0xFF3C4763);
+
+/// [c] moved toward black ([tone] > 0, darker) or white ([tone] < 0,
+/// lighter) by |tone| (0 … 1) — but only as far as it still reads at
+/// 4.5:1 on a surface of luminance [bgLum]; never less readable than that.
+Color toneInk(Color c, double tone, double bgLum) {
+  final double t = tone.clamp(-1, 1).toDouble();
+  if (t == 0) return c;
+  final Color to = t > 0 ? const Color(0xFF05070D) : const Color(0xFFFFFFFF);
+  for (int i = 10; i > 0; i--) {
+    final Color x = Color.lerp(c, to, t.abs() * i / 10)!;
+    if (_contrast(x.computeLuminance(), bgLum) >= 4.5) return x;
+  }
+  return c;
+}
+
+/// Glass level [g] (.2 … 1 from the 20–100 % setting) → clarity 0 … 1.
+double glassClarity(double g) => ((g - .2) / .8).clamp(0, 1).toDouble();
+
+/// Glass tint opacity before the photo boost / readability floor.
+double glassTint(double g) => .74 - .62 * glassClarity(g);
 
 /// The root-class cascade: `g{n} ps-{preset} [ac-{accent}] icmatch [photo]`
 /// plus applyTheme's inline overrides (custom mode, wallpaper key, photo).
@@ -710,6 +767,7 @@ TcPalette resolvePalette({
   double glass = 60,
   double opacity = 1,
   double shade = 0,
+  double textTone = 0,
 }) {
   final Look look = kLookDefs[preset] ?? kLookDefs['aurora']!;
   List<String> acc = look.acc;
@@ -775,18 +833,28 @@ TcPalette resolvePalette({
   final Color pInk3 = lightText
       ? _readable(const Color(0xFFBFC7D8), light, bg, 4.5)
       : _readable(ink3, ink, bg, 4.5);
-  // Card text stays dark: the glass is made opaque enough that the card
-  // reads as light (luminance ≥ .6) over a dark / busy background, and the
-  // lighter text shades are nudged to 4.5:1 on it.
+  // Card text stays dark: the glass keeps just enough tint that the card
+  // reads as light over a dark / busy background (luminance ≥ .6 on the
+  // least clear setting, ≥ .28 — still 4.5:1 for the card ink — on the
+  // clearest), and the lighter text shades are nudged to 4.5:1 on it. So a
+  // clearer setting always shows more of the background, never a whiter
+  // card.
   final double gtl = gt.computeLuminance();
-  final double a0 = (gl * .9 + .06 + gbv).clamp(0, 1).toDouble();
+  final double a0 = (glassTint(gl) + gbv).clamp(0, 1).toDouble();
+  final double need = .6 - .32 * glassClarity(gl);
   double floor = 0;
-  if (gtl > bg && bg + (gtl - bg) * a0 < .6) {
-    floor = ((.6 - bg) / (gtl - bg)).clamp(0, .96).toDouble();
+  if (gtl > bg && bg + (gtl - bg) * a0 < need) {
+    floor = ((need - bg) / (gtl - bg)).clamp(0, .96).toDouble();
   }
   final double cardLum = bg + (gtl - bg) * math.max(a0, floor);
   ink2 = _readable(ink2, ink, cardLum, 4.5);
   ink3 = _readable(ink3, ink, cardLum, 4.5);
+
+  // ---- Text colour (Settings → Background): every text shade moved
+  // lighter / darker, each only as far as it stays readable on its surface
+  // (page text on the background, card text on the glass).
+  final double tt = textTone.clamp(-1, 1).toDouble();
+  final Color tInk = lightText ? pInk2 : kTabInk0;
 
   return TcPalette(
     acc: cAcc,
@@ -795,9 +863,9 @@ TcPalette resolvePalette({
     navy: cNavy,
     navy2: cNavy2,
     navy3: cNavy3,
-    ink: ink,
-    ink2: ink2,
-    ink3: ink3,
+    ink: toneInk(ink, tt, cardLum),
+    ink2: toneInk(ink2, tt, cardLum),
+    ink3: toneInk(ink3, tt, cardLum),
     gt: gt,
     pos: _h(look.pnw[0]),
     neg: _h(look.pnw[1]),
@@ -810,10 +878,12 @@ TcPalette resolvePalette({
     gb: gbv,
     photoPath: photo ? photoPath : null,
     photoDark: dark,
-    pageInk: pInk,
-    pageInk2: pInk2,
-    pageInk3: pInk3,
+    pageInk: toneInk(pInk, tt, bg),
+    pageInk2: toneInk(pInk2, tt, bg),
+    pageInk3: toneInk(pInk3, tt, bg),
     fillFloor: floor,
+    tabInk: toneInk(tInk, tt, bg),
+    filterInk: toneInk(kTabInk0, tt, cardLum),
   );
 }
 

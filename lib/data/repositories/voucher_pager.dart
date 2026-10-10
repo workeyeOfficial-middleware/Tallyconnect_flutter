@@ -12,16 +12,41 @@ import '../models/models.dart';
 
 /// What a voucher list shows.
 class VoucherQuery {
-  const VoucherQuery({this.filter = 'all', this.period = 'all'});
+  const VoucherQuery({
+    this.filter = 'all',
+    this.period = 'all',
+    this.range,
+    this.ym,
+  });
 
   /// `all`, an app kind (sales, purchase, receipt, payment, journal, contra)
   /// or `type:<Tally voucher type name>`.
   final String filter;
 
-  /// all | month | week | today
+  /// all | month | week | today | range ([range] From–To, both days
+  /// included).
   final String period;
+  final DateRange? range;
 
-  String get key => '$filter|$period';
+  /// One calendar month (server year / month filter) — set by the pager
+  /// while it reads a date range month by month.
+  final DateTime? ym;
+
+  String get key =>
+      '$filter|$period${period == 'range' ? '|${range?.key}' : ''}';
+
+  /// The list of a period key (`all`, `month`, `week`, `today` or
+  /// `range:<from>..<to>`, see [DateRange.period]).
+  factory VoucherQuery.forPeriod(String period, {String filter = 'all'}) {
+    final DateRange? r = DateRange.parse(period);
+    return r == null
+        ? VoucherQuery(filter: filter, period: period)
+        : VoucherQuery(filter: filter, period: 'range', range: r);
+  }
+
+  /// The same list, one month of it (for reading a range).
+  VoucherQuery inMonth(DateTime m) =>
+      VoucherQuery(filter: filter, period: 'ym', ym: DateTime(m.year, m.month));
 
   /// Server `type` pre-filter. It is a loose `ILIKE %type%` match, so every
   /// row is still checked against the exact app rule ([matches]).
@@ -46,6 +71,55 @@ class VoucherQuery {
   }
 }
 
+/// A From–To date range (both days included, dates only).
+class DateRange {
+  DateRange(DateTime from, DateTime to)
+    : from = DateTime(from.year, from.month, from.day),
+      to = DateTime(to.year, to.month, to.day);
+
+  final DateTime from, to;
+
+  bool contains(DateTime? d) {
+    if (d == null) return false;
+    final DateTime x = DateTime(d.year, d.month, d.day);
+    return !x.isBefore(from) && !x.isAfter(to);
+  }
+
+  /// Calendar months covered, newest first.
+  List<DateTime> get monthsNewestFirst => <DateTime>[
+    for (
+      DateTime m = DateTime(to.year, to.month);
+      !m.isBefore(DateTime(from.year, from.month));
+      m = DateTime(m.year, m.month - 1)
+    )
+      m,
+  ];
+
+  String get key => '${ymd(from)}..${ymd(to)}';
+
+  /// Period key used for counts / totals of this range.
+  String get period => 'range:$key';
+
+  /// The range of a `range:<from>..<to>` period key, else null.
+  static DateRange? parse(String period) {
+    if (!period.startsWith('range:')) return null;
+    final List<String> p = period.substring(6).split('..');
+    if (p.length != 2) return null;
+    final DateTime? a = DateTime.tryParse(p[0]), b = DateTime.tryParse(p[1]);
+    return a == null || b == null ? null : DateRange(a, b);
+  }
+
+  /// `01 Sep 2026 – 30 Sep 2026`.
+  String get label => '${dmy(from)} – ${dmy(to)}';
+
+  @override
+  bool operator ==(Object other) =>
+      other is DateRange && other.from == from && other.to == to;
+
+  @override
+  int get hashCode => Object.hash(from, to);
+}
+
 /// One fetched page: its rows, all GUIDs, hasMore.
 class FetchedPage {
   const FetchedPage(this.rows, this.guids, this.hasMore);
@@ -68,6 +142,10 @@ class VoucherPager extends ChangeNotifier {
   final List<Voucher> rows = <Voucher>[];
   final Set<String> _seen = <String>{};
   int _page = 0;
+
+  /// Date range: the month being read (index into its months, newest
+  /// first) and the page within it.
+  int _mi = 0, _mPage = 0;
   bool hasMore = true, loading = false;
   String? error;
   bool _disposed = false;
@@ -82,19 +160,43 @@ class VoucherPager extends ChangeNotifier {
     _ => null,
   };
 
-  bool _inPeriod(Voucher v) {
-    final DateTime? d = v.date;
-    switch (query.period) {
-      case 'today':
-        return d != null && dayDiff(d, _today) == 0;
-      case 'week':
-        if (d == null) return false;
-        final int n = dayDiff(d, _today);
-        return n >= 0 && n <= 6;
-      case 'month':
-        return d != null && d.year == _today.year && d.month == _today.month;
+  bool _inPeriod(Voucher v) =>
+      voucherInPeriod(v, query.period, _today, query.range);
+
+  /// A date range: each month it covers is read with the server's year /
+  /// month filter (newest month first) and cut to the exact days here.
+  Future<int> _loadRange(int minNew) async {
+    final DateRange r = query.range!;
+    final List<DateTime> ms = r.monthsNewestFirst;
+    int added = 0;
+    while (hasMore && added < minNew) {
+      final DateTime m = ms[_mi];
+      final FetchedPage p = await _fetch(_mPage + 1, query.inMonth(m), _today);
+      if (_disposed) return added;
+      _mPage++;
+      bool past = false;
+      for (final Voucher v in p.rows) {
+        final DateTime? d = v.date;
+        // Only this month's rows (each month is read once).
+        if (d == null || d.year != m.year || d.month != m.month) continue;
+        final String g = v.guid ?? '';
+        if (g.isNotEmpty && !_seen.add(g)) continue; // shifted row
+        if (d.isBefore(r.from)) {
+          past = true; // newest first: the rest are older still
+          continue;
+        }
+        if (query.matches(v) && r.contains(d)) {
+          rows.add(v);
+          added++;
+        }
+      }
+      if (past || !p.hasMore || p.guids.isEmpty) {
+        _mi++;
+        _mPage = 0;
+      }
+      hasMore = !past && _mi < ms.length;
     }
-    return true;
+    return added;
   }
 
   /// Loads the next server page(s) until at least [minNew] matching rows
@@ -107,7 +209,18 @@ class VoucherPager extends ChangeNotifier {
     _notify();
     int added = 0;
     try {
-      while (hasMore && added < minNew) {
+      if (query.period == 'range') {
+        if (query.range == null) {
+          hasMore = false;
+        } else {
+          await _loadRange(minNew);
+        }
+        if (_disposed) {
+          loading = false;
+          return;
+        }
+      }
+      while (query.period != 'range' && hasMore && added < minNew) {
         final FetchedPage p = await _fetch(_page + 1, query, _today);
         if (_disposed) {
           loading = false;
@@ -172,9 +285,11 @@ class VoucherPager extends ChangeNotifier {
 /// [kindTotals] and [itemTrade], applied one voucher at a time.
 class HistoryTotals {
   final Set<String> _seen = <String>{};
-  final Map<String, num> kindAmt = <String, num>{};
+
+  /// Amounts in whole paise (exact over any number of vouchers).
+  final Map<String, int> kindAmt = <String, int>{};
   final Map<String, int> kindCnt = <String, int>{};
-  final Map<String, num> typeAmt = <String, num>{};
+  final Map<String, int> typeAmt = <String, int>{};
   final Map<String, int> typeCnt = <String, int>{};
   final Map<String, ItemAcc> _sales = <String, ItemAcc>{};
   final Map<String, ItemAcc> _purch = <String, ItemAcc>{};
@@ -194,10 +309,11 @@ class HistoryTotals {
     }
     scanned = _seen.length;
     for (final Voucher v in p.rows) {
-      kindAmt[v.kind] = (kindAmt[v.kind] ?? 0) + v.amt;
+      final int p = toPaise(v.amt);
+      kindAmt[v.kind] = (kindAmt[v.kind] ?? 0) + p;
       kindCnt[v.kind] = (kindCnt[v.kind] ?? 0) + 1;
       final String t = v.type ?? '';
-      typeAmt[t] = (typeAmt[t] ?? 0) + v.amt;
+      typeAmt[t] = (typeAmt[t] ?? 0) + p;
       typeCnt[t] = (typeCnt[t] ?? 0) + 1;
       if (v.kind != 'sales' && v.kind != 'purchase') continue;
       final Map<String, ItemAcc> by = v.kind == 'sales' ? _sales : _purch;
@@ -212,7 +328,7 @@ class HistoryTotals {
 
   /// All-history totals per app kind ([kindTotals] shape).
   MonthTotals get byKind => MonthTotals(
-    kindAmt.map((String k, num v) => MapEntry<String, num>(k, paise(v))),
+    kindAmt.map((String k, int p) => MapEntry<String, num>(k, p / 100)),
     Map<String, int>.of(kindCnt),
   );
 
@@ -221,14 +337,14 @@ class HistoryTotals {
     if (filter == 'all') {
       return (
         kindCnt.values.fold<int>(0, (int s, int n) => s + n),
-        paise(kindAmt.values.fold<num>(0, (num s, num n) => s + n)),
+        kindAmt.values.fold<int>(0, (int s, int n) => s + n) / 100,
       );
     }
     if (filter.startsWith('type:')) {
       final String t = filter.substring(5);
-      return (typeCnt[t] ?? 0, paise(typeAmt[t] ?? 0));
+      return (typeCnt[t] ?? 0, (typeAmt[t] ?? 0) / 100);
     }
-    return (kindCnt[filter] ?? 0, paise(kindAmt[filter] ?? 0));
+    return (kindCnt[filter] ?? 0, (kindAmt[filter] ?? 0) / 100);
   }
 
   ItemTrade itemTrade(String item, String kind) =>
@@ -341,11 +457,20 @@ class VoucherCounts {
   }
 }
 
-/// [v] falls in [period] (`all`, `month`, `week`, `today`) — the same date
-/// rules the voucher lists use.
-bool voucherInPeriod(Voucher v, String period, DateTime today) {
+/// [v] falls in [period] (`all`, `month`, `week`, `today`, `range` with
+/// [range]) — the same date rules the voucher lists use.
+bool voucherInPeriod(
+  Voucher v,
+  String period,
+  DateTime today, [
+  DateRange? range,
+]) {
   final DateTime? d = v.date;
+  final DateRange? r = range ?? DateRange.parse(period);
+  if (r != null || period == 'range') return r != null && r.contains(d);
   switch (period) {
+    case 'ym':
+      return true;
     case 'today':
       return d != null && dayDiff(d, today) == 0;
     case 'week':

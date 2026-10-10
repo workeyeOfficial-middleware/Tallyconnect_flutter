@@ -728,14 +728,14 @@ class ApiTallyRepository extends TallyRepository {
     _sRecv = _sRecvAll.where(ok).toList();
     _sPay = _sPayAll.where(ok).toList();
 
-    final Map<String, num> recvBy = <String, num>{}, payBy = <String, num>{};
     String key(Bill b) => b.ledgerGuid ?? b.party;
-    for (final Bill b in _recv) {
-      recvBy[key(b)] = (recvBy[key(b)] ?? 0) + b.amt;
-    }
-    for (final Bill b in _pay) {
-      payBy[key(b)] = (payBy[key(b)] ?? 0) + b.amt;
-    }
+    // Party balances: exact sums of their bills.
+    final Map<String, num> recvBy = sumByRupees(
+      _recv.map((Bill b) => (key(b), b.amt)),
+    );
+    final Map<String, num> payBy = sumByRupees(
+      _pay.map((Bill b) => (key(b), b.amt)),
+    );
     final List<Party> out = <Party>[];
     final Set<String> done = <String>{};
     for (final LedgerRow l in _ledgers) {
@@ -783,10 +783,14 @@ class ApiTallyRepository extends TallyRepository {
   /// the pager stops at the cut-off date.
   Future<FetchedPage> _fetchPage(int page, VoucherQuery q, DateTime t) async {
     try {
+      // `ym`: one month of a date range (read month by month).
+      final DateTime? m = q.period == 'month'
+          ? t
+          : (q.period == 'ym' ? q.ym : null);
       final String raw = await _api.vouchersPagedText(
         page: page,
-        year: q.period == 'month' ? t.year : null,
-        month: q.period == 'month' ? t.month : null,
+        year: m?.year,
+        month: m?.month,
         type: q.serverType,
       );
       final VoucherPageParsed p = await parseVoucherPage(raw);
@@ -901,15 +905,20 @@ class ApiTallyRepository extends TallyRepository {
     );
     // Voucher values are positive in the app (the server stores Dr / Cr
     // signs): each type's server total, as a size.
-    num typedSum = 0;
+    // Added up in whole paise, so the totals are exactly the server's sums.
+    int typedSum = 0, allP = 0;
+    final Map<String, int> kindP = <String, int>{};
     for (final MapEntry<String, num> e in exactSum.entries) {
-      typedSum += e.value;
-      final num v = e.value.abs();
-      c.typeAmt[e.key] = v;
-      c.totalAmt = c.totalAmt! + v;
+      final int sp = toPaise(e.value);
+      typedSum += sp;
+      final int v = sp.abs();
+      c.typeAmt[e.key] = v / 100;
+      allP += v;
       final String k = voucherKind(e.key);
-      c.kindAmt[k] = (c.kindAmt[k] ?? 0) + v;
+      kindP[k] = (kindP[k] ?? 0) + v;
     }
+    kindP.forEach((String k, int p) => c.kindAmt[k] = p / 100);
+    c.totalAmt = allP / 100;
     for (final String t in types) {
       c.names[t.toLowerCase()] ??= t;
     }
@@ -923,17 +932,16 @@ class ApiTallyRepository extends TallyRepository {
     if (total > typed) {
       c.kind['other'] = (c.kind['other'] ?? 0) + total - typed;
       c.type[''] = total - typed;
-      final num rest = (totalSum - typedSum).abs();
-      c.typeAmt[''] = rest;
-      c.kindAmt['other'] = (c.kindAmt['other'] ?? 0) + rest;
-      c.totalAmt = c.totalAmt! + rest;
+      final int rest = (toPaise(totalSum) - typedSum).abs();
+      c.typeAmt[''] = rest / 100;
+      c.kindAmt['other'] = ((kindP['other'] ?? 0) + rest) / 100;
+      c.totalAmt = (allP + rest) / 100;
     }
     // Cross-check: voucher values are sizes. If some types' server sums
     // have the opposite sign to the others, stored amounts carry mixed
     // signs and SUM() nets them — those totals would be wrong, so amounts
     // are shown as unavailable instead (counts stay exact).
-    final num sizes = paise(c.totalAmt!);
-    if ((sizes - paise(totalSum.abs())).abs() > .01) {
+    if ((toPaise(c.totalAmt!) - toPaise(totalSum).abs()).abs() > 1) {
       c.amountsUnsure = true;
     }
     return c;
@@ -943,8 +951,9 @@ class ApiTallyRepository extends TallyRepository {
   /// pager (same date and type rules, newest first, stops at the cut-off)
   /// is run to its end; only that period's pages are read.
   Future<VoucherCounts> _periodCounts(String period) async {
+    // A date range (`range:<from>..<to>`): its months only, exact days.
     final VoucherPager pg = VoucherPager(
-      VoucherQuery(period: period),
+      VoucherQuery.forPeriod(period),
       _fetchPage,
       today,
     );

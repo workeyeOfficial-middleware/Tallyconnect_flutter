@@ -65,7 +65,12 @@ class ReportData {
     this.period = 'September 2026',
     this.note = '',
     this.card = '',
+    this.partial = false,
   });
+
+  /// All time: only the first pages of a long list are on the phone; the
+  /// total and count are still the complete, exact figures.
+  final bool partial;
   final Report report;
   final List<ReportRow> rows;
   final String total, totalLabel;
@@ -89,17 +94,72 @@ class ReportData {
   bool get hasChart => points.isNotEmpty;
 }
 
-ReportData reportData(TallyRepository repo, String id) {
+/// Report periods: the current month, or the whole history (a From–To
+/// date range is the separate Date range option).
+const List<(String, String)> kReportPeriods = <(String, String)>[
+  ('month', 'This month'),
+  ('all', 'All time'),
+];
+
+/// The report [id] for [period] (`month` | `all` | `range` with [range]).
+/// Voucher reports list that period; Top customers ranks the pending bills
+/// dated in the range; other outstanding and stock reports are as of today.
+/// All time / range on the server: [loaded] are the voucher pages read so
+/// far ([loadedAll]: every one); totals and counts come from the period's
+/// exact figures until then.
+ReportData reportData(
+  TallyRepository repo,
+  String id, {
+  String period = 'month',
+  DateRange? range,
+  List<Voucher>? loaded,
+  bool loadedAll = false,
+}) {
   final List<Report> all = repo.reports();
   final Report r0 =
       all.where((Report r) => r.id == id).firstOrNull ?? all.first;
   final DateTime today = repo.today;
   final bool remote = repo.isRemote;
-  final List<Bill> recv = repo.receivables();
-  final List<Voucher> vs = repo.vouchers().where((Voucher v) {
-    final DateTime? d = v.date;
-    return d == null || (d.year == today.year && d.month == today.month);
-  }).toList();
+  final DateRange? rg = period == 'range' ? range : null;
+  final bool allTime = period == 'all';
+  // Rows reach beyond this month (full dates, monthly chart).
+  final bool wide = allTime || rg != null;
+  final List<Bill> recv = rg == null
+      ? repo.receivables()
+      : <Bill>[
+          for (final Bill b in repo.receivables())
+            if (rg.contains(b.billDate)) b,
+        ];
+  final List<Voucher> vs = rg != null
+      ? (remote
+            ? (loaded ?? const <Voucher>[])
+            : repo.vouchers().where((Voucher v) => rg.contains(v.date)).toList())
+      : !allTime
+      ? repo.vouchers().where((Voucher v) {
+          final DateTime? d = v.date;
+          return d == null || (d.year == today.year && d.month == today.month);
+        }).toList()
+      : (remote ? (loaded ?? const <Voucher>[]) : repo.vouchers());
+  // All time / range on the server, list not fully read: exact figures.
+  final bool partial = wide && remote && !loadedAll;
+  final VoucherCounts? vc = partial
+      ? repo.voucherCounts(rg?.period ?? 'all')
+      : null;
+  String amtOf(String filter) {
+    final num? a = vc?.amountFor(filter);
+    if (a != null) return inr(a);
+    return vc == null || (!vc.complete && vc.error == null) || vc.stale
+        ? '…'
+        : '—';
+  }
+
+  String countOf(String filter) {
+    final int? n = vc?.forFilter(filter);
+    return n == null ? '…' : grouped(n);
+  }
+
+  String when(Voucher v) =>
+      wide ? dmy(v.date) : '${v.day} ${kMonths[today.month - 1]}';
   final List<Item> items = repo.items();
   List<ReportRow> rows;
   String tot, tl = 'Total', note = '', card = '';
@@ -108,10 +168,11 @@ ReportData reportData(TallyRepository repo, String id) {
   switch (r0.id) {
     case 'top':
       // Customers ranked by what they still owe (pending receivable bills).
-      final Map<String, num> by = <String, num>{};
+      final Map<String, num> by = sumByRupees(
+        recv.map((Bill b) => (b.party, b.amt)),
+      );
       final Map<String, int> bills = <String, int>{};
       for (final Bill b in recv) {
-        by[b.party] = (by[b.party] ?? 0) + b.amt;
         bills[b.party] = (bills[b.party] ?? 0) + 1;
       }
       final List<MapEntry<String, num>> t5 =
@@ -142,9 +203,7 @@ ReportData reportData(TallyRepository repo, String id) {
             RowTarget.party(t5[i].key),
           ),
       ];
-      tot = inr(
-        t5.fold<num>(0, (num s, MapEntry<String, num> x) => s + x.value),
-      );
+      tot = inr(sumRupees(t5.map((MapEntry<String, num> x) => x.value)));
       tl = 'Top ${t5.length} owe you';
       card = t5.isEmpty ? 'No dues' : t5.first.key;
     case 'exp':
@@ -264,45 +323,63 @@ ReportData reportData(TallyRepository repo, String id) {
           ReportRow(
             '${v.day}',
             v.party,
-            '${v.type ?? kKinds[v.kind]!.t} · ${v.no}',
+            '${v.type ?? kKinds[v.kind]!.t} · ${v.no}${wide ? ' · ${dmy(v.date)}' : ''}',
             inr(v.amt),
             '',
             v.amt,
             RowTarget.voucher(v),
           ),
       ];
-      tot = inr(sumRupees(d.map((Voucher v) => v.amt)));
-      tl = '${d.length} entries · value';
-      card = '${d.length} entries';
-      // Day Book charts the value per day (oldest → newest).
-      final Map<int, num> byDay = <int, num>{};
-      for (final Voucher v in d) {
-        byDay[v.day] = (byDay[v.day] ?? 0) + v.amt;
+      final String n = partial ? countOf('all') : grouped(d.length);
+      tot = partial ? amtOf('all') : inr(sumRupees(d.map((Voucher v) => v.amt)));
+      tl = '$n entries · value';
+      card = '$n entries';
+      if (!partial) {
+        // Day Book charts the value per day (one month) or per month (All
+        // time, a range over several months), oldest → newest.
+        final bool monthly =
+            allTime || (rg != null && rg.monthsNewestFirst.length > 1);
+        final Map<int, num> by = sumByRupees(
+          d.map(
+            (Voucher v) => (
+              monthly && v.date != null
+                  ? v.date!.year * 100 + v.date!.month
+                  : v.day,
+              v.amt,
+            ),
+          ),
+        );
+        final String mon = kMonths[(rg?.from ?? today).month - 1];
+        pts = (by.keys.toList()..sort())
+            .map(
+              (int k) => ChartPoint(
+                monthly && k > 100
+                    ? '${kMonths[k % 100 - 1]} ${k ~/ 100}'
+                    : '$k $mon',
+                by[k]!,
+              ),
+            )
+            .toList();
+        lineFirst = true;
       }
-      final String mon = kMonths[today.month - 1];
-      pts = (byDay.keys.toList()..sort())
-          .map((int k) => ChartPoint('$k $mon', byDay[k]!))
-          .toList();
-      lineFirst = true;
     case 'sreg':
     case 'preg':
       final String kk = r0.id == 'sreg' ? 'sales' : 'purchase';
       final List<Voucher> l2 = vs.where((Voucher v) => v.kind == kk).toList();
-      final String mon = kMonths[today.month - 1];
       rows = <ReportRow>[
         for (final Voucher v in l2)
           ReportRow(
             '${v.day}',
             v.party,
-            '${v.no} · ${v.day} $mon',
+            '${v.no} · ${when(v)}',
             inr(v.amt),
             '',
             v.amt,
             RowTarget.voucher(v),
           ),
       ];
-      tot = inr(sumRupees(l2.map((Voucher v) => v.amt)));
-      tl = '${l2.length} bills';
+      tot = partial ? amtOf(kk) : inr(sumRupees(l2.map((Voucher v) => v.amt)));
+      tl = '${partial ? countOf(kk) : grouped(l2.length)} bills';
       card = tot;
     default:
       rows = <ReportRow>[
@@ -321,7 +398,11 @@ ReportData reportData(TallyRepository repo, String id) {
       tl = 'Stock value';
       card = tot;
   }
-  if (pts.isEmpty && r0.id != 'inC' && r0.id != 'inI') {
+  // A list that is only partly read never gets a chart (it would leave
+  // out the rest of the history).
+  final bool partRows =
+      partial && (r0.id == 'day' || r0.id == 'sreg' || r0.id == 'preg');
+  if (pts.isEmpty && r0.id != 'inC' && r0.id != 'inI' && !partRows) {
     pts = <ChartPoint>[
       for (final ReportRow r in rows)
         if (r.value != null) ChartPoint(r.t, r.value!),
@@ -334,8 +415,11 @@ ReportData reportData(TallyRepository repo, String id) {
     totalLabel: tl,
     points: pts,
     lineFirst: lineFirst,
-    period: monthYear(today),
+    period: wide
+        ? '${rg?.label ?? 'All time'}${partRows ? ' · latest ${grouped(rows.length)}' : ''}'
+        : monthYear(today),
     note: note,
     card: card,
+    partial: partRows,
   );
 }

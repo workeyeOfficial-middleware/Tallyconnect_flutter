@@ -56,6 +56,16 @@ num sumRupees(Iterable<num> vs) {
   return p / 100;
 }
 
+/// Exact sums of rupee amounts per key (e.g. per party), in key order of
+/// first appearance.
+Map<K, num> sumByRupees<K>(Iterable<(K, num)> rows) {
+  final Map<K, int> p = <K, int>{};
+  for (final (K k, num v) in rows) {
+    p[k] = (p[k] ?? 0) + toPaise(v);
+  }
+  return p.map((K k, int v) => MapEntry<K, num>(k, v / 100));
+}
+
 const List<String> kMonths = <String>[
   'Jan',
   'Feb',

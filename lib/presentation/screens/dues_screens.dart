@@ -27,9 +27,14 @@ class OutHubScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    final List<Bill> recv = c.repo.receivables(), payb = c.repo.payables();
-    final OutstandingSummary rs = c.repo.outstanding(true),
-        ps = c.repo.outstanding(false);
+    // Date range on: only bills dated in it (totals of exactly those).
+    final bool rng = c.outRange && c.range != null;
+    final List<Bill> recv = c.inOutRange(c.repo.receivables()),
+        payb = c.inOutRange(c.repo.payables());
+    final OutstandingSummary rs = rng
+            ? summarise(recv, c.today)
+            : c.repo.outstanding(true),
+        ps = rng ? summarise(payb, c.today) : c.repo.outstanding(false);
     final List<
       (String, String, String, String, num, String, String, num, String)
     >
@@ -71,6 +76,12 @@ class OutHubScreen extends ConsumerWidget {
             ),
             const SizedBox(width: 10),
             CBtn(
+              'calendar',
+              key: const ValueKey<String>('outRangeBtn'),
+              dot: rng,
+              onTap: () => c.openRange('out'),
+            ),
+            CBtn(
               'search',
               key: const ValueKey<String>('outSearchBtn'),
               onTap: c.toggleOutSearch,
@@ -86,6 +97,7 @@ class OutHubScreen extends ConsumerWidget {
         ),
         const H1('Outstanding', afterNav: true),
         const Sub('Receivable and payable bills still to be settled'),
+        if (rng) const RangeChip(target: 'out', on: true),
         if (c.outSearch) ...<Widget>[
           OutSearchBox(c: c),
           if (c.outQuery.trim().isNotEmpty) ...<Widget>[
@@ -93,7 +105,7 @@ class OutHubScreen extends ConsumerWidget {
               builder: (BuildContext context) {
                 final List<Bill> hits = c.memo<List<Bill>>(
                   'out-hub-search',
-                  '${c.repo.version}|${c.outQuery}',
+                  '${c.repo.version}|${c.outQuery}|$rng|${c.range?.key}',
                   () => <Bill>[
                     ...c.searchBills(recv).map((Bill b) => b.withKind('recv')),
                     ...c.searchBills(payb).map((Bill b) => b.withKind('pay')),
@@ -112,7 +124,7 @@ class OutHubScreen extends ConsumerWidget {
               margin: const EdgeInsets.only(bottom: 14),
               rows: c.memo<List<Bill>>(
                 'out-hub-search',
-                '${c.repo.version}|${c.outQuery}',
+                '${c.repo.version}|${c.outQuery}|$rng|${c.range?.key}',
                 () => <Bill>[
                   ...c.searchBills(recv).map((Bill b) => b.withKind('recv')),
                   ...c.searchBills(payb).map((Bill b) => b.withKind('pay')),
@@ -315,13 +327,19 @@ class OutListScreen extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
     final bool isR = c.outKind == 'recv';
-    final List<Bill> bl = isR ? c.repo.receivables() : c.repo.payables();
-    final OutstandingSummary sm = c.repo.outstanding(isR);
+    // Date range on: only bills dated in it (totals of exactly those).
+    final bool rng = c.outRange && c.range != null;
+    final List<Bill> bl = c.inOutRange(
+      isR ? c.repo.receivables() : c.repo.payables(),
+    );
+    final OutstandingSummary sm = rng
+        ? summarise(bl, c.today)
+        : c.repo.outstanding(isR);
     final num totO = sm.total, late30 = sm.late;
     int pct(num v) => totO <= 0 ? 0 : (v / totO * 100).round();
     final List<Bill> lateBills = bl.where((Bill b) => b.st == 'late').toList();
     // Paid / settled in Tally: own tab, never part of the totals above.
-    final List<Bill> settled = c.repo.settledBills(isR);
+    final List<Bill> settled = c.inOutRange(c.repo.settledBills(isR));
     final bool showSettled = c.outFilter == 'settled';
     final List<(String, String)> of = <(String, String)>[
       ('all', 'All'),
@@ -355,7 +373,7 @@ class OutListScreen extends ConsumerWidget {
     final ({List<Bill> rows, int hidden, VoidCallback unhide})
     v = c.memo<({List<Bill> rows, int hidden, VoidCallback unhide})>(
       'bills-view',
-      '${c.repo.version}|${bl.length}|${settled.length}|${c.outKind}|${c.outFilter}|${c.prefsVersion}|${c.outQuery}',
+      '${c.repo.version}|${bl.length}|${settled.length}|${c.outKind}|${c.outFilter}|${c.prefsVersion}|${c.outQuery}|$rng|${c.range?.key}',
       () => c.listView<Bill>(
         'bills',
         c
@@ -380,9 +398,22 @@ class OutListScreen extends ConsumerWidget {
               onTap: () => c.openOverlay('reminders'),
             ),
             CBtn(
+              'calendar',
+              key: const ValueKey<String>('outRangeBtn'),
+              dot: rng,
+              onTap: () => c.openRange('out'),
+            ),
+            CBtn(
               'file',
-              onTap: () =>
-                  c.previewDoc(docBills(isR, v.rows, c.companyName, c.today)),
+              onTap: () => c.previewDoc(
+                docBills(
+                  isR,
+                  v.rows,
+                  c.companyName,
+                  c.today,
+                  rng ? c.range!.label : null,
+                ),
+              ),
             ),
             CBtn('sync', onTap: c.refreshNow),
           ],
@@ -393,6 +424,7 @@ class OutListScreen extends ConsumerWidget {
               ? 'Money customers owe you (Outstanding)'
               : 'Money you owe suppliers (Outstanding)',
         ),
+        if (rng) const RangeChip(target: 'out', on: true),
         if (c.outSearch) ...<Widget>[
           OutSearchBox(c: c),
           if (c.outQuery.trim().isNotEmpty)
@@ -948,19 +980,18 @@ class _OutGraph extends ConsumerWidget {
         for (int i = 0; i < 4; i++) ChartPoint(labels[i], sm.ageing[i]),
       ];
     } else {
-      final Map<String, num> by = <String, num>{};
-      for (final Bill b in bills) {
-        by[b.party] = (by[b.party] ?? 0) + b.amt;
-      }
+      final Map<String, num> by = sumByRupees(
+        bills.map((Bill b) => (b.party, b.amt)),
+      );
       final List<MapEntry<String, num>> sorted = by.entries.toList()
         ..sort(
           (MapEntry<String, num> a, MapEntry<String, num> b) =>
               b.value.compareTo(a.value),
         );
       // Top 8 parties; the rest are summed (real total, not dropped).
-      final num rest = sorted
-          .skip(8)
-          .fold<num>(0, (num s, MapEntry<String, num> e) => s + e.value);
+      final num rest = sumRupees(
+        sorted.skip(8).map((MapEntry<String, num> e) => e.value),
+      );
       pts = <ChartPoint>[
         for (final MapEntry<String, num> e in sorted.take(8))
           ChartPoint(e.key, paise(e.value)),

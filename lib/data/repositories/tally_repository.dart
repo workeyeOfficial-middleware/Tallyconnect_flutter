@@ -18,7 +18,7 @@ import 'team_admin.dart';
 import 'voucher_pager.dart';
 
 export 'voucher_pager.dart'
-    show HistoryTotals, VoucherCounts, VoucherPager, VoucherQuery;
+    show DateRange, HistoryTotals, VoucherCounts, VoucherPager, VoucherQuery;
 
 /// Everything the entry flow collected, before it is mapped to a backend
 /// request body by the repository.

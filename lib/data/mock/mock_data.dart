@@ -889,12 +889,13 @@ const List<Report> kReports = <Report>[
     'calendar',
     'navy',
   ),
-  Report('sreg', 'sales', 'Sales list', 'All sales this month', 'bag', 'sales'),
+  // The period (This month / All time) is picked on the Reports screen.
+  Report('sreg', 'sales', 'Sales list', 'Every sale', 'bag', 'sales'),
   Report(
     'preg',
     'accounts',
     'Purchase list',
-    'All purchases this month',
+    'Every purchase',
     'cart',
     'purchase',
   ),

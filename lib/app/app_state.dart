@@ -326,7 +326,7 @@ class AppController extends ChangeNotifier {
     required this.store,
     TallyRepository? repo,
     String startScreen = 'login',
-    double glassLevel = 20,
+    double glassLevel = kDefaultGlass,
     DocExporter? exporter,
     ReminderAlarms? alarms,
     AppIconService? appIcon,
@@ -416,7 +416,9 @@ class AppController extends ChangeNotifier {
   PillTr pillT = PillTr.none;
   String? overlay;
   String company = 'gi';
-  double glass = 20;
+  /// Glass see-through, 20–100 %: higher = clearer glass.
+  double glass = kDefaultGlass;
+  static const double kDefaultGlass = 80;
 
   Map<String, List<List<String>>> pagesByWs = <String, List<List<String>>>{};
   int page = 0;
@@ -511,6 +513,31 @@ class AppController extends ChangeNotifier {
       partyTab = 'summary';
   String repCat = 'all', report = 'top';
 
+  /// Reports period: `month` (this month) or `all` (all time); kept on the
+  /// phone.
+  String repPeriod = 'month';
+
+  void setRepPeriod(String v) {
+    if (v != 'month' && v != 'all' && !(v == 'range' && range != null)) {
+      return;
+    }
+    _set(() => repPeriod = v);
+    store.save(LocalStorage.kRepPeriod, v);
+  }
+
+  /// [periodAmount] as text: `…` while the figure is being counted, `—`
+  /// only when it cannot be given (never an old or partial figure).
+  String periodAmountText(String period, String filter) {
+    final num? a = periodAmount(period, filter);
+    if (a != null) return inr(a);
+    if (period == 'month' || !repo.isRemote) return '—';
+    final VoucherCounts? vc = repo.voucherCounts(periodKey(period));
+    final bool cannot =
+        vc != null &&
+        (vc.error != null || (vc.complete && !vc.stale && vc.amountsUnsure));
+    return cannot ? '—' : '…';
+  }
+
   /// Items page: `items` (all items) or `groups` (stock groups); the open
   /// stock group (null: all groups).
   String itemsView = 'items';
@@ -533,6 +560,10 @@ class AppController extends ChangeNotifier {
   /// Fresh install: Match theme, opacity 100 %, shade +100 (darker).
   static const double kDefaultShade = 100;
   double bgOpacity = 100, bgShade = kDefaultShade;
+
+  /// Text colour: −100 lighter … 0 automatic … +100 darker (every text
+  /// shade, as far as it stays readable). Saved on this phone.
+  double textTone = 0;
 
   /// Outstanding reminders (this phone only — no backend endpoint).
   List<Reminder> reminders = <Reminder>[];
@@ -666,17 +697,37 @@ class AppController extends ChangeNotifier {
         ((store.load<Object?>(LocalStorage.kBgOpacity, 100) as num?) ?? 100)
             .toDouble()
             .clamp(0, 100);
-    final Object? gl = store.load<Object?>(LocalStorage.kGlass, null);
-    if (gl is num) glass = gl.toDouble().clamp(0, 100);
+    final Object? gl = store.load<Object?>(LocalStorage.kGlassClear, null);
+    final Object? old = store.load<Object?>(LocalStorage.kGlass, null);
+    if (gl is num) {
+      glass = gl.toDouble().clamp(20, 100);
+    } else if (old is num) {
+      // Saved before the scale was turned the right way round (a higher
+      // value used to mean a more opaque card): same look, new scale.
+      glass = (120 - old.toDouble()).clamp(20, 100);
+      store.save(LocalStorage.kGlassClear, glass);
+    }
     final Object? ht = store.load<Object?>(LocalStorage.kHiddenTabs, null);
     if (ht is List) hiddenTabs = ht.whereType<String>().toSet()..remove('home');
     navBarHidden = store.load<Object?>(LocalStorage.kNavHidden, false) == true;
     iconMatch = store.load<Object?>(LocalStorage.kIconMatch, true) != false;
+    final Object? dr = store.load<Object?>(LocalStorage.kDateRange, null);
+    if (dr is Map) {
+      final DateTime? a = DateTime.tryParse('${dr['from']}');
+      final DateTime? b = DateTime.tryParse('${dr['to']}');
+      if (a != null && b != null && !b.isBefore(a)) range = DateRange(a, b);
+    }
+    final Object? rp = store.load<Object?>(LocalStorage.kRepPeriod, 'month');
+    repPeriod = rp == 'all' || (rp == 'range' && range != null)
+        ? rp! as String
+        : 'month';
     bgShade =
         ((store.load<Object?>(LocalStorage.kBgShade, kDefaultShade) as num?) ??
                 kDefaultShade)
             .toDouble()
             .clamp(-100, 100);
+    final Object? tt = store.load<Object?>(LocalStorage.kTextTone, 0);
+    textTone = tt is num ? tt.toDouble().clamp(-100, 100) : 0;
     final Object? rm = store.load<Object?>(LocalStorage.kReminders, null);
     reminders = rm is List
         ? rm.map(Reminder.fromJson).whereType<Reminder>().toList()
@@ -724,6 +775,7 @@ class AppController extends ChangeNotifier {
     // Text adapts to how light / dark the background actually is.
     opacity: bgOpacity / 100,
     shade: bgShade / 100,
+    textTone: textTone / 100,
   );
 
   bool get showTabs => loggedIn && !navBarHidden && !kNoTab.contains(screen);
@@ -1207,8 +1259,123 @@ class AppController extends ChangeNotifier {
     'month' => monthYear(today),
     'week' => 'Last 7 days',
     'today' => 'Today',
+    'range' => range?.label ?? 'Date range',
     _ => 'All time',
   };
+
+  // ------------------------------------------------------- date range
+  /// The From–To range picked on any page (vouchers, outstanding, reports
+  /// share it). Saved on this phone.
+  DateRange? range;
+
+  /// Outstanding receivables / payables limited to [range] (bill date).
+  bool outRange = false;
+
+  /// Which page the range sheet applies to: `v` (vouchers), `rep`
+  /// (reports) or `out` (outstanding).
+  String rangeFor = 'v';
+
+  /// Counts / totals key of a period (`range` → its From–To key).
+  String periodKey(String period) =>
+      period == 'range' ? (range?.period ?? 'all') : period;
+
+  /// Opens the From–To sheet for [target], starting from the current range
+  /// (or this month).
+  void openRange(String target) {
+    final DateTime t = today;
+    rangeFor = target;
+    form['drFrom'] = ymd(range?.from ?? DateTime(t.year, t.month));
+    form['drTo'] = ymd(range?.to ?? t);
+    openOverlay('dateRange');
+  }
+
+  /// Quick choices in the range sheet.
+  static const List<(String, String)> kRangePresets = <(String, String)>[
+    ('month', 'This month'),
+    ('last', 'Last month'),
+    ('30', 'Last 30 days'),
+    ('fy', 'This financial year'),
+  ];
+
+  void rangePreset(String k) {
+    final DateTime t = today;
+    final (DateTime, DateTime) r = switch (k) {
+      'last' => (
+        DateTime(t.year, t.month - 1),
+        DateTime(t.year, t.month, 0),
+      ),
+      '30' => (t.subtract(const Duration(days: 29)), t),
+      // Indian financial year: 1 April – 31 March.
+      'fy' => (DateTime(t.month >= 4 ? t.year : t.year - 1, 4), t),
+      _ => (DateTime(t.year, t.month), t),
+    };
+    _set(() {
+      form['drFrom'] = ymd(r.$1);
+      form['drTo'] = ymd(r.$2);
+    });
+  }
+
+  /// Why the range in the sheet cannot be applied, or null.
+  String? get rangeError {
+    final DateTime? a = DateTime.tryParse(f('drFrom'));
+    final DateTime? b = DateTime.tryParse(f('drTo'));
+    if (a == null || b == null) return 'Pick both a From and a To date';
+    if (b.isBefore(a)) return 'The From date must be on or before the To date';
+    return null;
+  }
+
+  /// Applies the sheet's range to its page.
+  void applyRange() {
+    if (rangeError != null) return;
+    final DateRange r = DateRange(
+      DateTime.parse(f('drFrom')),
+      DateTime.parse(f('drTo')),
+    );
+    _set(() {
+      range = r;
+      switch (rangeFor) {
+        case 'rep':
+          repPeriod = 'range';
+        case 'out':
+          outRange = true;
+        default:
+          vPeriod = 'range';
+      }
+      overlay = null;
+    });
+    store.save(LocalStorage.kDateRange, <String, String>{
+      'from': ymd(r.from),
+      'to': ymd(r.to),
+    });
+    if (rangeFor == 'rep') store.save(LocalStorage.kRepPeriod, 'range');
+    if (repo.isRemote && rangeFor != 'out') {
+      unawaited(repo.loadVoucherCounts(r.period));
+    }
+  }
+
+  /// Removes the range from a page (back to its usual view).
+  void clearRange(String target) => _set(() {
+    switch (target) {
+      case 'rep':
+        repPeriod = 'month';
+        store.save(LocalStorage.kRepPeriod, 'month');
+      case 'out':
+        outRange = false;
+      default:
+        vPeriod = 'all';
+    }
+    if (overlay == 'dateRange') overlay = null;
+  });
+
+  /// [bills] limited to the range when the Outstanding filter is on.
+  List<Bill> inOutRange(List<Bill> bills) {
+    final DateRange? r = range;
+    if (!outRange || r == null) return bills;
+    return <Bill>[
+      for (final Bill b in bills)
+        if (r.contains(b.billDate)) b,
+    ];
+  }
 
   /// Total value of the vouchers of [filter] (`all`, a kind or `type:X`)
   /// in [period] — one source for every summary: This month from the
@@ -1272,7 +1439,8 @@ class AppController extends ChangeNotifier {
     };
   }
 
-  num? periodAmount(String period, String filter) {
+  num? periodAmount(String p, String filter) {
+    final String period = periodKey(p); // a date range: its From–To key
     if (period == 'month') {
       final MonthTotals mt = repo.monthTotals();
       final bool ready =
@@ -1283,7 +1451,7 @@ class AppController extends ChangeNotifier {
               (mt.amount.isNotEmpty || mt.count.isEmpty));
       if (!ready) return null;
       if (filter == 'all') {
-        return paise(mt.amount.values.fold<num>(0, (num s, num v) => s + v));
+        return sumRupees(mt.amount.values);
       }
       return mt.amount[filter] ?? 0;
     }
@@ -1645,15 +1813,11 @@ class AppController extends ChangeNotifier {
     return _pool!;
   }
 
-  num get drSum => paise(
-    jl
-        .where((JLine j) => j.side == 'Dr')
-        .fold<num>(0, (num s, JLine j) => s + j.amt),
+  num get drSum => sumRupees(
+    jl.where((JLine j) => j.side == 'Dr').map((JLine j) => j.amt),
   );
-  num get crSum => paise(
-    jl
-        .where((JLine j) => j.side == 'Cr')
-        .fold<num>(0, (num s, JLine j) => s + j.amt),
+  num get crSum => sumRupees(
+    jl.where((JLine j) => j.side == 'Cr').map((JLine j) => j.amt),
   );
 
   void setStep(int n) => _set(() => flowStep = n);
@@ -3953,13 +4117,13 @@ class AppController extends ChangeNotifier {
 
   void setGlass(double v) {
     _set(() => glass = v);
-    store.save(LocalStorage.kGlass, v);
+    store.save(LocalStorage.kGlassClear, v);
   }
 
   void resetLook() {
-    store.save(LocalStorage.kGlass, 20);
+    store.save(LocalStorage.kGlassClear, kDefaultGlass);
     _set(() {
-      glass = 20;
+      glass = kDefaultGlass;
       preset = 'aurora';
       accent = 'look';
       mode = 'look';
@@ -3972,6 +4136,7 @@ class AppController extends ChangeNotifier {
     store.save(LocalStorage.kWall, 'theme');
     setBgOpacity(100);
     setBgShade(kDefaultShade);
+    setTextTone(0);
     say('Look set back to default');
   }
 
@@ -4290,7 +4455,10 @@ class AppController extends ChangeNotifier {
             .firstOrNull;
         return pa == null ? null : docPartyRow(pa, co, repo.isRemote);
       case 'reports':
-        return docReport(reportData(repo, key), co);
+        return docReport(
+          reportData(repo, key, period: repPeriod, range: range),
+          co,
+        );
       case 'acts':
         final Act? a = acts.where((Act x) => x.id == key).firstOrNull;
         return a == null ? null : docAct(a, co);
@@ -4302,7 +4470,7 @@ class AppController extends ChangeNotifier {
   }
 
   ShareDoc docReportList(String co) => ShareDoc(
-    title: 'Reports · ${monthYear(today)}',
+    title: 'Reports · ${periodLabel(repPeriod)}',
     subtitle: 'Easy views of your Tally data',
     company: co,
     fileStem: 'Reports',
@@ -4310,7 +4478,11 @@ class AppController extends ChangeNotifier {
       const <String>['Report', 'About', 'Value'],
       <List<String>>[
         for (final Report r in repo.reports())
-          <String>[r.t, r.s, reportData(repo, r.id).total],
+          <String>[
+            r.t,
+            r.s,
+            reportData(repo, r.id, period: repPeriod, range: range).total,
+          ],
       ],
       right: const <int>{2},
     ),
@@ -4530,6 +4702,11 @@ class AppController extends ChangeNotifier {
   void setBgShade(double v) {
     _set(() => bgShade = v.clamp(-100, 100).roundToDouble());
     store.save(LocalStorage.kBgShade, bgShade);
+  }
+
+  void setTextTone(double v) {
+    _set(() => textTone = v.clamp(-100, 100).roundToDouble());
+    store.save(LocalStorage.kTextTone, textTone);
   }
 
   // ------------------------------------------------------------ reminders

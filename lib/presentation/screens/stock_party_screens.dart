@@ -86,12 +86,15 @@ class SearchRow extends StatelessWidget {
     required this.value,
     required this.onChanged,
     required this.placeholder,
-    required this.icon,
+    this.icon,
     this.onAction,
   });
   final String value;
   final ValueChanged<String> onChanged;
-  final String placeholder, icon;
+  final String placeholder;
+
+  /// Button beside the field (e.g. sort); none when null.
+  final String? icon;
   final VoidCallback? onAction;
 
   @override
@@ -107,14 +110,16 @@ class SearchRow extends StatelessWidget {
             icon: 'search',
           ),
         ),
-        const SizedBox(width: 10),
-        CBtn(
-          icon,
-          size: 56,
-          radius: 16,
-          color: Tc.of(context).navy,
-          onTap: onAction,
-        ),
+        if (icon != null) ...<Widget>[
+          const SizedBox(width: 10),
+          CBtn(
+            icon!,
+            size: 56,
+            radius: 16,
+            color: Tc.of(context).navy,
+            onTap: onAction,
+          ),
+        ],
       ],
     ),
   );
@@ -313,12 +318,6 @@ class ItemsScreen extends ConsumerWidget {
           value: c.f('itemQ'),
           onChanged: (String s) => c.setQuery('itemQ', s),
           placeholder: showGroups ? 'Search stock group' : 'Search item name',
-          icon: 'scan',
-          onAction: () => c.say(
-            c.repo.isRemote
-                ? 'Barcode search is not available yet on the server'
-                : 'Point the camera at a barcode',
-          ),
         ),
         if (showGroups)
           lazyList<(String, int, num, int)>(

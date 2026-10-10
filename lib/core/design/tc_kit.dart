@@ -174,7 +174,7 @@ class Glass extends StatelessWidget {
       ),
       child: CustomPaint(
         foregroundPainter: _GlassEdge(br, border),
-        painter: sheen ? _Sheen(br, sheenGradient) : null,
+        painter: sheen ? _Sheen(br, sheenGradient, p.sheen) : null,
         child: OnSurface(
           child: Padding(padding: padding ?? EdgeInsets.zero, child: child),
         ),
@@ -206,10 +206,14 @@ class GlassDecoration extends Decoration {
     required this.fill,
     this.radius = 22,
     this.shadows = const <BoxShadow>[],
+    this.sheen = 1,
   });
   final Color fill;
   final double radius;
   final List<BoxShadow> shadows;
+
+  /// [TcPalette.sheen].
+  final double sheen;
 
   @override
   BoxPainter createBoxPainter([VoidCallback? onChanged]) =>
@@ -220,10 +224,12 @@ class GlassDecoration extends Decoration {
       other is GlassDecoration &&
       other.fill == fill &&
       other.radius == radius &&
+      other.sheen == sheen &&
       listEquals(other.shadows, shadows);
 
   @override
-  int get hashCode => Object.hash(fill, radius, Object.hashAll(shadows));
+  int get hashCode =>
+      Object.hash(fill, radius, sheen, Object.hashAll(shadows));
 }
 
 class _GlassBoxPainter extends BoxPainter {
@@ -246,7 +252,7 @@ class _GlassBoxPainter extends BoxPainter {
     final double sh = math.min(size.height, kSheenMaxH);
     canvas.save();
     canvas.clipRRect(br.toRRect(Offset.zero & size));
-    _Sheen(br, null).paint(canvas, Size(size.width, sh));
+    _Sheen(br, null, d.sheen).paint(canvas, Size(size.width, sh));
     canvas.restore();
     _GlassEdge(br, null).paint(canvas, size);
     canvas.restore();
@@ -284,20 +290,23 @@ class OuterShadow extends CustomPainter {
 }
 
 class _Sheen extends CustomPainter {
-  _Sheen(this.br, this.g);
+  _Sheen(this.br, this.g, [this.k = 1]);
   final BorderRadius br;
   final Gradient? g;
 
-  static const LinearGradient _def = LinearGradient(
-    begin: Alignment(-.42, -.9),
-    end: Alignment(.42, .9),
+  /// Strength of the default sheen ([TcPalette.sheen]).
+  final double k;
+
+  static LinearGradient _def(double k) => LinearGradient(
+    begin: const Alignment(-.42, -.9),
+    end: const Alignment(.42, .9),
     colors: <Color>[
-      Color.fromRGBO(255, 255, 255, .65),
-      Color.fromRGBO(255, 255, 255, 0),
-      Color.fromRGBO(255, 255, 255, 0),
-      Color.fromRGBO(196, 208, 246, .22),
+      Color.fromRGBO(255, 255, 255, .65 * k),
+      const Color.fromRGBO(255, 255, 255, 0),
+      const Color.fromRGBO(255, 255, 255, 0),
+      Color.fromRGBO(196, 208, 246, .22 * k),
     ],
-    stops: <double>[0, .36, .72, 1],
+    stops: const <double>[0, .36, .72, 1],
   );
 
   @override
@@ -305,12 +314,13 @@ class _Sheen extends CustomPainter {
     final Rect r = Offset.zero & size;
     canvas.drawRRect(
       br.toRRect(r),
-      Paint()..shader = (g ?? _def).createShader(r),
+      Paint()..shader = (g ?? _def(k)).createShader(r),
     );
   }
 
   @override
-  bool shouldRepaint(_Sheen old) => old.br != br || old.g != g;
+  bool shouldRepaint(_Sheen old) =>
+      old.br != br || old.g != g || old.k != k;
 }
 
 class _GlassEdge extends CustomPainter {

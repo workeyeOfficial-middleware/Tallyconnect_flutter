@@ -364,10 +364,17 @@ ShareDoc docVouchers(
   ],
 );
 
-ShareDoc docBills(bool recv, List<Bill> rows, String company, DateTime today) =>
-    ShareDoc(
+ShareDoc docBills(
+  bool recv,
+  List<Bill> rows,
+  String company,
+  DateTime today, [
+  String? range,
+]) => ShareDoc(
       title: recv ? 'Receivable (Outstanding)' : 'Payable (Outstanding)',
-      subtitle: 'As on ${dmy(today)}',
+      subtitle: range == null
+          ? 'As on ${dmy(today)}'
+          : 'As on ${dmy(today)} · bills dated $range',
       company: company,
       fileStem: recv ? 'Receivable' : 'Payable',
       table: DocTable(

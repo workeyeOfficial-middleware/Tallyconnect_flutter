@@ -111,34 +111,31 @@ MonthTotals monthTotals(
   DateTime today, {
   bool complete = true,
 }) {
-  final Map<String, num> amt = <String, num>{};
-  final Map<String, int> cnt = <String, int>{};
-  for (final Voucher v in vouchers) {
-    final DateTime? d = v.date;
-    if (d == null || d.year != today.year || d.month != today.month) continue;
-    amt[v.kind] = (amt[v.kind] ?? 0) + v.amt;
-    cnt[v.kind] = (cnt[v.kind] ?? 0) + 1;
-  }
-  return MonthTotals(
-    complete
-        ? amt.map((String k, num v) => MapEntry<String, num>(k, paise(v)))
-        : const <String, num>{},
-    cnt,
+  return kindTotals(
+    <Voucher>[
+      for (final Voucher v in vouchers)
+        if (v.date != null &&
+            v.date!.year == today.year &&
+            v.date!.month == today.month)
+          v,
+    ],
+    complete: complete,
   );
 }
 
 /// Amount and count per kind over every voucher passed in (all history).
 /// [complete] false → amounts are withheld (shown as `—`), counts kept.
 MonthTotals kindTotals(List<Voucher> vouchers, {bool complete = true}) {
-  final Map<String, num> amt = <String, num>{};
+  // Added up in whole paise (exact for any number of vouchers).
+  final Map<String, int> amt = <String, int>{};
   final Map<String, int> cnt = <String, int>{};
   for (final Voucher v in vouchers) {
-    amt[v.kind] = (amt[v.kind] ?? 0) + v.amt;
+    amt[v.kind] = (amt[v.kind] ?? 0) + toPaise(v.amt);
     cnt[v.kind] = (cnt[v.kind] ?? 0) + 1;
   }
   return MonthTotals(
     complete
-        ? amt.map((String k, num v) => MapEntry<String, num>(k, paise(v)))
+        ? amt.map((String k, int p) => MapEntry<String, num>(k, p / 100))
         : const <String, num>{},
     cnt,
   );

@@ -17,6 +17,7 @@ import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
+import '../../data/repositories/voucher_pager.dart';
 import '../widgets/common.dart';
 import '../widgets/report_chart.dart';
 import '../widgets/tab_bar.dart' show PillFilter;
@@ -41,12 +42,26 @@ class ReportsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
+    final String period = c.repPeriod;
+    // All time / a date range: that period's exact totals (counted once,
+    // kept until the data changes).
+    final String pk = c.periodKey(period);
+    final bool counted = period == 'all' || period == 'range';
+    if (counted && c.repo.isRemote) {
+      Future<void>.microtask(() => c.repo.loadVoucherCounts(pk));
+    }
+    final VoucherCounts? vc = counted ? c.repo.voucherCounts(pk) : null;
     final Map<String, String> rv = c.memo<Map<String, String>>(
       'reports-cards',
-      '${c.repo.version}',
+      '${c.repo.version}|$pk|${identityHashCode(vc)}|${vc?.complete}|${vc?.stale}',
       () => <String, String>{
         for (final Report r in c.repo.reports())
-          r.id: reportData(c.repo, r.id).card,
+          r.id: reportData(
+            c.repo,
+            r.id,
+            period: period,
+            range: c.range,
+          ).card,
       },
     );
     final ({List<Report> rows, int hidden, VoidCallback unhide}) v = c
@@ -66,6 +81,12 @@ class ReportsScreen extends ConsumerWidget {
             const Spacer(),
             CBtn('search', onTap: () => c.openOverlay('search')),
             CBtn(
+              'calendar',
+              key: const ValueKey<String>('repRangeBtn'),
+              dot: period == 'range',
+              onTap: () => c.openRange('rep'),
+            ),
+            CBtn(
               'file',
               onTap: () => c.previewDoc(c.docReportList(c.companyName)),
             ),
@@ -74,13 +95,14 @@ class ReportsScreen extends ConsumerWidget {
         ),
         const H1('Reports', afterNav: true),
         Sub('Easy views of your Tally data · ${c.companyName}'),
+        ReportPeriodSeg(c: c),
         Glass(
           padding: const EdgeInsets.all(18),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              LtBadge(Text(monthYear(c.today), style: rtStyle(context))),
-              Grid(cols: 2, children: monthSums(context, c)),
+              LtBadge(Text(c.periodLabel(period), style: rtStyle(context))),
+              Grid(cols: 2, children: monthSums(context, c, period: period)),
             ],
           ),
         ),
@@ -148,17 +170,90 @@ class ReportsScreen extends ConsumerWidget {
   }
 }
 
+/// This month / All time switch for the reports, and the Date range
+/// option under it.
+class ReportPeriodSeg extends StatelessWidget {
+  const ReportPeriodSeg({super.key, required this.c});
+  final AppController c;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: <Widget>[
+      Seg(
+        margin: const EdgeInsets.only(bottom: 10),
+        items: <String>[for (final (String, String) e in kReportPeriods) e.$2],
+        selected: kReportPeriods.indexWhere(
+          ((String, String) e) => e.$1 == c.repPeriod,
+        ),
+        onPick: (int i) => c.setRepPeriod(kReportPeriods[i].$1),
+      ),
+      RangeChip(target: 'rep', on: c.repPeriod == 'range'),
+    ],
+  );
+}
+
+/// Reports listing vouchers (All time: read page by page from the server).
+const Map<String, String> kVoucherReports = <String, String>{
+  'day': 'all',
+  'sreg': 'sales',
+  'preg': 'purchase',
+};
+
 class ReportScreen extends ConsumerWidget {
   const ReportScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
+    final String? filter = kVoucherReports[c.report];
+    final bool range = c.repPeriod == 'range' && c.range != null;
+    if ((c.repPeriod == 'all' || range) && c.repo.isRemote && filter != null) {
+      // The whole history (or range) is never loaded at once: the latest
+      // pages, more near the end of the list; totals are the period's
+      // exact figures.
+      final VoucherPager pg = c.repo.voucherPager(
+        range
+            ? VoucherQuery(filter: filter, period: 'range', range: c.range)
+            : VoucherQuery(filter: filter),
+      );
+      return ListenableBuilder(
+        listenable: pg,
+        builder: (BuildContext context, _) => _Report(c: c, pager: pg),
+      );
+    }
+    return _Report(c: c, pager: null);
+  }
+}
+
+class _Report extends StatelessWidget {
+  const _Report({required this.c, required this.pager});
+  final AppController c;
+  final VoucherPager? pager;
+
+  @override
+  Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
+    final VoucherPager? pg = pager;
+    final String pk = c.periodKey(c.repPeriod);
+    if (pg != null) {
+      if (pg.rows.isEmpty && pg.hasMore && !pg.loading && pg.error == null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => pg.loadMore());
+      }
+      Future<void>.microtask(() => c.repo.loadVoucherCounts(pk));
+    }
+    final VoucherCounts? vc = pg == null ? null : c.repo.voucherCounts(pk);
     final ReportData d = c.memo<ReportData>(
       'report-data',
-      '${c.repo.version}|${c.report}',
-      () => reportData(c.repo, c.report),
+      '${c.repo.version}|${c.report}|$pk|${pg?.rows.length}|${pg?.complete}|${identityHashCode(vc)}|${vc?.complete}|${vc?.stale}',
+      () => reportData(
+        c.repo,
+        c.report,
+        period: c.repPeriod,
+        range: c.range,
+        loaded: pg?.rows,
+        loadedAll: pg?.complete ?? false,
+      ),
     );
     final Report r0 = d.report;
     final List<Color> av = <Color>[
@@ -169,7 +264,15 @@ class ReportScreen extends ConsumerWidget {
       p.acc,
     ];
     final ShareDoc doc = docReport(d, c.companyName);
+    final bool more =
+        pg != null && (pg.hasMore || pg.loading || pg.error != null);
     return Scr(
+      // Next page near the end; after a failed page only Retry reloads.
+      onNearEnd: pg == null
+          ? null
+          : () {
+              if (pg.error == null) pg.loadMore();
+            },
       children: <Widget>[
         BackNav(
           actions: <Widget>[
@@ -194,6 +297,19 @@ class ReportScreen extends ConsumerWidget {
             ),
           ],
         ),
+        // Period applies to the voucher reports; Top customers can be
+        // limited to bills dated in a range; other outstanding and stock
+        // reports are as of today.
+        if (kVoucherReports.containsKey(r0.id))
+          Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: ReportPeriodSeg(c: c),
+          )
+        else if (r0.id == 'top')
+          Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: RangeChip(target: 'rep', on: c.repPeriod == 'range'),
+          ),
         // NEW: chart first (same rows as the list below).
         if (d.hasChart)
           Padding(
@@ -238,8 +354,25 @@ class ReportScreen extends ConsumerWidget {
           ),
           empty: d.note.isNotEmpty
               ? d.note
-              : c.emptyText(DataSet.vouchers, 'Nothing to show.'),
+              : (pg != null && pg.loading
+                    ? 'Loading…'
+                    : c.emptyText(DataSet.vouchers, 'Nothing to show.')),
         ),
+        if (more && d.rows.isNotEmpty)
+          GlassRow(
+            margin: const EdgeInsets.only(top: 12),
+            onTap: pg.error != null ? pg.loadMore : null,
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  pg.error != null
+                      ? 'Could not load more · tap to retry'
+                      : 'Showing the latest ${grouped(d.rows.length)} · more load as you scroll',
+                  style: rsStyle(context),
+                ),
+              ),
+            ],
+          ),
       ],
     );
   }

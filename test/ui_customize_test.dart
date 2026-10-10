@@ -21,11 +21,11 @@ double _ratio(Color a, Color b) {
 
 void main() {
   group('appearance defaults', () {
-    test('fresh install: background 100 %, glass 20 %; both saved', () {
+    test('fresh install: background 100 %, glass 80 %; both saved', () {
       final LocalStorage s = LocalStorage.memory();
       final AppController c = AppController(store: s);
       expect(c.bgOpacity, 100);
-      expect(c.glass, 20);
+      expect(c.glass, 80);
       expect(c.wallK, 'theme'); // Match theme
       expect(c.bgShade, 100);
       c.setBgShade(-20);
@@ -35,7 +35,7 @@ void main() {
       expect(c2.glass, 50); // user's choice kept
       expect(c2.bgShade, -20);
       c2.resetLook();
-      expect(c2.glass, 20);
+      expect(c2.glass, 80);
       c2.dispose();
     });
   });

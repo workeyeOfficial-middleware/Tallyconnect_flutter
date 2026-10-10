@@ -27,6 +27,56 @@ double barBottom(BuildContext c) =>
 /// Where tab-screen content stops (`.scr.wt { bottom: 100px }`).
 double wtBottom(BuildContext c) => barBottom(c) + 80;
 
+// ------------------------------------------------------------- date range
+
+/// The "Date range" filter option, shown with a page's period choices (or
+/// on its own): off → "Date range"; on → the From–To dates (tap to change)
+/// and × to remove it.
+class RangeChip extends ConsumerWidget {
+  const RangeChip({
+    super.key,
+    required this.target,
+    required this.on,
+    this.margin = const EdgeInsets.only(bottom: 14),
+  });
+
+  /// Page the range applies to (see [AppController.openRange]).
+  final String target;
+  final bool on;
+  final EdgeInsets margin;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final bool active = on && c.range != null;
+    return Padding(
+      padding: margin,
+      child: Row(
+        children: <Widget>[
+          Flexible(
+            child: ChipBtn(
+              active ? c.range!.label : 'Date range',
+              key: ValueKey<String>('range-$target'),
+              icon: 'calendar',
+              on: active,
+              onTap: () => c.openRange(target),
+            ),
+          ),
+          if (active) ...<Widget>[
+            const SizedBox(width: 8),
+            CBtn(
+              'close',
+              key: ValueKey<String>('range-clear-$target'),
+              small: true,
+              onTap: () => c.clearRange(target),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 // ------------------------------------------------------------- animations
 
 const Cubic kEaseScr = Cubic(.2, .85, .2, 1);
@@ -510,6 +560,7 @@ class SliverGlassList extends ScrSliver {
           fill: p.glassFill,
           radius: radius,
           shadows: glassShadows(),
+          sheen: p.sheen,
         ),
         sliver: SliverPadding(
           padding: const EdgeInsets.symmetric(vertical: 2),
@@ -680,7 +731,7 @@ class Foot extends StatelessWidget {
                       (inSheet ? 0 : MediaQuery.paddingOf(context).bottom * .6),
           ),
           decoration: BoxDecoration(
-            color: p.gt.withValues(alpha: .5),
+            color: p.barFill,
             border: Border(top: BorderSide(color: whiteA(.85))),
           ),
           child: Row(

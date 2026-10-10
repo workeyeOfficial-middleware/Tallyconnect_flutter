@@ -83,8 +83,6 @@ const Map<String, String> tcIconPaths = <String, String>{
   'pie': 'M21 12A9 9 0 1 1 12 3v9zM15 3.5A9 9 0 0 1 20.5 9H15z',
   'userPlus':
       'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21a7 7 0 0 1 14 0M19 8v6M16 11h6',
-  'scan':
-      'M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10',
   'info': 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 11v6M12 7.5h.01',
   'logout': 'M9 21H5V3h4M16 17l5-5-5-5M21 12H9',
   'note': 'M5 3h14v18H5zM8 8h8M8 12h8M8 16h5',

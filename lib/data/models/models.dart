@@ -3,6 +3,8 @@
 // Money is `num` everywhere (rupees with paise) — never rounded for storage.
 library;
 
+import '../../core/utils/format.dart' show parseDmy;
+
 /// A navigation target: `'screen'` or `['screen', {params}]`.
 class NavTo {
   const NavTo(this.screen, [this.extra = const <String, Object?>{}]);
@@ -123,6 +125,9 @@ class Bill {
   final List<BillLine> lines;
 
   String get key => id ?? no;
+
+  /// The bill's date ([bill] is its `dd Mon yyyy` text); null when unknown.
+  DateTime? get billDate => parseDmy(bill);
 
   Bill withKind(String k) => Bill(
     party,

@@ -47,6 +47,7 @@ class OverlayLayer extends ConsumerWidget {
       'reminders' => const RemindersSheet(),
       'vTypes' => const VoucherTypesSheet(),
       'tabMenu' => const TabMenuSheet(),
+      'dateRange' => const DateRangeSheet(),
       'doc' => const DocViewer(),
       _ => const SizedBox.shrink(),
     };
@@ -1202,6 +1203,108 @@ class InviteSheet extends ConsumerWidget {
             icon: 'send',
             enabled: RegExp(r'.+@.+\..+').hasMatch(c.f('iEmail')),
             onTap: c.sendInvite,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Date range: From and To dates (both included), quick choices, Apply /
+/// Remove. Shared by vouchers, outstanding and reports.
+class DateRangeSheet extends ConsumerWidget {
+  const DateRangeSheet({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final String? err = c.rangeError;
+    final String target = c.rangeFor;
+    final bool on = c.range != null &&
+        switch (target) {
+          'rep' => c.repPeriod == 'range',
+          'out' => c.outRange,
+          _ => c.vPeriod == 'range',
+        };
+    return Sheet(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SheetHead(
+            'Date range',
+            sub: target == 'out'
+                ? 'Show bills dated from – to (both days included).'
+                : 'Show entries from – to (both days included).',
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              for (final (String, String) e in AppController.kRangePresets)
+                ChipBtn(
+                  e.$2,
+                  height: 36,
+                  fontSize: 13.5,
+                  onTap: () => c.rangePreset(e.$1),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Fld(
+                  label: 'From',
+                  child: DateInp(
+                    key: const ValueKey<String>('drFrom'),
+                    value: c.f('drFrom'),
+                    onChanged: (String v) => c.setF('drFrom', v),
+                    fontSize: 15,
+                    hPad: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Fld(
+                  label: 'To',
+                  child: DateInp(
+                    key: const ValueKey<String>('drTo'),
+                    value: c.f('drTo'),
+                    onChanged: (String v) => c.setF('drTo', v),
+                    fontSize: 15,
+                    hPad: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (err != null)
+            InfoBox(err, icon: 'info', margin: const EdgeInsets.only(top: 4)),
+          const SizedBox(height: 14),
+          Row(
+            children: <Widget>[
+              Expanded(
+                flex: 10,
+                child: on
+                    ? Btn(
+                        label: 'Remove',
+                        kind: BtnKind.g,
+                        onTap: () => c.clearRange(target),
+                      )
+                    : Btn(label: 'Cancel', kind: BtnKind.g, onTap: c.closeOv),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 17,
+                child: Btn(
+                  label: 'Apply',
+                  icon: 'check',
+                  enabled: err == null,
+                  onTap: c.applyRange,
+                ),
+              ),
+            ],
           ),
         ],
       ),

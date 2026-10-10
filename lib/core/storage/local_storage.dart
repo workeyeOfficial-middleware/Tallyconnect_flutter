@@ -54,6 +54,19 @@ class LocalStorage {
   static const String kNavHidden = 'tc-nav-hidden';
   static const String kGlass = 'tc-liquid-glass';
 
+  /// Glass see-through 20–100 % (higher = clearer). Replaces [kGlass],
+  /// whose scale ran the other way.
+  static const String kGlassClear = 'tc-glass-clear';
+
+  /// Text colour −100 (lighter) … 0 (automatic) … +100 (darker).
+  static const String kTextTone = 'tc-text-tone';
+
+  /// Date range picked for the filters: {from, to} (`yyyy-mm-dd`).
+  static const String kDateRange = 'tc-date-range';
+
+  /// Reports period: `month` | `all` | `range`.
+  static const String kRepPeriod = 'tc-report-period';
+
   /// Theme-matched app icon: switch on/off, launcher variant last applied,
   /// exact-colour shortcut pinned + its last colours.
   static const String kIconMatch = 'tc-icon-match';

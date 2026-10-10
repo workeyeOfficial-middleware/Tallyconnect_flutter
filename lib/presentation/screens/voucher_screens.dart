@@ -29,16 +29,16 @@ List<Widget> monthSums(
   String period = 'month',
 }) {
   final TcPalette p = Tc.of(context);
-  num? a(String k) => c.periodAmount(period, k);
-  final List<(String, num?, Color, String, String)> v =
-      <(String, num?, Color, String, String)>[
+  String a(String k) => c.periodAmountText(period, k);
+  final List<(String, String, Color, String, String)> v =
+      <(String, String, Color, String, String)>[
         ('Sales', a('sales'), mix(p.acc, .09), 'sales', ''),
         ('Purchase', a('purchase'), mix(p.navy2, .08), 'purchase', ''),
         ('Receipts', a('receipt'), mix(p.pos, .10), 'receipt', 'in'),
         ('Payments', a('payment'), mix(p.warn, .09), 'payment', 'out'),
       ];
   return <Widget>[
-    for (final (String, num?, Color, String, String) m in v)
+    for (final (String, String, Color, String, String) m in v)
       Tap(
         onTap: () => c.go('vList', <String, Object?>{
           'vFilter': m.$4,
@@ -53,7 +53,7 @@ List<Widget> monthSums(
             children: <Widget>[
               Text(m.$1, style: rsStyle(context)),
               AmtText(
-                m.$2 == null ? '—' : inr(m.$2),
+                m.$2,
                 align: Alignment.centerLeft,
                 style: amtStyle(context, size: 18, cls: m.$5),
               ),
@@ -74,10 +74,12 @@ class VHubScreen extends ConsumerWidget {
     // Tile counts: the complete matching data of the selected period
     // (All time = the whole history, counted by the server).
     final String period = c.vPeriod;
+    // Counts / totals key (a date range: its From–To).
+    final String pk = c.periodKey(period);
     if (c.repo.isRemote) {
-      Future<void>.microtask(() => c.repo.loadVoucherCounts(period));
+      Future<void>.microtask(() => c.repo.loadVoucherCounts(pk));
     }
-    final VoucherCounts? vc = c.repo.voucherCounts(period);
+    final VoucherCounts? vc = c.repo.voucherCounts(pk);
     // Other Tally voucher types present in the period get their own tile.
     final List<String> otherTypes = vc?.otherTypes ?? const <String>[];
     final List<(String, String, String, String)> tiles =
@@ -96,6 +98,7 @@ class VHubScreen extends ConsumerWidget {
       'month' => 'this month',
       'week' => 'in 7 days',
       'today' => 'today',
+      'range' => 'in range',
       _ => 'total',
     };
     String countText(String k) {
@@ -118,13 +121,17 @@ class VHubScreen extends ConsumerWidget {
         const Sub('Entries you have already saved'),
         // One period for the summary amounts and the tile counts below.
         Seg(
-          margin: const EdgeInsets.only(bottom: 14),
+          margin: const EdgeInsets.only(bottom: 10),
           items: periods.map(((String, String) e) => e.$2).toList(),
-          selected: periods
-              .indexWhere(((String, String) e) => e.$1 == period)
-              .clamp(0, periods.length - 1),
+          // None of these while a date range is on.
+          selected: period == 'range'
+              ? -1
+              : periods
+                    .indexWhere(((String, String) e) => e.$1 == period)
+                    .clamp(0, periods.length - 1),
           onPick: (int i) => c.update(() => c.vPeriod = periods[i].$1),
         ),
+        RangeChip(target: 'v', on: period == 'range'),
         Glass(
           padding: const EdgeInsets.all(18),
           child: Column(
@@ -145,7 +152,7 @@ class VHubScreen extends ConsumerWidget {
         if (vc?.error != null)
           GlassRow(
             margin: const EdgeInsets.only(bottom: 12),
-            onTap: () => c.repo.loadVoucherCounts(period),
+            onTap: () => c.repo.loadVoucherCounts(pk),
             children: <Widget>[
               Ico('sync', size: IcoSize.xs, color: p.neg, icon: IcSize.s),
               Expanded(child: RTx('Could not count vouchers', vc!.error!)),
@@ -256,6 +263,13 @@ Widget voucherRow(BuildContext context, AppController c, Voucher x) {
   );
 }
 
+/// The list's filter and period (a date range carries its From–To).
+VoucherQuery _query(AppController c) => VoucherQuery(
+  filter: c.vFilter,
+  period: c.vPeriod,
+  range: c.vPeriod == 'range' ? c.range : null,
+);
+
 /// Voucher list. "This month" shows the month's vouchers already on the
 /// phone (complete, exact totals); All time / Last 7 days / Today page
 /// through `/voucher-entry/paged` (100 per page, next page near the end).
@@ -267,9 +281,7 @@ class VListScreen extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final bool month = c.vPeriod == 'month' || !c.repo.isRemote;
     if (month) return _VList(c: c, pager: null);
-    final VoucherPager pager = c.repo.voucherPager(
-      VoucherQuery(filter: c.vFilter, period: c.vPeriod),
-    );
+    final VoucherPager pager = c.repo.voucherPager(_query(c));
     return ListenableBuilder(
       listenable: pager,
       builder: (BuildContext context, _) => _VList(c: c, pager: pager),
@@ -405,7 +417,8 @@ class _VList extends StatelessWidget {
     }
     final bool byType = c.vFilter.startsWith('type:');
     final String typeName = byType ? c.vFilter.substring(5) : '';
-    final VoucherQuery q = VoucherQuery(filter: c.vFilter, period: c.vPeriod);
+    final VoucherQuery q = _query(c);
+    final String pk = c.periodKey(c.vPeriod);
     // Rows: this month's set (filtered once per data change) or the pages.
     final List<Voucher> vrows = pg != null
         ? pg.rows
@@ -415,6 +428,7 @@ class _VList extends StatelessWidget {
             () => c.repo.vouchers().where((Voucher v) {
               if (!q.matches(v)) return false;
               final DateTime? d = v.date;
+              if (c.vPeriod == 'range') return q.range?.contains(d) ?? false;
               if (c.vPeriod == 'today') {
                 return d != null && dayDiff(d, today) == 0;
               }
@@ -434,11 +448,9 @@ class _VList extends StatelessWidget {
     // Exact counts of the complete matching data for this period (the
     // pages on screen are only what has been read so far).
     if (pg != null) {
-      Future<void>.microtask(() => c.repo.loadVoucherCounts(c.vPeriod));
+      Future<void>.microtask(() => c.repo.loadVoucherCounts(pk));
     }
-    final VoucherCounts? vc = pg == null
-        ? null
-        : c.repo.voucherCounts(c.vPeriod);
+    final VoucherCounts? vc = pg == null ? null : c.repo.voucherCounts(pk);
     final List<String> otherTypes = c.memo<List<String>>(
       'vlist-other',
       '${c.repo.version}|${pg?.rows.length}|${identityHashCode(vc)}',
@@ -472,12 +484,13 @@ class _VList extends StatelessWidget {
       ('week', 'Last 7 days'),
       ('today', 'Today'),
     ];
-    final String periodLabel =
-        periods
-            .where(((String, String) e) => e.$1 == c.vPeriod)
-            .firstOrNull
-            ?.$2 ??
-        'All time';
+    final String periodLabel = c.vPeriod == 'range'
+        ? c.periodLabel('range')
+        : periods
+                  .where(((String, String) e) => e.$1 == c.vPeriod)
+                  .firstOrNull
+                  ?.$2 ??
+              'All time';
     // Count / total: of the complete matching data for the period and
     // filter — the list's own rows once fully loaded, else the period's
     // exact totals (never the rows loaded so far).
@@ -531,7 +544,11 @@ class _VList extends StatelessWidget {
                   pg == null || pg.complete
                       ? periodLabel
                       : '$periodLabel · first ${vrows.length} loaded',
-                  c.vPeriod == 'all' ? 'All history' : monthYear(today),
+                  c.vPeriod == 'all'
+                      ? 'All history'
+                      : (c.vPeriod == 'range'
+                            ? periodLabel
+                            : monthYear(today)),
                 ),
               ),
             ),
@@ -548,12 +565,14 @@ class _VList extends StatelessWidget {
         VoucherTypeRow(c: c, otherTypes: otherTypes),
         Seg(
           hoverSelect: true,
+          margin: const EdgeInsets.only(bottom: 10),
           items: periods.map(((String, String) e) => e.$2).toList(),
           selected: periods.indexWhere(
             ((String, String) e) => e.$1 == c.vPeriod,
           ),
           onPick: (int i) => c.update(() => c.vPeriod = periods[i].$1),
         ),
+        RangeChip(target: 'v', on: c.vPeriod == 'range'),
         // Rows are built only while on screen.
         SliverGlassList(
           itemCount: v.rows.length + extra,
