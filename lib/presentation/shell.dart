@@ -24,6 +24,7 @@ import 'screens/stock_party_screens.dart';
 import 'screens/team_config_screens.dart';
 import 'screens/voucher_screens.dart';
 import 'widgets/common.dart' show EnterAnim;
+import 'widgets/demo_banner.dart';
 import 'widgets/tab_bar.dart';
 
 /// Screen key → widget (the prototype's 27 `is.*` screens).
@@ -122,15 +123,20 @@ class Shell extends ConsumerWidget {
               children: <Widget>[
                 TcWallpaper(opacity: c.bgOpacity / 100, shade: c.bgShade / 100),
                 Positioned.fill(
-                  child: KeyedSubtree(
-                    key: ValueKey<String>(c.screen),
-                    child: EnterAnim(
-                      back: c.dir == 'bk',
-                      child: screenFor(c.screen),
+                  // Demo data: every screen moves down below the banner.
+                  child: DemoInset(
+                    on: c.demo && c.loggedIn,
+                    child: KeyedSubtree(
+                      key: ValueKey<String>(c.screen),
+                      child: EnterAnim(
+                        back: c.dir == 'bk',
+                        child: screenFor(c.screen),
+                      ),
                     ),
                   ),
                 ),
                 if (c.showTabs) const TcTabBar(),
+                if (c.demo && c.loggedIn) const DemoBanner(),
                 const Positioned.fill(child: OverlayLayer()),
                 if (c.overlay == 'hiddenPanel')
                   const Positioned.fill(child: HiddenPanel()),

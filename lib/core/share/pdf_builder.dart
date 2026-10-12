@@ -62,6 +62,21 @@ Future<Uint8List> buildPdf(
     lineSpacing: 1.5,
   );
 
+  // Demo documents: a clear strip at the top of the page.
+  pw.Widget demoStrip() => pw.Container(
+    margin: const pw.EdgeInsets.only(bottom: 12),
+    padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: pw.BoxDecoration(
+      color: PdfColor.fromInt(0xFFFFF4D6),
+      border: pw.Border.all(color: PdfColor.fromInt(0xFFE0A100)),
+      borderRadius: pw.BorderRadius.circular(6),
+    ),
+    child: pw.Text(
+      ShareDoc.kDemoLabel,
+      style: st(10, f: fonts.bold, c: PdfColor.fromInt(0xFF7A5200)),
+    ),
+  );
+
   final InvoiceSpec? iv = d.invoice;
   if (iv != null) {
     doc.addPage(
@@ -94,6 +109,7 @@ Future<Uint8List> buildPdf(
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: <pw.Widget>[
+              if (d.demo) demoStrip(),
               lt(
                 pw.Column(
                   crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -336,7 +352,12 @@ Future<Uint8List> buildPdf(
       footer: (pw.Context c) => pw.Row(
         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
         children: <pw.Widget>[
-          pw.Text('Made with TallyConnect · $made', style: st(8.5, c: _mute)),
+          pw.Text(
+            d.demo
+                ? 'DEMO DATA · Made with TallyConnect · $made'
+                : 'Made with TallyConnect · $made',
+            style: st(8.5, c: _mute),
+          ),
           pw.Text(
             'Page ${c.pageNumber} of ${c.pagesCount}',
             style: st(8.5, c: _mute),
@@ -344,6 +365,7 @@ Future<Uint8List> buildPdf(
         ],
       ),
       build: (pw.Context c) => <pw.Widget>[
+        if (d.demo) demoStrip(),
         pw.Row(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: <pw.Widget>[

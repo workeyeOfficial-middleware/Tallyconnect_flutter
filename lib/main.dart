@@ -17,6 +17,7 @@ import 'core/design/tc_kit.dart';
 import 'core/notify/reminder_alarms.dart';
 import 'core/storage/local_storage.dart';
 import 'data/repositories/api_tally_repository.dart';
+import 'data/repositories/demo_repository.dart';
 import 'data/repositories/tally_repository.dart';
 import 'presentation/shell.dart';
 import 'presentation/splash.dart';
@@ -47,10 +48,12 @@ const SystemUiOverlayStyle kAppOverlay = SystemUiOverlayStyle(
 /// Opens storage, restores the saved session and builds the app's root.
 Future<Widget> _boot() async {
   final LocalStorage store = await LocalStorage.open();
-  // Real backend by default; `--dart-define=TC_MOCK=true` runs on sample data.
+  // Real backend by default (with labelled demo data for accounts that have
+  // no synced Tally data yet); `--dart-define=TC_MOCK=true` runs on sample
+  // data only.
   final TallyRepository repo = kUseMock
       ? MockTallyRepository()
-      : ApiTallyRepository();
+      : DemoAwareRepository(live: ApiTallyRepository());
   // A saved, unexpired login opens straight to Home and reloads the data.
   final bool restored = await repo.restoreSession();
   final AppController controller = AppController(

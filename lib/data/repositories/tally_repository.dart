@@ -10,6 +10,7 @@ library;
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/network/api_client.dart' show ApiErrorKind, ApiException;
 import '../../core/utils/format.dart';
 import '../accounting.dart';
 import '../mock/mock_data.dart';
@@ -221,6 +222,13 @@ abstract class TallyRepository extends ChangeNotifier {
 
   /// Sends a saved entry towards Tally (sample data only).
   Future<bool> pushEntry(Act entry, {Duration delay});
+
+  /// Sends feedback to TallyConnect (`POST /api/feedback`); returns its id.
+  /// Only the real backend can take it.
+  Future<int> sendFeedback(FeedbackDraft f) async => throw const ApiException(
+    ApiErrorKind.forbidden,
+    'Sign in to your TallyConnect account to send feedback.',
+  );
 }
 
 class MockTallyRepository extends TallyRepository {

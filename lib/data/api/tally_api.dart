@@ -48,6 +48,12 @@ class TallyApi {
   // ------------------------------------------------------- profile (§3)
   Future<Object?> me() => http.get('/users/me');
 
+  // ------------------------------------------------------------ feedback
+  /// POST /api/feedback `{type, message, rating?, app_version?, platform?}`
+  /// → 201 `{success, id}`; 429 when sent too often.
+  Future<Object?> sendFeedback(Json body) =>
+      http.post('/api/feedback', body: body);
+
   // ------------------------------------------------------- company (§4)
   Future<Object?> companiesSelected() => http.get('/company/selected');
 

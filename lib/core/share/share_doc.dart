@@ -140,6 +140,7 @@ class ShareDoc {
     this.totals = const <(String, String)>[],
     this.invoice,
     this.fileStem,
+    this.demo = false,
   });
 
   final String title, subtitle, company;
@@ -149,16 +150,45 @@ class ShareDoc {
   final InvoiceSpec? invoice;
   final String? fileStem;
 
+  /// Made from demo (sample) data: labelled on the page, in the file name
+  /// and in the shared text.
+  final bool demo;
+
+  /// The same document, labelled as demo data.
+  ShareDoc asDemo() => demo
+      ? this
+      : ShareDoc(
+          title: title,
+          company: company,
+          subtitle: subtitle,
+          facts: facts,
+          table: table,
+          totals: totals,
+          invoice: invoice,
+          fileStem: fileStem,
+          demo: true,
+        );
+
+  /// Label printed on demo documents.
+  static const String kDemoLabel = 'DEMO DATA — sample, not from Tally';
+
   String get fileName {
-    if (invoice != null) return invoice!.fileName;
-    final String stem = (fileStem ?? title)
-        .replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_')
-        .replaceAll(RegExp(r'^_+|_+$'), '');
-    return 'TallyConnect_$stem.pdf';
+    final String name;
+    if (invoice != null) {
+      name = invoice!.fileName;
+    } else {
+      final String stem = (fileStem ?? title)
+          .replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_')
+          .replaceAll(RegExp(r'^_+|_+$'), '');
+      name = 'TallyConnect_$stem.pdf';
+    }
+    return demo ? 'DEMO_$name' : name;
   }
 
   /// Plain-text version used as the share-sheet message.
-  String get text {
+  String get text => demo ? '$kDemoLabel\n\n${_text()}' : _text();
+
+  String _text() {
     final StringBuffer b = StringBuffer();
     final InvoiceSpec? iv = invoice;
     if (iv != null) {

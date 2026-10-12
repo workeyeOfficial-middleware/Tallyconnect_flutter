@@ -69,12 +69,16 @@ class OutHubScreen extends ConsumerWidget {
         NavRow(
           children: <Widget>[
             CBtn('menu', onTap: () => c.openOverlay('menu')),
-            const Spacer(),
-            Bdg(
-              c.repo.isRemote ? 'As on ${dmy(c.today)}' : 'Sample data',
-              kind: BadgeKind.acc,
+            // Shrinks with "…" on narrow phones (the buttons always fit).
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Bdg(
+                  c.repo.isRemote ? 'As on ${dmy(c.today)}' : 'Sample data',
+                  kind: BadgeKind.acc,
+                ),
+              ),
             ),
-            const SizedBox(width: 10),
             CBtn(
               'calendar',
               key: const ValueKey<String>('outRangeBtn'),

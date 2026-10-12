@@ -28,6 +28,7 @@ import '../data/api/adapters.dart' show kNotifTarget;
 import '../data/mock/mock_data.dart';
 import '../data/models/models.dart';
 import '../data/repositories/api_tally_repository.dart' show DataSet;
+import '../data/repositories/demo_repository.dart';
 import '../data/repositories/tally_repository.dart';
 import '../data/repositories/team_admin.dart';
 import '../core/share/doc_exporter.dart';
@@ -343,7 +344,9 @@ class AppController extends ChangeNotifier {
     glass = glassLevel;
     _load();
     pillPos = posOf(tab).toDouble();
-    if (this.repo.isRemote) {
+    // A demo-capable repository is always followed (it may show either
+    // data set).
+    if (this.repo.isRemote || this.repo is DemoAwareRepository) {
       // Real data: no sample values in the entry forms.
       form = _blankForm(this.repo.today);
       lines = <String, List<Line>>{'sales': <Line>[], 'purchase': <Line>[]};
@@ -355,6 +358,9 @@ class AppController extends ChangeNotifier {
       this.repo.addListener(_onRepo);
     }
     _startAlarms();
+    // Demo data for an account with nothing synced yet (from its saved
+    // data; decided again after every load).
+    _evalDemo(quiet: true);
   }
 
   /// Form defaults for real use: empty fields, today's dates.
@@ -644,7 +650,9 @@ class AppController extends ChangeNotifier {
     for (final Timer t in _qTimers.values) {
       t.cancel();
     }
-    if (repo.isRemote) repo.removeListener(_onRepo);
+    if (repo.isRemote || repo is DemoAwareRepository) {
+      repo.removeListener(_onRepo);
+    }
     super.dispose();
   }
 
@@ -711,6 +719,10 @@ class AppController extends ChangeNotifier {
     if (ht is List) hiddenTabs = ht.whereType<String>().toSet()..remove('home');
     navBarHidden = store.load<Object?>(LocalStorage.kNavHidden, false) == true;
     iconMatch = store.load<Object?>(LocalStorage.kIconMatch, true) != false;
+    final Object? dm = store.load<Object?>(LocalStorage.kDemoMode, 'auto');
+    demoMode = dm == 'on' || dm == 'off' ? dm! as String : 'auto';
+    final Object? sl = store.load<Object?>(LocalStorage.kDemoSeenLive, null);
+    if (sl is List) _seenLive.addAll(sl.whereType<String>());
     final Object? dr = store.load<Object?>(LocalStorage.kDateRange, null);
     if (dr is Map) {
       final DateTime? a = DateTime.tryParse('${dr['from']}');
@@ -1263,6 +1275,200 @@ class AppController extends ChangeNotifier {
     _ => 'All time',
   };
 
+  // --------------------------------------------------------- feedback
+  /// Feedback form (Home header) → `POST /api/feedback`.
+  static const List<(String, String)> kFeedbackTypes = <(String, String)>[
+    ('feedback', 'Feedback'),
+    ('bug', 'Report a bug'),
+    ('idea', 'Suggestion'),
+  ];
+  static const int kFeedbackMax = 1000;
+  String fbType = 'feedback';
+
+  /// 1–5 stars; 0 = not rated.
+  int fbRating = 0;
+  bool fbSending = false;
+
+  void openFeedback() {
+    fbType = 'feedback';
+    fbRating = 0;
+    fbSending = false;
+    form['fbMsg'] = '';
+    openOverlay('feedback');
+  }
+
+  void setFeedbackType(String t) => _set(() => fbType = t);
+  void setFeedbackRating(int r) =>
+      _set(() => fbRating = fbRating == r ? 0 : r.clamp(1, 5));
+
+  /// Why the feedback cannot be sent yet, or null.
+  String? get feedbackError {
+    final String m = f('fbMsg').trim();
+    if (m.isEmpty) return 'Write your message';
+    if (m.length > kFeedbackMax) {
+      return 'Keep it under $kFeedbackMax characters';
+    }
+    return null;
+  }
+
+  /// App version for feedback, from `--dart-define=TC_APP_VERSION=…` at
+  /// build time (empty when not given — never guessed).
+  static const String kAppVersion = String.fromEnvironment('TC_APP_VERSION');
+
+  /// Sends the form. On failure the form stays open with the text kept.
+  Future<void> submitFeedback() async {
+    if (fbSending || feedbackError != null) return;
+    _set(() => fbSending = true);
+    try {
+      await repo.sendFeedback(
+        FeedbackDraft(
+          type: fbType,
+          message: f('fbMsg').trim(),
+          rating: fbType == 'bug' || fbRating == 0 ? null : fbRating,
+          appVersion: kAppVersion,
+          platform: _platformText(),
+        ),
+      );
+      _set(() {
+        fbSending = false;
+        form['fbMsg'] = '';
+        if (overlay == 'feedback') overlay = null;
+      });
+      say('Thank you — your feedback was sent');
+    } on ApiException catch (e) {
+      _set(() => fbSending = false);
+      // 404 = this server has no feedback endpoint (not deployed there);
+      // Express's own "Cannot POST /api/feedback" page is not shown.
+      say(
+        e.kind == ApiErrorKind.notFound
+            ? 'Feedback is not available on the server yet. Your message is '
+                  'kept — try again later.'
+            : e.userMessage,
+      );
+    } catch (_) {
+      _set(() => fbSending = false);
+      say('Could not send. Your message is kept — try again.');
+    }
+  }
+
+  static String _platformText() {
+    try {
+      return '${Platform.operatingSystem} ${Platform.operatingSystemVersion}'
+          .trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  // -------------------------------------------------------- demo data
+  /// The read-only "Demo Company" is listed for every account beside its
+  /// real companies. `on`: the user picked Demo Company (or Settings → Demo
+  /// data); `auto` (default): real data, and Demo Company only while the
+  /// account has no company at all; `off`: real data even with no company.
+  String demoMode = 'auto';
+
+  DemoAwareRepository? get _demoRepo {
+    final TallyRepository r = repo;
+    return r is DemoAwareRepository ? r : null;
+  }
+
+  /// Demo data is on screen (never the real data at the same time).
+  bool get demo => _demoRepo?.demoOn ?? false;
+
+  /// Demo data can be used in this build (not the sample-only build).
+  bool get demoAvailable => _demoRepo != null;
+
+  /// Accounts (by email) that have had a real company on this phone: they
+  /// are never moved to Demo Company automatically again (an empty list
+  /// from a bad load must not look like a new account).
+  final Set<String> _seenLive = <String>{};
+
+  String get _who => (repo.user?.email ?? '').trim().toLowerCase();
+
+  /// The account has at least one real company — known only once the
+  /// company list has loaded (from the server or the saved copy). Decided
+  /// by the companies themselves, never by how much data they hold.
+  static bool liveHasCompany(TallyRepository live) =>
+      live.companies().isNotEmpty || (live.activeCompanyId ?? '').isNotEmpty;
+
+  /// Decides which data is shown: the user's pick, else real data whenever
+  /// the account has a real company. [quiet]: at start-up (no navigation or
+  /// message).
+  void _evalDemo({bool quiet = false}) {
+    final DemoAwareRepository? d = _demoRepo;
+    if (d == null) return;
+    if (!loggedIn) {
+      d.setDemo(false);
+      return;
+    }
+    final bool known = d.live.hasData(DataSet.companies);
+    final bool real = liveHasCompany(d.live);
+    if (real && _who.isNotEmpty && _seenLive.add(_who)) {
+      store.save(LocalStorage.kDemoSeenLive, _seenLive.toList());
+    }
+    final bool want = switch (demoMode) {
+      'on' => true,
+      'off' => false,
+      // No company at all (list loaded, none ever seen): Demo Company.
+      _ => known && !real && !_seenLive.contains(_who),
+    };
+    if (want == d.demoOn) return;
+    if (quiet) {
+      d.setDemo(want);
+      return;
+    }
+    final bool arrived = d.demoOn && !want && demoMode == 'auto';
+    _switchData(d, want);
+    if (arrived) say('Your Tally company is here — showing your data');
+  }
+
+  void _switchData(DemoAwareRepository d, bool on) {
+    d.setDemo(on);
+    // Nothing on screen may refer to the other data set.
+    _dueSig = '';
+    _stockSig = '';
+    if (loggedIn) selectTab(0);
+  }
+
+  /// Settings → Demo data, or the banner's "Use my data".
+  void setDemoMode(String m) {
+    if (m != 'auto' && m != 'on' && m != 'off') return;
+    demoMode = m;
+    store.save(LocalStorage.kDemoMode, m);
+    _evalDemo();
+    _set();
+  }
+
+  /// Banner: leave demo data and show the account's own (even if Tally has
+  /// not synced yet).
+  void useMyData() {
+    setDemoMode(liveHasCompany(_demoRepo?.live ?? repo) ? 'auto' : 'off');
+    say('Showing your data');
+  }
+
+  /// Company sheet / Companies screen with demo available: Demo Company or
+  /// a real company. Picking Demo Company never touches the server; a real
+  /// company follows the existing rules (only an admin switches the team's
+  /// active company).
+  Future<void> _pickCompanyDemoAware(DemoAwareRepository d, Company c) async {
+    if (c.id == kDemoCompanyId) {
+      _set(() => overlay = null);
+      if (!d.demoOn) setDemoMode('on');
+      say('Now showing $kDemoCompanyName · sample data');
+      return;
+    }
+    if (d.demoOn) {
+      // Back to real data first (the server's active company as it is).
+      setDemoMode('auto');
+      if (c.id == d.live.activeCompanyId) {
+        _set(() => overlay = null);
+        say('Now showing ${c.short}');
+        return;
+      }
+    }
+    await _pickCompanyRemote(c);
+  }
+
   // ------------------------------------------------------- date range
   /// The From–To range picked on any page (vouchers, outstanding, reports
   /// share it). Saved on this phone.
@@ -1537,8 +1743,12 @@ class AppController extends ChangeNotifier {
   void closeOv() => _set(() => overlay = null);
 
   // ---------------------------------------------------------- nav actions
+  /// The session is a real server account (also while Demo Company is the
+  /// data on screen — sign-in and sign-out always use the server).
+  bool get _realAccount => repo.isRemote || demoAvailable;
+
   void doLogin() {
-    if (repo.isRemote) {
+    if (_realAccount) {
       _loginRemote();
       return;
     }
@@ -1580,6 +1790,12 @@ class AppController extends ChangeNotifier {
       });
       say('Welcome back, ${u.username}');
       _askNotificationsOnce();
+      // A new sign-in opens on the account's real company (Demo Company
+      // stays one tap away in the company list).
+      if (demoMode == 'on') {
+        demoMode = 'auto';
+        store.save(LocalStorage.kDemoMode, demoMode);
+      }
       await repo.refreshAll();
       afterRefresh(quietOk: true);
       _openPendingTap();
@@ -1604,12 +1820,14 @@ class AppController extends ChangeNotifier {
       pillT = PillTr.none;
       dir = 'bk';
     });
+    // Signed out: no demo view stays behind for the next sign-in.
+    _demoRepo?.setDemo(false);
     repo.logout();
     say(msg);
   }
 
   void logout() {
-    if (repo.isRemote) {
+    if (_realAccount) {
       _endSession('You are logged out');
       return;
     }
@@ -1735,6 +1953,11 @@ class AppController extends ChangeNotifier {
   }
 
   void pickCompany(Company c) {
+    final DemoAwareRepository? d = _demoRepo;
+    if (d != null) {
+      _pickCompanyDemoAware(d, c);
+      return;
+    }
     if (repo.isRemote) {
       _pickCompanyRemote(c);
       return;
@@ -1863,6 +2086,7 @@ class AppController extends ChangeNotifier {
 
   /// Why the current entry cannot be saved to the server, or null.
   String? get flowBlocker {
+    if (demo) return kDemoWriteBlocked; // demo entries are never saved
     if (!repo.isRemote) return null;
     final EntryDraft d = draftOf();
     final String? b = repo.entryBlocker(d);
@@ -1895,6 +2119,11 @@ class AppController extends ChangeNotifier {
   }
 
   void saveFlow(bool draft) {
+    if (demo) {
+      // Demo data: nothing is saved, queued or sent to Tally.
+      say(kDemoWriteBlocked);
+      return;
+    }
     if (repo.isRemote && !draft) {
       _saveRemote();
       return;
@@ -4054,6 +4283,7 @@ class AppController extends ChangeNotifier {
   /// out of stock last time for this company). The first look only
   /// records the current state.
   void _checkStock() {
+    if (demo) return; // no stock alerts for sample items
     final List<Item> its = repo.items();
     final String co = repo.activeCompanyId ?? '';
     if (its.isEmpty || co.isEmpty) return;
@@ -4339,8 +4569,12 @@ class AppController extends ChangeNotifier {
   Future<Uint8List> pdfOf(ShareDoc d) => exporter.pdf(d, _accentArgb);
 
   /// Native share sheet with the PDF + a text summary.
-  Future<void> shareDoc(ShareDoc d) async {
+  /// Documents made from demo data are always labelled as demo.
+  ShareDoc _label(ShareDoc d) => demo ? d.asDemo() : d;
+
+  Future<void> shareDoc(ShareDoc doc) async {
     if (docBusy) return;
+    final ShareDoc d = _label(doc);
     docBusy = true;
     say('Share sheet opened');
     try {
@@ -4352,8 +4586,9 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> downloadDoc(ShareDoc d) async {
+  Future<void> downloadDoc(ShareDoc doc) async {
     if (docBusy) return;
+    final ShareDoc d = _label(doc);
     docBusy = true;
     try {
       await exporter.download(d.fileName, await pdfOf(d));
@@ -4366,7 +4601,8 @@ class AppController extends ChangeNotifier {
   }
 
   /// Opens the in-app PDF preview of a generated document.
-  void previewDoc(ShareDoc d) => _set(() {
+  void previewDoc(ShareDoc doc) => _set(() {
+    final ShareDoc d = _label(doc);
     docShown = d;
     _docBytes = pdfOf(d);
     overlay = 'doc';
@@ -4492,7 +4728,7 @@ class AppController extends ChangeNotifier {
   /// Refresh button: forced reload; the data on screen stays until the
   /// fresh data replaces it.
   void refreshNow() {
-    if (!repo.isRemote) {
+    if (!repo.isRemote && !demoAvailable) {
       say('Up to date · synced just now');
       return;
     }
@@ -4501,9 +4737,10 @@ class AppController extends ChangeNotifier {
   }
 
   /// Pull-to-refresh / Refresh: one shared forced reload (a reload already
-  /// running is joined, not repeated).
+  /// running is joined, not repeated). With Demo Company showing, the
+  /// account's real companies are still reloaded (never the demo data).
   Future<void> pullRefresh() async {
-    if (!repo.isRemote) return;
+    if (!repo.isRemote && !demoAvailable) return;
     await repo.refreshAll(force: true);
     afterRefresh();
   }
@@ -4512,6 +4749,8 @@ class AppController extends ChangeNotifier {
   /// "Up to date"; then any reminder due today.
   void afterRefresh({bool quietOk = false}) {
     if (_disposed || !loggedIn) return;
+    // Demo or real data: decided again with what was just loaded.
+    _evalDemo();
     final String? err = repo.lastError();
     if (err != null) {
       say('$err · showing the last saved data');
@@ -4536,6 +4775,7 @@ class AppController extends ChangeNotifier {
 
   /// Sync line for a company: `Synced 5 min ago` / `Syncing now`.
   String syncText(String companyId) {
+    if (companyId == kDemoCompanyId) return kDemoCompany.sub;
     final SyncInfo? s = repo.syncInfo(companyId);
     if (s == null) return 'Sync status not known';
     if (s.inProgress) return 'Syncing now';
@@ -4907,7 +5147,25 @@ class AppController extends ChangeNotifier {
   bool _liveBusy = false;
 
   Future<void> liveCheck() async {
-    if (_disposed || !loggedIn || !repo.isRemote || _liveBusy) return;
+    if (_disposed || !loggedIn || _liveBusy) return;
+    final DemoAwareRepository? d = _demoRepo;
+    if (d != null && d.demoOn) {
+      // Demo data on screen: only watch whether the account's own data has
+      // arrived (no company yet → reload the small company list).
+      _liveBusy = true;
+      try {
+        if (d.live.activeCompanyId == null || await d.live.checkNewSync()) {
+          await d.live.refreshAll(force: true);
+        }
+        _evalDemo();
+      } catch (_) {
+        // Next tick tries again.
+      } finally {
+        _liveBusy = false;
+      }
+      return;
+    }
+    if (!repo.isRemote) return;
     _liveBusy = true;
     try {
       if (await repo.checkNewSync()) {
@@ -5083,7 +5341,9 @@ class AppController extends ChangeNotifier {
   /// each pending bill of the active company (receivable and payable), and
   /// cancels the ones no longer needed. Runs when the bills change.
   void _armDueAlerts() {
-    final List<Bill> recv = repo.receivables(), pay = repo.payables();
+    // Demo data never sets phone alarms (real ones come back with live data).
+    final List<Bill> recv = demo ? const <Bill>[] : repo.receivables(),
+        pay = demo ? const <Bill>[] : repo.payables();
     final String sig =
         '$autoRemind|${identityHashCode(recv)}|${identityHashCode(pay)}|'
         '${recv.length}|${pay.length}|${ymd(today)}';

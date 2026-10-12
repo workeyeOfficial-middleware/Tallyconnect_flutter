@@ -1423,6 +1423,29 @@ class ApiTallyRepository extends TallyRepository {
   @override
   Future<bool> pushEntry(Act entry, {Duration delay = Duration.zero}) async =>
       false;
+
+  /// `POST /api/feedback`; the server takes the user, account and company
+  /// from the login. A rejected token ends the session as elsewhere.
+  @override
+  Future<int> sendFeedback(FeedbackDraft f) async {
+    if (_client.token == null) {
+      throw const ApiException(
+        ApiErrorKind.unauthorized,
+        'Your session has ended. Please log in again.',
+      );
+    }
+    try {
+      final Object? r = await _api.sendFeedback(f.toJson());
+      final Object? id = r is Map ? r['id'] : null;
+      return id is num ? id.toInt() : int.tryParse('$id') ?? 0;
+    } on ApiException catch (e) {
+      if (e.kind == ApiErrorKind.unauthorized) {
+        await _endSession();
+        _notify();
+      }
+      rethrow;
+    }
+  }
 }
 
 // ----------------------------------------------------- request bodies

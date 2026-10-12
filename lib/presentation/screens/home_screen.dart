@@ -98,12 +98,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 NavRow(
                   children: <Widget>[
                     CBtn('menu', onTap: () => c.openOverlay('menu')),
-                    const Expanded(child: Brand()),
+                    // Shrinks (never wraps) on narrow phones.
+                    const Expanded(
+                      child: FittedBox(fit: BoxFit.scaleDown, child: Brand()),
+                    ),
                     CBtn('search', onTap: () => c.openOverlay('search')),
                     CBtn(
                       'bell',
                       onTap: () => c.go('notifs'),
                       dot: c.unread > 0,
+                    ),
+                    CBtn(
+                      'chat',
+                      key: const ValueKey<String>('feedbackBtn'),
+                      onTap: c.openFeedback,
                     ),
                   ],
                 ),

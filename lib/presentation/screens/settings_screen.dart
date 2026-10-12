@@ -132,6 +132,31 @@ class _Profile extends ConsumerWidget {
               ),
           ],
         ),
+        // Manual demo mode (sample data; never the account's Tally data).
+        if (c.demoAvailable)
+          Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: GlassList(
+              children: <Widget>[
+                RowX(
+                  key: const ValueKey<String>('demoToggle'),
+                  minHeight: 60,
+                  onTap: () => c.demo ? c.useMyData() : c.setDemoMode('on'),
+                  children: <Widget>[
+                    Ico('grid', size: IcoSize.xs, color: p.navy, icon: IcSize.s),
+                    const Expanded(
+                      child: RTx(
+                        'Demo data',
+                        'Show Demo Company (sample data). Your companies stay '
+                            'in the list; nothing is saved or sent to Tally.',
+                      ),
+                    ),
+                    Sw(c.demo),
+                  ],
+                ),
+              ],
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.only(top: 18),
           child: Btn(

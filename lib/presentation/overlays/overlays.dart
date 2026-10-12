@@ -22,6 +22,7 @@ import '../screens/account_screens.dart' show CompanyRow;
 import '../screens/insight_screens.dart' show kTS;
 import '../screens/voucher_screens.dart' show kVF;
 import '../widgets/common.dart';
+import '../widgets/demo_banner.dart' show ConnectTallySheet;
 import 'doc_viewer.dart';
 
 /// Builds the active overlay (`state.overlay`).
@@ -48,6 +49,8 @@ class OverlayLayer extends ConsumerWidget {
       'vTypes' => const VoucherTypesSheet(),
       'tabMenu' => const TabMenuSheet(),
       'dateRange' => const DateRangeSheet(),
+      'feedback' => const FeedbackSheet(),
+      'connectTally' => const ConnectTallySheet(),
       'doc' => const DocViewer(),
       _ => const SizedBox.shrink(),
     };
@@ -1203,6 +1206,118 @@ class InviteSheet extends ConsumerWidget {
             icon: 'send',
             enabled: RegExp(r'.+@.+\..+').hasMatch(c.f('iEmail')),
             onTap: c.sendInvite,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Feedback form (Home header): type, star rating, message → sent with
+/// `POST /api/feedback`. The text is kept if sending fails.
+class FeedbackSheet extends ConsumerWidget {
+  const FeedbackSheet({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    const List<(String, String)> types = AppController.kFeedbackTypes;
+    final bool bug = c.fbType == 'bug';
+    final String msg = c.f('fbMsg');
+    return Sheet(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const SheetHead(
+            'Feedback',
+            sub: 'Tell us what works, what does not, or what you would like.',
+          ),
+          Seg(
+            fontSize: 13.5,
+            items: <String>[for (final (String, String) t in types) t.$2],
+            selected: types.indexWhere(
+              ((String, String) t) => t.$1 == c.fbType,
+            ),
+            onPick: (int i) => c.setFeedbackType(types[i].$1),
+          ),
+          if (!bug) ...<Widget>[
+            const Lab('How do you like TallyConnect?'),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                for (int i = 1; i <= 5; i++)
+                  Tap(
+                    key: ValueKey<String>('fbStar$i'),
+                    onTap: () => c.setFeedbackRating(i),
+                    radius: 22,
+                    child: Padding(
+                      padding: const EdgeInsets.all(6),
+                      child: Ic(
+                        'star',
+                        size: IcSize.l,
+                        color: i <= c.fbRating ? p.warn : p.ink3,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 14),
+              child: Text(
+                c.fbRating == 0
+                    ? 'Tap a star to rate'
+                    : const <String>[
+                        'Poor',
+                        'Fair',
+                        'Good',
+                        'Very good',
+                        'Excellent',
+                      ][c.fbRating - 1],
+                textAlign: TextAlign.center,
+                style: rsStyle(context),
+              ),
+            ),
+          ],
+          Fld(
+            label: bug ? 'What went wrong?' : 'Your message',
+            req: true,
+            child: Inp(
+              value: msg,
+              onChanged: (String v) => c.setF('fbMsg', v),
+              placeholder: bug
+                  ? 'What you did, what you expected and what happened'
+                  : 'Write your feedback',
+              textarea: true,
+              maxLength: AppController.kFeedbackMax,
+              capitalization: TextCapitalization.sentences,
+            ),
+          ),
+          const InfoBox(
+            'Sent to the TallyConnect team with your account email, so we '
+            'can reply. Please don’t include passwords.',
+            icon: 'info',
+            margin: EdgeInsets.only(bottom: 14),
+          ),
+          Row(
+            children: <Widget>[
+              Expanded(
+                flex: 10,
+                child: Btn(label: 'Close', kind: BtnKind.g, onTap: c.closeOv),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 17,
+                child: Btn(
+                  key: const ValueKey<String>('fbSend'),
+                  label: c.fbSending ? 'Sending…' : 'Send',
+                  icon: 'send',
+                  enabled: c.feedbackError == null && !c.fbSending,
+                  onTap: c.submitFeedback,
+                ),
+              ),
+            ],
           ),
         ],
       ),

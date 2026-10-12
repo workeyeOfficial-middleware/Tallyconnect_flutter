@@ -78,6 +78,16 @@ class FakeBackend {
   /// Extra mobile alerts (newest arrive after start).
   List<Map<String, Object?>> moreNotifs = <Map<String, Object?>>[];
 
+  /// A brand-new account: no companies, nothing synced yet.
+  bool newAccount = false;
+
+  /// Bodies sent to POST /api/feedback; [feedbackLimited] answers 429.
+  final List<Map<String, Object?>> feedback = <Map<String, Object?>>[];
+  bool feedbackLimited = false;
+
+  /// A server deployed without the feedback route (Express's own 404).
+  bool feedbackMissing = false;
+
   /// Users removed with DELETE /users/:id.
   final Set<String> deletedUsers = <String>{};
 
@@ -101,6 +111,41 @@ class FakeBackend {
       return http.Response('{"message":"Invalid token"}', 401);
     }
     Object? body;
+    if (newAccount) {
+      switch (p) {
+        case '/company/selected' || '/company':
+          return http.Response('{"success":true,"data":[]}', 200);
+        case '/company/active':
+          return http.Response('{"success":true,"company_guid":null}', 200);
+        case '/agent-status/sync-status':
+          return http.Response(
+            '{"success":true,"last_sync_at":null,"sync_in_progress":false}',
+            200,
+          );
+      }
+    }
+    if (p == '/api/feedback' && r.method == 'POST') {
+      if (feedbackMissing) {
+        return http.Response(
+          '<!DOCTYPE html><html><body><pre>Cannot POST /api/feedback</pre>'
+          '</body></html>',
+          404,
+          headers: <String, String>{'content-type': 'text/html'},
+        );
+      }
+      if (feedbackLimited) {
+        return http.Response(
+          '{"success":false,"message":"You have sent a lot of feedback '
+          'recently. Please try again later."}',
+          429,
+        );
+      }
+      feedback.add(jsonDecode(r.body) as Map<String, Object?>);
+      return http.Response(
+        jsonEncode(<String, Object?>{'success': true, 'id': feedback.length}),
+        201,
+      );
+    }
     switch (p) {
       case '/auth/login':
         final Map<String, Object?> b =

@@ -613,6 +613,33 @@ class PartyDetail {
 }
 
 /// Result of sending an entry to the server queue.
+/// Feedback / bug report / suggestion for `POST /api/feedback`.
+class FeedbackDraft {
+  const FeedbackDraft({
+    required this.type,
+    required this.message,
+    this.rating,
+    this.appVersion,
+    this.platform,
+  });
+
+  /// `feedback` | `bug` | `idea`.
+  final String type;
+  final String message;
+
+  /// 1–5, or null when not rated (bug reports are never rated).
+  final int? rating;
+  final String? appVersion, platform;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'type': type,
+    'message': message,
+    if (rating != null) 'rating': rating,
+    if (appVersion != null && appVersion!.isNotEmpty) 'app_version': appVersion,
+    if (platform != null && platform!.isNotEmpty) 'platform': platform,
+  };
+}
+
 class SubmitResult {
   const SubmitResult({
     required this.ok,

@@ -61,6 +61,11 @@ class LocalStorage {
   /// Text colour −100 (lighter) … 0 (automatic) … +100 (darker).
   static const String kTextTone = 'tc-text-tone';
 
+  /// Demo data: `auto` | `on` | `off`; accounts (emails) whose real Tally
+  /// data has been seen on this phone (no automatic demo data for them).
+  static const String kDemoMode = 'tc-demo-mode';
+  static const String kDemoSeenLive = 'tc-demo-seen-live';
+
   /// Date range picked for the filters: {from, to} (`yyyy-mm-dd`).
   static const String kDateRange = 'tc-date-range';
 
