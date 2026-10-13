@@ -1436,14 +1436,196 @@ class ApiTallyRepository extends TallyRepository {
     }
     try {
       final Object? r = await _api.sendFeedback(f.toJson());
-      final Object? id = r is Map ? r['id'] : null;
-      return id is num ? id.toInt() : int.tryParse('$id') ?? 0;
+      final Object? rawId = r is Map ? r['id'] : null;
+      final int id = rawId is num ? rawId.toInt() : int.tryParse('$rawId') ?? 0;
+      // Sent only when the server says the email went out. An older server
+      // answers before trying the email (no `email_status`): saved, but not
+      // confirmed — never reported as sent.
+      final Object? emailStatus = r is Map ? r['email_status'] : null;
+      if (emailStatus != 'sent') {
+        throw ApiException(
+          ApiErrorKind.server,
+          'Your feedback was saved${id > 0 ? ' (#$id)' : ''}, but the server '
+          'did not confirm that the email to the TallyConnect team was sent.',
+          status: 201,
+          body: <String, Object?>{
+            'stored': true,
+            'id': id,
+            'email_status': emailStatus ?? 'unknown',
+          },
+        );
+      }
+      return id;
     } on ApiException catch (e) {
       if (e.kind == ApiErrorKind.unauthorized) {
         await _endSession();
         _notify();
       }
       rethrow;
+    }
+  }
+
+  // ------------------------------------------- outstanding email reminders
+
+  /// A reminder call with the session rules of the other calls: no token →
+  /// signed out; a rejected token ends the session.
+  Future<T> _rem<T>(Future<T> Function() call) async {
+    if (_client.token == null) {
+      throw const ApiException(
+        ApiErrorKind.unauthorized,
+        'Your session has ended. Please log in again.',
+      );
+    }
+    try {
+      return await call();
+    } on ApiException catch (e) {
+      if (e.kind == ApiErrorKind.unauthorized) {
+        await _endSession();
+        _notify();
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> verifyAssistantKey(String geminiKey) =>
+      _rem(() => _api.verifyAssistant(geminiKey));
+
+  @override
+  Future<AssistantReply> askAssistant(
+    String geminiKey,
+    String question,
+    List<AiTurn> history,
+  ) => _rem(
+    () async => AssistantReply.fromJson(
+      await _api.askAssistant(geminiKey, <String, Object?>{
+        'question': question,
+        'history': <Map<String, Object?>>[
+          for (final AiTurn t in history)
+            if (!t.error) t.toJson(),
+        ],
+      }),
+    ),
+  );
+
+  @override
+  Future<ReminderTemplates> reminderTemplates() =>
+      _rem(() async => ReminderTemplates.fromJson(await _api.reminderTemplates()));
+
+  @override
+  Future<ReminderTemplate> saveReminderTemplate(ReminderTemplate t) =>
+      _rem(() async {
+        final Object? r = t.id == null
+            ? await _api.createReminderTemplate(t.toJson())
+            : await _api.updateReminderTemplate(t.id!, t.toJson());
+        final Object? d = r is Map ? r['data'] : null;
+        return d is Map ? ReminderTemplate.fromJson(d) : t;
+      });
+
+  @override
+  Future<void> deleteReminderTemplate(int id) =>
+      _rem(() => _api.deleteReminderTemplate(id));
+
+  @override
+  Future<ReminderPreview> previewReminder({
+    required String ledgerGuid,
+    required List<String> bills,
+    int? templateId,
+  }) => _rem(
+    () async => ReminderPreview.fromJson(
+      await _api.previewReminder(<String, Object?>{
+        'ledger_guid': ledgerGuid,
+        'bill_names': bills,
+        'template_id': ?templateId,
+      }),
+    ),
+  );
+
+  @override
+  Future<ReminderOutcome> sendReminder({
+    required String ledgerGuid,
+    required List<String> bills,
+    required num expectedTotal,
+    required String key,
+    int? templateId,
+  }) => _outcome(
+    () => _api.sendReminder(<String, Object?>{
+      'ledger_guid': ledgerGuid,
+      'bill_names': bills,
+      'expected_total': expectedTotal,
+      'idempotency_key': key,
+      'template_id': ?templateId,
+    }),
+  );
+
+  @override
+  Future<List<ReminderLog>> reminderHistory(String ledgerGuid) => _rem(() async {
+    final Object? r = await _api.reminderHistory(ledgerGuid);
+    final Object? d = r is Map ? r['data'] : null;
+    return <ReminderLog>[
+      if (d is List)
+        for (final Object? x in d)
+          if (x is Map) ReminderLog.fromJson(x),
+    ];
+  });
+
+  @override
+  Future<ReminderOutcome> retryReminder(int id) =>
+      _outcome(() => _api.retryReminder(id));
+
+  /// The send / retry result exactly as the server reported it. "Accepted"
+  /// is Microsoft 365 accepting the email for delivery — never shown as
+  /// "delivered".
+  Future<ReminderOutcome> _outcome(Future<Object?> Function() call) async {
+    try {
+      final Object? r = await _rem(call);
+      final Map<Object?, Object?> m = r is Map ? r : const <Object?, Object?>{};
+      final Object? d = m['data'];
+      final ReminderLog? log = d is Map ? ReminderLog.fromJson(d) : null;
+      final bool ok = log?.accepted ?? false;
+      final String to = log == null || log.recipients.isEmpty
+          ? ''
+          : ' to ${log.recipients.join(', ')}';
+      final String msg = '${m['message'] ?? ''}'.trim();
+      return ReminderOutcome(
+        ok: ok,
+        log: log,
+        message: m['replay'] == true
+            ? (ok
+                  ? 'Already sent: accepted by Microsoft 365 for delivery$to.'
+                  : 'This reminder was already tried and failed: '
+                        '${log?.error ?? 'not sent'}.')
+            : msg.isNotEmpty
+            ? msg
+            : (ok
+                  ? 'Accepted by Microsoft 365 for delivery$to. Delivery to '
+                        'the inbox is not confirmed.'
+                  : 'The email was not sent.'),
+      );
+    } on ApiException catch (e) {
+      if (e.kind == ApiErrorKind.timeout) {
+        return const ReminderOutcome(
+          ok: false,
+          unknown: true,
+          message:
+              'No answer from the server, so the reminder may or may not have '
+              'been sent. Check the party’s reminder history before trying '
+              'again.',
+        );
+      }
+      final Object? b = e.body;
+      final Object? d = b is Map ? b['data'] : null;
+      final String code = b is Map ? '${b['code'] ?? ''}' : '';
+      return ReminderOutcome(
+        ok: false,
+        code: code.isEmpty ? null : code,
+        log: d is Map && d['id'] != null ? ReminderLog.fromJson(d) : null,
+        message: e.kind == ApiErrorKind.network
+            ? 'No internet connection. The reminder was not sent.'
+            : e.status == 404 && code.isEmpty && e.body is! Map
+            ? 'Email reminders are not available on the server yet.'
+            : e.userMessage,
+      );
     }
   }
 }

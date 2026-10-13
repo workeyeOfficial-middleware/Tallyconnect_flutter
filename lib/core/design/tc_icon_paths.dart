@@ -84,6 +84,9 @@ const Map<String, String> tcIconPaths = <String, String>{
   'userPlus':
       'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21a7 7 0 0 1 14 0M19 8v6M16 11h6',
   'info': 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 11v6M12 7.5h.01',
+  'mic':
+      'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3M8.5 21h7',
+  'micStop': 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9 9h6v6H9z',
   'logout': 'M9 21H5V3h4M16 17l5-5-5-5M21 12H9',
   'note': 'M5 3h14v18H5zM8 8h8M8 12h8M8 16h5',
   'laptop': 'M5 5h14v10H5zM3 19h18',
@@ -93,6 +96,7 @@ const Map<String, String> tcIconPaths = <String, String>{
   'clock': 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 7v5l3 2',
   'shield': 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
   'xCircle': 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9 9l6 6M15 9l-6 6',
+  'alert': 'M12 3.5 2.5 20h19zM12 10v4.5M12 17.2h.01',
   'pin': 'M9 3h6l-1 6 4 3v2h-5v7l-1 1-1-1v-7H5v-2l4-3z',
   'move':
       'M12 3v18M3 12h18M12 3 9.5 5.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5',

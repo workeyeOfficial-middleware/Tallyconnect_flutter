@@ -109,10 +109,19 @@ class ApiClient {
     return r is String ? r : jsonEncode(r);
   }
 
-  Future<Object?> post(String path, {Object? body, bool auth = true}) => _send(
+  /// [headers] are added to this one request (e.g. a per-user API key).
+  Future<Object?> post(
+    String path, {
+    Object? body,
+    bool auth = true,
+    Map<String, String>? headers,
+  }) => _send(
     () => _http.post(
       uri(path),
-      headers: _headers(json: true, auth: auth),
+      headers: <String, String>{
+        ..._headers(json: true, auth: auth),
+        ...?headers,
+      },
       body: jsonEncode(body ?? const <String, Object?>{}),
     ),
   );

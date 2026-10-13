@@ -18,6 +18,7 @@ import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../../data/repositories/tally_repository.dart' show HistoryTotals;
+import '../overlays/email_reminder_sheets.dart' show PartyReminders;
 import '../widgets/common.dart';
 
 /// `.tot.stat` (centred column) / `.glass.stat` (left).
@@ -636,6 +637,8 @@ class PartyDetailScreen extends ConsumerWidget {
     // Other ledgers: positive pending balance = they owe you.
     final bool owesYou = pc || (other && p0.bal > 0);
     final bool remote = c.repo.isRemote;
+    // A phone number is saved for this party in Tally.
+    final bool hasPhone = (p0.phone ?? '').trim().isNotEmpty;
     final PartyDetail? det = p0.guid == null
         ? null
         : c.repo.partyDetail(p0.guid!);
@@ -758,6 +761,16 @@ class PartyDetailScreen extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
+                  // One-tap call: opens the dialer with the saved number.
+                  if (hasPhone) ...<Widget>[
+                    CBtn(
+                      'phone',
+                      key: const ValueKey<String>('callPartyBtn'),
+                      small: true,
+                      onTap: () => c.callParty(p0),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
                   const Bdg('Active', kind: BadgeKind.ok, dot: true),
                 ],
               ),
@@ -794,7 +807,29 @@ class PartyDetailScreen extends ConsumerWidget {
           ),
         ),
         if (c.partyTab == 'summary')
-          KvList(rows, margin: const EdgeInsets.only(top: 12)),
+          KvList(
+            rows,
+            margin: const EdgeInsets.only(top: 12),
+            trailing: <String, Widget>{
+              if (hasPhone)
+                'Phone': CBtn(
+                  'phone',
+                  key: const ValueKey<String>('callPhoneRow'),
+                  small: true,
+                  onTap: () => c.callParty(p0),
+                ),
+              if ((p0.email ?? '').trim().isNotEmpty)
+                'Email': CBtn(
+                  'mail',
+                  key: const ValueKey<String>('emailRow'),
+                  small: true,
+                  onTap: () => c.emailParty(p0),
+                ),
+            },
+          ),
+        // Email reminders sent to this customer (real data only).
+        if (c.partyTab == 'summary' && remote && (pc || other))
+          PartyReminders(party: p0),
         if (c.partyTab == 'items')
           lazyList<BillLine>(
             margin: const EdgeInsets.only(top: 12),

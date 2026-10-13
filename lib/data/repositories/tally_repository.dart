@@ -229,6 +229,65 @@ abstract class TallyRepository extends ChangeNotifier {
     ApiErrorKind.forbidden,
     'Sign in to your TallyConnect account to send feedback.',
   );
+
+  // ------------------------------------------- outstanding email reminders
+  // Only the real backend sends emails (`/api/reminders/*`); it reads the
+  // bills, amounts and recipient itself. Sample data never sends anything.
+  static const ApiException noReminders = ApiException(
+    ApiErrorKind.forbidden,
+    'Email reminders need your TallyConnect account and a Tally company.',
+  );
+
+  Future<ReminderTemplates> reminderTemplates() async => throw noReminders;
+
+  /// Creates ([ReminderTemplate.id] null) or updates a template (admin).
+  Future<ReminderTemplate> saveReminderTemplate(ReminderTemplate t) async =>
+      throw noReminders;
+  Future<void> deleteReminderTemplate(int id) async => throw noReminders;
+
+  /// What the email to [ledgerGuid] about [bills] (bill numbers) will
+  /// contain, rebuilt by the server.
+  Future<ReminderPreview> previewReminder({
+    required String ledgerGuid,
+    required List<String> bills,
+    int? templateId,
+  }) async => throw noReminders;
+
+  /// Sends it. [expectedTotal] is the total the user confirmed on the
+  /// preview (the server refuses when Tally data changed since); [key] makes
+  /// a repeated confirmation answer with the first result instead of a
+  /// second email. Never throws for a refused / failed send: the outcome
+  /// says what the server reported.
+  Future<ReminderOutcome> sendReminder({
+    required String ledgerGuid,
+    required List<String> bills,
+    required num expectedTotal,
+    required String key,
+    int? templateId,
+  }) async => throw noReminders;
+
+  /// This party's reminders in the active company, newest first.
+  Future<List<ReminderLog>> reminderHistory(String ledgerGuid) async =>
+      throw noReminders;
+
+  /// Sends a failed reminder again (bills and recipient read again).
+  Future<ReminderOutcome> retryReminder(int id) async => throw noReminders;
+
+  // ------------------------------------------------- AI assistant (Gemini)
+  static const ApiException noAssistant = ApiException(
+    ApiErrorKind.forbidden,
+    'The AI assistant needs your TallyConnect account and a Tally company.',
+  );
+
+  /// Checks that the user's Gemini key works (`POST /api/assistant/verify`).
+  Future<void> verifyAssistantKey(String geminiKey) async => throw noAssistant;
+
+  /// Answers [question] from the active company's data the user may see.
+  Future<AssistantReply> askAssistant(
+    String geminiKey,
+    String question,
+    List<AiTurn> history,
+  ) async => throw noAssistant;
 }
 
 class MockTallyRepository extends TallyRepository {

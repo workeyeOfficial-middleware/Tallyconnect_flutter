@@ -10,6 +10,7 @@
 // so nothing made in demo mode can reach the server or Tally.
 library;
 
+import '../../core/network/api_client.dart' show ApiErrorKind, ApiException;
 import '../models/models.dart';
 import 'tally_repository.dart';
 import 'team_admin.dart';
@@ -92,6 +93,69 @@ class DemoAwareRepository extends TallyRepository {
       live.resetPassword(email, code, password);
   @override
   Future<int> sendFeedback(FeedbackDraft f) => live.sendFeedback(f);
+
+  // ------------------------------ email reminders: never from demo data
+  /// Demo Company: sample parties and bills, never emailed.
+  Future<T> _rem<T>(Future<T> Function() real) =>
+      _demoOn ? Future<T>.error(kDemoReminderBlocked) : real();
+
+  @override
+  Future<ReminderTemplates> reminderTemplates() =>
+      _rem(live.reminderTemplates);
+  @override
+  Future<ReminderTemplate> saveReminderTemplate(ReminderTemplate t) =>
+      _rem(() => live.saveReminderTemplate(t));
+  @override
+  Future<void> deleteReminderTemplate(int id) =>
+      _rem(() => live.deleteReminderTemplate(id));
+  @override
+  Future<ReminderPreview> previewReminder({
+    required String ledgerGuid,
+    required List<String> bills,
+    int? templateId,
+  }) => _rem(
+    () => live.previewReminder(
+      ledgerGuid: ledgerGuid,
+      bills: bills,
+      templateId: templateId,
+    ),
+  );
+  @override
+  Future<ReminderOutcome> sendReminder({
+    required String ledgerGuid,
+    required List<String> bills,
+    required num expectedTotal,
+    required String key,
+    int? templateId,
+  }) => _rem(
+    () => live.sendReminder(
+      ledgerGuid: ledgerGuid,
+      bills: bills,
+      expectedTotal: expectedTotal,
+      key: key,
+      templateId: templateId,
+    ),
+  );
+  @override
+  Future<List<ReminderLog>> reminderHistory(String ledgerGuid) =>
+      _rem(() => live.reminderHistory(ledgerGuid));
+  @override
+  Future<ReminderOutcome> retryReminder(int id) =>
+      _rem(() => live.retryReminder(id));
+
+  // ---------------------- AI assistant: real company data only (no demo)
+  @override
+  Future<void> verifyAssistantKey(String geminiKey) => _demoOn
+      ? Future<void>.error(kDemoAssistantBlocked)
+      : live.verifyAssistantKey(geminiKey);
+  @override
+  Future<AssistantReply> askAssistant(
+    String geminiKey,
+    String question,
+    List<AiTurn> history,
+  ) => _demoOn
+      ? Future<AssistantReply>.error(kDemoAssistantBlocked)
+      : live.askAssistant(geminiKey, question, history);
 
   // ---------------------------------------------------------- loading
   /// The real data is always refreshed (also while demo data is shown), so
@@ -253,6 +317,20 @@ class DemoAwareRepository extends TallyRepository {
     return live.pushEntry(entry, delay: delay);
   }
 }
+
+/// Email reminders on demo data: never sent.
+const ApiException kDemoReminderBlocked = ApiException(
+  ApiErrorKind.forbidden,
+  'Email reminders are off for Demo Company (sample data). Switch to your '
+  'Tally company to send them.',
+);
+
+/// The AI assistant reads the real company on the server, never demo data.
+const ApiException kDemoAssistantBlocked = ApiException(
+  ApiErrorKind.forbidden,
+  'The AI assistant answers from your Tally company, not Demo Company. '
+  'Switch to your company to use it.',
+);
 
 /// Shown when an entry is tried on demo data.
 const String kDemoWriteBlocked =

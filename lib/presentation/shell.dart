@@ -11,6 +11,7 @@ import '../app/providers.dart';
 import '../core/design/tc_kit.dart';
 import '../core/design/tc_palette.dart';
 import '../core/design/tc_wallpaper.dart';
+import 'overlays/assistant_sheet.dart' show AssistantFab;
 import 'overlays/overlays.dart';
 import 'screens/account_screens.dart';
 import 'screens/auth_screens.dart';
@@ -136,6 +137,9 @@ class Shell extends ConsumerWidget {
                   ),
                 ),
                 if (c.showTabs) const TcTabBar(),
+                // AI assistant on Home (above the tab bar, under sheets).
+                if (c.loggedIn && c.screen == 'home' && c.overlay == null)
+                  const AssistantFab(),
                 if (c.demo && c.loggedIn) const DemoBanner(),
                 const Positioned.fill(child: OverlayLayer()),
                 if (c.overlay == 'hiddenPanel')

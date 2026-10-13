@@ -94,6 +94,25 @@ describe("notification email", () => {
   });
 });
 
+describe("mailer", () => {
+  test("missing Microsoft settings → error (never a silent success)", async () => {
+    const { sendFeedbackEmail } = await import("../utils/sendFeedbackEmail.js");
+    const keys = ["MICROSOFT_TENANT_ID", "MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET", "MICROSOFT_SENDER_EMAIL"];
+    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    try {
+      for (const k of keys) delete process.env[k];
+      await assert.rejects(sendFeedbackEmail({ to: "a@x.in", subject: "s", html: "h" }), /MICROSOFT_SENDER_EMAIL/);
+      process.env.MICROSOFT_SENDER_EMAIL = "no-reply@x.in";
+      await assert.rejects(sendFeedbackEmail({ to: "a@x.in", subject: "s", html: "h" }), /not configured/);
+    } finally {
+      for (const k of keys) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+    }
+  });
+});
+
 /* ---------------------------------------------------------- routes */
 class FakeDb {
   constructor() {
@@ -201,6 +220,7 @@ describe("routes", () => {
         sendEmail: async (m) => {
           if (mailFails) throw new Error("smtp down");
           sent.push(m);
+          return { status: 202, requestId: "req-1" };
         },
       })
     );
@@ -238,7 +258,7 @@ describe("routes", () => {
     assert.equal(r.status, 201);
     const j = await r.json();
     assert.equal(j.success, true);
-    await settle();
+    assert.equal(j.email_status, "sent"); // answered after the email was accepted
     const row = db.rows[0];
     assert.equal(row.id, j.id);
     assert.equal(row.user_id, 7);
@@ -250,11 +270,17 @@ describe("routes", () => {
     assert.equal(sent[0].replyTo, "ravi@x.in");
   });
 
-  test("email failure keeps the feedback (status failed) and can be re-sent", async () => {
+  test("email failure: never reported as success; feedback kept and re-sendable", async () => {
     mailFails = true;
     const r = await call("POST", "/api/feedback", CUSTOMER, { type: "bug", message: "Crash" });
-    assert.equal(r.status, 201);
-    await settle();
+    assert.equal(r.status, 502);
+    const j = await r.json();
+    assert.equal(j.success, false);
+    assert.equal(j.stored, true);
+    assert.equal(j.email_status, "failed");
+    assert.equal(j.code, "email_failed");
+    assert.match(j.message, /saved \(#1\)/);
+    assert.ok(!j.message.includes("smtp down")); // provider details stay server-side
     assert.equal(db.rows.length, 1);
     assert.equal(db.rows[0].email_status, "failed");
     assert.match(db.rows[0].email_error, /smtp down/);
@@ -266,13 +292,36 @@ describe("routes", () => {
     assert.equal(db.rows[0].email_attempts, 2);
   });
 
-  test("no notification address → stored, email skipped", async () => {
-    delete env.FEEDBACK_NOTIFICATION_EMAIL;
-    const r = await call("POST", "/api/feedback", CUSTOMER, { type: "idea", message: "x" });
-    assert.equal(r.status, 201);
-    await settle();
-    assert.equal(db.rows[0].email_status, "skipped");
+  test("no / invalid notification address → stored, 503, not a success", async () => {
+    for (const value of [undefined, "work272002@gmail", "  "]) {
+      if (value === undefined) delete env.FEEDBACK_NOTIFICATION_EMAIL;
+      else env.FEEDBACK_NOTIFICATION_EMAIL = value;
+      const r = await call("POST", "/api/feedback", CUSTOMER, { type: "idea", message: "x" });
+      assert.equal(r.status, 503);
+      const j = await r.json();
+      assert.equal(j.success, false);
+      assert.equal(j.code, "email_not_configured");
+      assert.equal(db.rows.at(-1).email_status, "skipped");
+    }
     assert.equal(sent.length, 0);
+  });
+
+  test("team: email settings check shows presence only, never secrets", async () => {
+    env.MICROSOFT_TENANT_ID = "tenant-x";
+    env.MICROSOFT_CLIENT_SECRET = "super-secret-value";
+    assert.equal((await call("GET", "/api/admin/feedback/email-config", CUSTOMER)).status, 403);
+    const r = await call("GET", "/api/admin/feedback/email-config", TEAM);
+    assert.equal(r.status, 200);
+    const text = await r.text();
+    assert.ok(!text.includes("super-secret-value") && !text.includes("tenant-x"));
+    const j = JSON.parse(text);
+    assert.equal(j.notify_email, "wokk2720022@gmail.com");
+    assert.deepEqual(j.graph, {
+      MICROSOFT_TENANT_ID: true,
+      MICROSOFT_CLIENT_ID: false,
+      MICROSOFT_CLIENT_SECRET: true,
+      MICROSOFT_SENDER_EMAIL: false,
+    });
   });
 
   test("validation errors are 400 and store nothing", async () => {

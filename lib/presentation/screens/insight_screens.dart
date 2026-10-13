@@ -170,27 +170,15 @@ class ReportsScreen extends ConsumerWidget {
   }
 }
 
-/// This month / All time switch for the reports, and the Date range
-/// option under it.
+/// The reports' period: All time · This month · Last 7 days · Today ·
+/// Date range on one row (the last three are date ranges).
 class ReportPeriodSeg extends StatelessWidget {
   const ReportPeriodSeg({super.key, required this.c});
   final AppController c;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: <Widget>[
-      Seg(
-        margin: const EdgeInsets.only(bottom: 10),
-        items: <String>[for (final (String, String) e in kReportPeriods) e.$2],
-        selected: kReportPeriods.indexWhere(
-          ((String, String) e) => e.$1 == c.repPeriod,
-        ),
-        onPick: (int i) => c.setRepPeriod(kReportPeriods[i].$1),
-      ),
-      RangeChip(target: 'rep', on: c.repPeriod == 'range'),
-    ],
-  );
+  Widget build(BuildContext context) =>
+      const PeriodBar(target: 'rep', margin: EdgeInsets.only(bottom: 14));
 }
 
 /// Reports listing vouchers (All time: read page by page from the server).

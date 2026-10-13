@@ -742,6 +742,19 @@ class _InsetTopPainter extends BoxPainter {
 
 Decoration insetTop(BorderRadius br, Color c) => _InsetTop(br, c);
 
+/// Header rows with several actions: their [CBtn]s use the compact size
+/// (40, 18 px icon) so the back pill keeps its room.
+class NavDense extends InheritedWidget {
+  const NavDense({super.key, required this.on, required super.child});
+  final bool on;
+
+  static bool of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<NavDense>()?.on ?? false;
+
+  @override
+  bool updateShouldNotify(NavDense old) => old.on != on;
+}
+
 /// `.cbtn`: 46 round glass icon button (`.sm` 40).
 class CBtn extends StatelessWidget {
   const CBtn(
@@ -773,11 +786,12 @@ class CBtn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
-    final double d = size ?? (small ? 40 : 46);
+    final bool compact = small || NavDense.of(context);
+    final double d = size ?? (compact ? 40 : 46);
     final double r = radius ?? d / 2;
     final Widget icn = Ic(
       icon,
-      size: iconSize ?? (small ? IcSize.s : IcSize.m),
+      size: iconSize ?? (compact ? IcSize.s : IcSize.m),
       color: color ?? p.ink,
     );
     final Widget box = glass
@@ -805,8 +819,8 @@ class CBtn extends StatelessWidget {
           box,
           if (dot)
             Positioned(
-              top: 9,
-              right: 10,
+              top: d < 44 ? 7 : 9,
+              right: d < 44 ? 8 : 10,
               child: Container(
                 width: 10,
                 height: 10,
@@ -823,33 +837,72 @@ class CBtn extends StatelessWidget {
   }
 }
 
-/// `.pbtn`: glass back pill with chevron + label in accent.
+/// `.pbtn`: glass back pill with chevron + label in accent. With
+/// [iconOnly] (no room for the label) it is a round back button.
 class PBtn extends StatelessWidget {
-  const PBtn(this.label, {super.key, this.onTap});
+  const PBtn(
+    this.label, {
+    super.key,
+    this.onTap,
+    this.height = 46,
+    this.iconOnly = false,
+  });
   final String label;
   final VoidCallback? onTap;
+  final double height;
+  final bool iconOnly;
+
+  static TextStyle labelStyle(Color c) => ts(16, w: w700, c: c);
+
+  /// Width of the full pill (chevron + label + padding).
+  static double fullWidth(String label, TextScaler scaler) {
+    final TextPainter tp = TextPainter(
+      text: TextSpan(text: label, style: labelStyle(const Color(0xFF000000))),
+      maxLines: 1,
+      textDirection: TextDirection.ltr,
+      textScaler: scaler,
+    )..layout();
+    return 10 + IcSize.s.px + 2 + tp.width + 18 + 1;
+  }
 
   @override
   Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
-    return Tap(
-      onTap: onTap,
-      radius: 23,
-      child: Glass(
-        radius: 23,
-        height: 46,
-        padding: const EdgeInsets.only(left: 10, right: 18),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Ic('chevL', size: IcSize.s, color: p.acc),
-            const SizedBox(width: 2),
-            Text(
-              label,
-              style: ts(16, w: w700, c: p.acc),
-            ),
-          ],
-        ),
+    final double r = height / 2;
+    return Semantics(
+      button: true,
+      label: iconOnly ? 'Back to $label' : null,
+      child: Tap(
+        onTap: onTap,
+        radius: r,
+        child: iconOnly
+            ? Glass(
+                radius: r,
+                width: height,
+                height: height,
+                child: Center(child: Ic('chevL', size: IcSize.m, color: p.acc)),
+              )
+            : Glass(
+                radius: r,
+                height: height,
+                padding: const EdgeInsets.only(left: 10, right: 18),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Ic('chevL', size: IcSize.s, color: p.acc),
+                    const SizedBox(width: 2),
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: labelStyle(p.acc),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
       ),
     );
   }
@@ -1455,21 +1508,39 @@ class Kv extends StatelessWidget {
     this.strong = false,
     this.divider = false,
     this.padding = const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+    this.trailing,
   });
   final String k, v;
   final bool strong;
   final bool divider;
   final EdgeInsets padding;
 
+  /// Optional action after the value (e.g. a call button on a phone row).
+  final Widget? trailing;
+
   @override
   Widget build(BuildContext context) {
-    final TcPalette p = Tc.of(context);
+    final Widget body = _body(context);
     return Container(
       padding: padding,
       decoration: BoxDecoration(
         border: divider ? Border(top: BorderSide(color: navyA(.06))) : null,
       ),
-      child: LayoutBuilder(
+      child: trailing == null
+          ? body
+          : Row(
+              children: <Widget>[
+                Expanded(child: body),
+                const SizedBox(width: 10),
+                trailing!,
+              ],
+            ),
+    );
+  }
+
+  Widget _body(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    return LayoutBuilder(
         builder: (BuildContext context, BoxConstraints box) {
           final TextStyle ks = strong
               ? ts(17, w: w800, c: p.ink)
@@ -1538,16 +1609,22 @@ class Kv extends StatelessWidget {
             ],
           );
         },
-      ),
     );
   }
 }
 
-/// Glass list of `.kv` rows with 1px dividers.
+/// Glass list of `.kv` rows with 1px dividers. [trailing]: an action after
+/// the value of the row with that key (e.g. `{'Phone': callButton}`).
 class KvList extends StatelessWidget {
-  const KvList(this.rows, {super.key, this.margin = EdgeInsets.zero});
+  const KvList(
+    this.rows, {
+    super.key,
+    this.margin = EdgeInsets.zero,
+    this.trailing = const <String, Widget>{},
+  });
   final List<(String, String, bool)> rows;
   final EdgeInsets margin;
+  final Map<String, Widget> trailing;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -1557,7 +1634,13 @@ class KvList extends StatelessWidget {
       child: Column(
         children: <Widget>[
           for (int i = 0; i < rows.length; i++)
-            Kv(rows[i].$1, rows[i].$2, strong: rows[i].$3, divider: i > 0),
+            Kv(
+              rows[i].$1,
+              rows[i].$2,
+              strong: rows[i].$3,
+              divider: i > 0,
+              trailing: trailing[rows[i].$1],
+            ),
         ],
       ),
     ),

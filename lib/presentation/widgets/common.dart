@@ -6,7 +6,8 @@ library;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderProxyBox;
+import 'package:flutter/rendering.dart'
+    show RenderAbstractViewport, RenderProxyBox;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/app_state.dart';
@@ -72,6 +73,204 @@ class RangeChip extends ConsumerWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// One horizontal row: All time · This month · Last 7 days · Today ·
+/// Date range. Never wraps: on narrow screens the row swipes sideways and
+/// the selected option is kept in view. Same glass track as [Seg].
+class PeriodBar extends ConsumerStatefulWidget {
+  const PeriodBar({
+    super.key,
+    required this.target,
+    this.margin = const EdgeInsets.only(bottom: 12),
+  });
+
+  /// `v` (vouchers), `rep` (reports) or `out` (outstanding).
+  final String target;
+  final EdgeInsets margin;
+
+  @override
+  ConsumerState<PeriodBar> createState() => _PeriodBarState();
+}
+
+class _PeriodBarState extends ConsumerState<PeriodBar> {
+  final GlobalKey _selKey = GlobalKey();
+  final ScrollController _sc = ScrollController();
+  String? _shown;
+
+  /// More options hidden left / right (shown as a soft fade at that edge).
+  bool _moreL = false, _moreR = false;
+
+  bool _onScroll(ScrollMetrics m) {
+    final bool l = m.extentBefore > 1, r = m.extentAfter > 1;
+    if (l != _moreL || r != _moreR) {
+      setState(() {
+        _moreL = l;
+        _moreR = r;
+      });
+    }
+    return false;
+  }
+
+  @override
+  void dispose() {
+    _sc.dispose();
+    super.dispose();
+  }
+
+  /// Scrolls only this row (never the page) to centre the selected option.
+  void _reveal() {
+    final RenderObject? ro = _selKey.currentContext?.findRenderObject();
+    if (ro == null || !_sc.hasClients) return;
+    final RenderAbstractViewport? vp = RenderAbstractViewport.maybeOf(ro);
+    if (vp == null) return;
+    final double to = vp
+        .getOffsetToReveal(ro, .5)
+        .offset
+        .clamp(0.0, _sc.position.maxScrollExtent);
+    if (_shown == null) {
+      _sc.jumpTo(to);
+    } else {
+      _sc.animateTo(
+        to,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    final String t = widget.target;
+    final String sel = c.periodSel(t);
+    final bool custom = sel == 'range' && c.range != null;
+    if (_shown != sel) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _reveal();
+        _shown = sel;
+      });
+    }
+    Widget seg({
+      required String k,
+      required String label,
+      required VoidCallback onTap,
+      String? icon,
+      Key? key,
+    }) {
+      final bool on = sel == k;
+      return GestureDetector(
+        key: key,
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: AnimatedContainer(
+          key: on ? _selKey : null,
+          duration: const Duration(milliseconds: 250),
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: on ? Colors.white : Colors.white.withValues(alpha: 0),
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: on
+                ? <BoxShadow>[css(0, 3, 10, 0, navyA(.14))]
+                : const <BoxShadow>[],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (icon != null) ...<Widget>[
+                Ic(icon, size: IcSize.xs, color: on ? p.acc : p.ink2),
+                const SizedBox(width: 5),
+              ],
+              Text(
+                label,
+                maxLines: 1,
+                softWrap: false,
+                style: ts(13.5, w: w700, c: on ? p.ink : p.ink2),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: widget.margin,
+      child: Glass(
+        radius: 17,
+        padding: const EdgeInsets.all(4),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(13),
+          child: NotificationListener<ScrollMetricsNotification>(
+            onNotification: (ScrollMetricsNotification n) =>
+                _onScroll(n.metrics),
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (ScrollNotification n) => _onScroll(n.metrics),
+              child: ShaderMask(
+                blendMode: BlendMode.dstIn,
+                shaderCallback: (Rect b) => LinearGradient(
+                  colors: <Color>[
+                    Colors.white.withValues(alpha: _moreL ? 0 : 1),
+                    Colors.white,
+                    Colors.white,
+                    Colors.white.withValues(alpha: _moreR ? 0 : 1),
+                  ],
+                  stops: <double>[0, 22 / b.width, 1 - 22 / b.width, 1],
+                ).createShader(b),
+                child: SingleChildScrollView(
+                  key: ValueKey<String>('periodBar-$t'),
+                  controller: _sc,
+                  scrollDirection: Axis.horizontal,
+                  physics: const BouncingScrollPhysics(),
+                  child: Row(
+                    children: <Widget>[
+                      for (final (String, String) e
+                          in AppController.kPeriodBar) ...<Widget>[
+                        seg(
+                          k: e.$1,
+                          label: e.$2,
+                          key: ValueKey<String>('period-$t-${e.$1}'),
+                          onTap: () => c.pickPeriod(t, e.$1),
+                        ),
+                        const SizedBox(width: 2),
+                      ],
+                      seg(
+                        k: 'range',
+                        label: custom ? c.range!.label : 'Date range',
+                        icon: 'calendar',
+                        key: ValueKey<String>('range-$t'),
+                        onTap: () => c.openRange(t),
+                      ),
+                      if (custom)
+                        GestureDetector(
+                          key: ValueKey<String>('range-clear-$t'),
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => c.clearRange(t),
+                          child: SizedBox(
+                            width: 36,
+                            height: 38,
+                            child: Center(
+                              child: Ic(
+                                'close',
+                                size: IcSize.xs,
+                                color: p.ink2,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -325,6 +524,9 @@ class _ScrState extends ConsumerState<Scr> {
     c.reg.screenScroll = _sc;
     c.reg.screenViewport = _vp;
     final bool wt = c.showTabs;
+    // Home's AI assistant button sits above the tab bar: the last card can
+    // scroll clear of it.
+    final double fab = wt && c.loggedIn && c.screen == 'home' ? 64 : 0;
     // There is no Scaffold, so the keyboard must be made room for here:
     // fields near the bottom stay reachable above it.
     final double kb = MediaQuery.viewInsetsOf(context).bottom;
@@ -343,7 +545,7 @@ class _ScrState extends ConsumerState<Scr> {
             topIn(context),
             16,
             (wt
-                    ? wtBottom(context) + 20
+                    ? wtBottom(context) + 20 + fab
                     : 36 + MediaQuery.paddingOf(context).bottom) +
                 kb,
           ),
@@ -754,14 +956,19 @@ class NavRow extends StatelessWidget {
     super.key,
     required this.children,
     this.margin = const EdgeInsets.only(bottom: 10),
+    this.gap,
   });
   final List<Widget> children;
   final EdgeInsets margin;
 
+  /// Space between buttons (default: 10, 6 on narrow phones).
+  final double? gap;
+
   @override
   Widget build(BuildContext context) {
     // Narrow phones (≈320 px): tighter gaps so the buttons fit one row.
-    final double gap = MediaQuery.sizeOf(context).width < 360 ? 6 : 10;
+    final double gap =
+        this.gap ?? (MediaQuery.sizeOf(context).width < 360 ? 6 : 10);
     return Padding(
       padding: margin,
       child: ConstrainedBox(
@@ -789,22 +996,42 @@ class BackNav extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
-    return NavRow(
-      children: <Widget>[
-        // Takes all room left by the actions; shrinks only when that room
-        // is smaller than the pill (very narrow phones).
-        Expanded(
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: PBtn(label ?? c.backLabel, onTap: c.back),
+    final String text = label ?? c.backLabel;
+    // Several actions: compact action buttons (40, 18 px icons) with
+    // tighter gaps, so the row stays balanced and the back pill keeps room.
+    final bool dense = actions.length >= 3;
+    final bool narrow = MediaQuery.sizeOf(context).width < 360;
+    final double h = dense ? 44 : 46;
+    return NavDense(
+      on: dense,
+      child: NavRow(
+        gap: dense ? (narrow ? 5 : 8) : null,
+        children: <Widget>[
+          // Takes all room left by the actions. The label is never shrunk:
+          // when the whole pill does not fit, it becomes a round back
+          // button of the same height.
+          Expanded(
+            child: LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints box) {
+                final bool fits =
+                    box.maxWidth >=
+                    PBtn.fullWidth(text, MediaQuery.textScalerOf(context));
+                return Align(
+                  alignment: Alignment.centerLeft,
+                  child: PBtn(
+                    text,
+                    key: const ValueKey<String>('backBtn'),
+                    onTap: c.back,
+                    height: h,
+                    iconOnly: !fits,
+                  ),
+                );
+              },
             ),
           ),
-        ),
-        ...actions,
-      ],
+          ...actions,
+        ],
+      ),
     );
   }
 }

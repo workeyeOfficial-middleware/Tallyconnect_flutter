@@ -54,6 +54,46 @@ class TallyApi {
   Future<Object?> sendFeedback(Json body) =>
       http.post('/api/feedback', body: body);
 
+  // ------------------------------------------------- AI assistant (Gemini)
+  // The user's own Gemini key goes in a header of these two requests only;
+  // the server uses it for the request and does not keep it.
+  Future<Object?> verifyAssistant(String geminiKey) => http.post(
+    '/api/assistant/verify',
+    headers: <String, String>{'X-Gemini-Key': geminiKey},
+  );
+
+  /// POST /api/assistant/ask `{question, history:[{role, text}]}`
+  Future<Object?> askAssistant(String geminiKey, Json body) => http.post(
+    '/api/assistant/ask',
+    body: body,
+    headers: <String, String>{'X-Gemini-Key': geminiKey},
+  );
+
+  // ---------------------------------------------- outstanding reminders
+  // The server scopes all of these to the login's active company and the
+  // user's ledger permissions; bills and amounts are read on the server.
+  Future<Object?> reminderTemplates() => http.get('/api/reminders/templates');
+  Future<Object?> createReminderTemplate(Json body) =>
+      http.post('/api/reminders/templates', body: body);
+  Future<Object?> updateReminderTemplate(int id, Json body) =>
+      http.put('/api/reminders/templates/$id', body: body);
+  Future<Object?> deleteReminderTemplate(int id) =>
+      http.delete('/api/reminders/templates/$id');
+
+  /// POST /api/reminders/preview `{ledger_guid, bill_names[], template_id?}`
+  Future<Object?> previewReminder(Json body) =>
+      http.post('/api/reminders/preview', body: body);
+
+  /// POST /api/reminders/send — same + `expected_total`, `idempotency_key`.
+  Future<Object?> sendReminder(Json body) =>
+      http.post('/api/reminders/send', body: body);
+  Future<Object?> reminderHistory(String ledgerGuid) => http.get(
+    '/api/reminders/history',
+    query: <String, Object?>{'ledger_guid': ledgerGuid},
+  );
+  Future<Object?> retryReminder(int id) =>
+      http.post('/api/reminders/$id/retry');
+
   // ------------------------------------------------------- company (§4)
   Future<Object?> companiesSelected() => http.get('/company/selected');
 

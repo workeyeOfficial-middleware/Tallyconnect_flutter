@@ -16,6 +16,7 @@ import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
 import '../../core/share/share_doc.dart' show rateLabel, stockLabel;
 import '../../core/utils/format.dart';
+import '../../core/utils/phone.dart' show phoneLabel;
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../screens/account_screens.dart' show CompanyRow;
@@ -23,7 +24,9 @@ import '../screens/insight_screens.dart' show kTS;
 import '../screens/voucher_screens.dart' show kVF;
 import '../widgets/common.dart';
 import '../widgets/demo_banner.dart' show ConnectTallySheet;
+import 'assistant_sheet.dart';
 import 'doc_viewer.dart';
+import 'email_reminder_sheets.dart';
 
 /// Builds the active overlay (`state.overlay`).
 class OverlayLayer extends ConsumerWidget {
@@ -51,6 +54,12 @@ class OverlayLayer extends ConsumerWidget {
       'dateRange' => const DateRangeSheet(),
       'feedback' => const FeedbackSheet(),
       'connectTally' => const ConnectTallySheet(),
+      'callPick' => const CallPickSheet(),
+      'mailPick' => const MailPickSheet(),
+      'assistant' => const AssistantSheet(),
+      'emailRem' => const EmailReminderSheet(),
+      'remTemplates' => const ReminderTemplatesSheet(),
+      'remTemplateEdit' => const ReminderTemplateEditSheet(),
       'doc' => const DocViewer(),
       _ => const SizedBox.shrink(),
     };
@@ -377,9 +386,44 @@ class SearchSheet extends ConsumerWidget {
           Inp(
             value: c.f('q'),
             onChanged: (String v) => c.setQuery('q', v),
-            placeholder: 'Search items, parties, entries, screens…',
+            placeholder: c.voiceOn
+                ? 'Listening…'
+                : 'Search items, parties, entries, screens…',
             icon: 'search',
+            // Voice search: tap to listen, tap again to stop.
+            trailing: Semantics(
+              button: true,
+              label: c.voiceOn ? 'Stop voice search' : 'Voice search',
+              child: GestureDetector(
+                key: const ValueKey<String>('voiceSearchBtn'),
+                behavior: HitTestBehavior.opaque,
+                onTap: c.toggleVoiceSearch,
+                child: SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: Center(
+                    child: Ic(
+                      c.voiceOn ? 'micStop' : 'mic',
+                      color: c.voiceOn ? p.acc : p.ink3,
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
+          if (c.voiceNote != null)
+            Padding(
+              key: const ValueKey<String>('voiceNote'),
+              padding: const EdgeInsets.fromLTRB(6, 8, 6, 0),
+              child: Text(
+                c.voiceNote!,
+                style: ts(
+                  13,
+                  w: w600,
+                  c: c.voiceOn ? p.acc : p.ink2,
+                ),
+              ),
+            ),
           GlassList(
             margin: const EdgeInsets.only(top: 12),
             children: <Widget>[
@@ -1207,6 +1251,78 @@ class InviteSheet extends ConsumerWidget {
             enabled: RegExp(r'.+@.+\..+').hasMatch(c.f('iEmail')),
             onTap: c.sendInvite,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Several numbers saved for one party: pick the one to call (opens the
+/// dialer; nothing is called automatically).
+class CallPickSheet extends ConsumerWidget {
+  const CallPickSheet({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    return Sheet(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SheetHead('Call ${c.callName}', sub: 'Choose a number'),
+          GlassList(
+            children: <Widget>[
+              for (final String n in c.callNumbers)
+                RowX(
+                  key: ValueKey<String>('callNumber-$n'),
+                  onTap: () => c.dial(n),
+                  children: <Widget>[
+                    Ico('phone', size: IcoSize.xs, color: p.navy, icon: IcSize.s),
+                    Expanded(child: RTx(phoneLabel(n), 'Opens the dialer')),
+                    chevR(),
+                  ],
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Btn(label: 'Cancel', kind: BtnKind.g, onTap: c.closeOv),
+        ],
+      ),
+    );
+  }
+}
+
+/// Several email addresses saved for one party: pick the one to write to
+/// (opens the email app; nothing is sent automatically).
+class MailPickSheet extends ConsumerWidget {
+  const MailPickSheet({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    return Sheet(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SheetHead('Email ${c.mailName}', sub: 'Choose an address'),
+          GlassList(
+            children: <Widget>[
+              for (final String a in c.mailAddresses)
+                RowX(
+                  key: ValueKey<String>('mailAddress-$a'),
+                  onTap: () => c.composeEmail(a),
+                  children: <Widget>[
+                    Ico('mail', size: IcoSize.xs, color: p.navy, icon: IcSize.s),
+                    Expanded(child: RTx(a, 'Opens your email app', ell: true)),
+                    chevR(),
+                  ],
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Btn(label: 'Cancel', kind: BtnKind.g, onTap: c.closeOv),
         ],
       ),
     );

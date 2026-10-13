@@ -20,7 +20,11 @@ import '../core/design/tc_color_math.dart';
 import '../core/app_icon/app_icon.dart';
 import '../core/network/api_client.dart';
 import '../core/notify/reminder_alarms.dart';
+import '../core/utils/email.dart';
+import '../core/utils/phone.dart';
+import '../core/voice/voice_input.dart';
 import '../core/design/tc_palette.dart';
+import '../core/storage/assistant_key_store.dart';
 import '../core/storage/local_storage.dart';
 import '../core/utils/format.dart';
 import '../data/accounting.dart' show voucherKind;
@@ -331,10 +335,16 @@ class AppController extends ChangeNotifier {
     DocExporter? exporter,
     ReminderAlarms? alarms,
     AppIconService? appIcon,
+    VoiceInput? voice,
+    Future<bool> Function(Uri uri)? linkOpener,
+    AssistantKeyStore? assistantKeys,
   }) : repo = repo ?? MockTallyRepository(),
+       aiKeys = assistantKeys ?? MemoryAssistantKeyStore(),
        exporter = exporter ?? PlatformDocExporter(),
        alarms = alarms ?? NoReminderAlarms(),
-       appIcon = appIcon ?? NoAppIcon() {
+       appIcon = appIcon ?? NoAppIcon(),
+       voice = voice ?? const NoVoiceInput(),
+       openUri = linkOpener ?? openLink {
     final int ti = kTabs.indexWhere(
       (({String k, String t, String ic}) t) => t.k == startScreen,
     );
@@ -383,6 +393,8 @@ class AppController extends ChangeNotifier {
         repo.activeCompanyId != company) {
       // Company changed: on-demand sets were cleared — reload this screen's.
       company = repo.activeCompanyId!;
+      // The assistant's chat was about the other company.
+      aiTurns = const <AiTurn>[];
       Future<void>.microtask(reEnter);
     }
     acts = repo.activity();
@@ -410,6 +422,12 @@ class AppController extends ChangeNotifier {
 
   /// Launcher icon / home-screen shortcut (theme-matched TC icon).
   final AppIconService appIcon;
+
+  /// Speech to text for the global search.
+  final VoiceInput voice;
+
+  /// Opens a link in the app that handles it (dialer, mail, browser).
+  final Future<bool> Function(Uri uri) openUri;
   final HitRegistry reg = HitRegistry();
 
   // ---------------------------------------------------------------- state
@@ -1059,6 +1077,801 @@ class AppController extends ChangeNotifier {
     });
   }
 
+  // -------------------------------------------------------- one-tap call
+  /// Numbers offered when a party's phone field holds several.
+  List<String> callNumbers = const <String>[];
+  String callName = '';
+
+  /// Call button on party detail: opens the dialer (never calls by itself)
+  /// with the party's saved phone number; asks which one when there are
+  /// several.
+  void callParty(Party p) {
+    if (demo) {
+      say('Calling is off for Demo Company (sample numbers)');
+      return;
+    }
+    final List<String> nums = dialableNumbers(p.phone);
+    if (nums.isEmpty) {
+      say(
+        (p.phone ?? '').trim().isEmpty
+            ? 'No phone number saved for ${p.name} in Tally'
+            : 'The phone number saved for ${p.name} cannot be dialled',
+      );
+      return;
+    }
+    if (nums.length == 1) {
+      unawaited(dial(nums.single));
+      return;
+    }
+    _set(() {
+      callNumbers = nums;
+      callName = p.name;
+      overlay = 'callPick';
+    });
+  }
+
+  /// Opens the dialer with [number].
+  Future<void> dial(String number) async {
+    if (overlay == 'callPick') _set(() => overlay = null);
+    if (!await openUri(telUri(number))) {
+      say('Could not open the phone dialer · ${phoneLabel(number)}');
+    }
+  }
+
+  // -------------------------------------------------------- one-tap email
+  /// Addresses offered when a party's email field holds several.
+  List<String> mailAddresses = const <String>[];
+  String mailName = '';
+
+  /// Email button on party detail: opens the email app with the party's
+  /// saved address as the recipient (the user writes and sends it there);
+  /// asks which one when there are several.
+  void emailParty(Party p) {
+    if (demo) {
+      say('Email is off for Demo Company (sample addresses)');
+      return;
+    }
+    final List<String> all = emailAddresses(p.email);
+    if (all.isEmpty) {
+      say(
+        (p.email ?? '').trim().isEmpty
+            ? 'No email address saved for ${p.name} in Tally'
+            : 'The email address saved for ${p.name} is not valid',
+      );
+      return;
+    }
+    if (all.length == 1) {
+      unawaited(composeEmail(all.single));
+      return;
+    }
+    _set(() {
+      mailAddresses = all;
+      mailName = p.name;
+      overlay = 'mailPick';
+    });
+  }
+
+  /// Opens the email app with [address] as the recipient.
+  Future<void> composeEmail(String address) async {
+    if (overlay == 'mailPick') _set(() => overlay = null);
+    if (!await openUri(mailUri(address))) {
+      say('No email app found to write to $address');
+    }
+  }
+
+  // --------------------------------------------- AI assistant (Gemini key)
+  // Home → chat button. The user connects their own Gemini API key (checked
+  // by the server, then kept in this phone's keystore for this login only).
+  // Questions go to the TallyConnect server, which answers from the active
+  // company's data the user may see — never from demo data.
+
+  /// Where the user's Gemini key is kept (platform keystore in the app).
+  final AssistantKeyStore aiKeys;
+  String? _aiKey;
+
+  /// The login [_aiKey] belongs to (loaded once per login).
+  String? _aiKeyFor;
+  List<AiTurn> aiTurns = const <AiTurn>[];
+  bool aiBusy = false, aiConnecting = false;
+
+  /// Why connecting failed (shown under the key field).
+  String? aiError;
+
+  bool get aiConnected => _aiKey != null;
+  String get _aiAccount =>
+      repo.user?.email.isNotEmpty == true
+      ? repo.user!.email
+      : 'user-${repo.user?.id ?? 0}';
+
+  static const List<String> kAiSuggestions = <String>[
+    'Who owes me the most?',
+    'How much is overdue in receivables?',
+    'What are my total payables?',
+    'Sales this month',
+    'Last 5 receipts',
+  ];
+
+  /// Why the assistant cannot be used here, or null.
+  String? get aiBlocked {
+    if (demo) return kDemoAssistantBlocked.message;
+    if (!repo.isRemote) return 'The AI assistant needs your TallyConnect account.';
+    return null;
+  }
+
+  Future<void> openAssistant() async {
+    final String? why = aiBlocked;
+    if (why != null) {
+      say(why);
+      return;
+    }
+    _set(() {
+      aiError = null;
+      voiceNote = null;
+      overlay = 'assistant';
+    });
+    final String acct = _aiAccount;
+    if (_aiKeyFor != acct) {
+      final String? k = await aiKeys.read(acct);
+      _set(() {
+        _aiKey = (k ?? '').isEmpty ? null : k;
+        _aiKeyFor = acct;
+      });
+    }
+  }
+
+  String _aiErr(ApiException e) => e.kind == ApiErrorKind.notFound && e.body is! Map
+      ? 'The AI assistant is not available on the server yet.'
+      : e.userMessage;
+
+  /// Connect: the server checks the key with Gemini; only a working key is
+  /// saved (in the keystore).
+  Future<void> connectAssistant() async {
+    final String key = f('aiKey').trim();
+    if (aiConnecting) return;
+    if (key.isEmpty) {
+      _set(() => aiError = 'Paste your Gemini API key');
+      return;
+    }
+    _set(() {
+      aiConnecting = true;
+      aiError = null;
+    });
+    try {
+      await repo.verifyAssistantKey(key);
+      await aiKeys.write(_aiAccount, key);
+      _set(() {
+        _aiKey = key;
+        _aiKeyFor = _aiAccount;
+        form['aiKey'] = '';
+        aiConnecting = false;
+      });
+      say('Gemini connected');
+    } on ApiException catch (e) {
+      _set(() {
+        aiConnecting = false;
+        aiError = _aiErr(e);
+      });
+    } catch (_) {
+      _set(() {
+        aiConnecting = false;
+        aiError = 'Could not check the key. Try again.';
+      });
+    }
+  }
+
+  /// Removes the key from this phone and clears the chat.
+  Future<void> disconnectAssistant() async {
+    await aiKeys.delete(_aiAccount);
+    _set(() {
+      _aiKey = null;
+      aiTurns = const <AiTurn>[];
+      form['aiKey'] = '';
+      aiError = null;
+    });
+    say('Gemini key removed from this phone');
+  }
+
+  /// Asks [preset] or the typed question.
+  Future<void> askAssistant([String? preset]) async {
+    final String q = (preset ?? f('aiQ')).trim();
+    final String? key = _aiKey;
+    if (q.isEmpty || aiBusy || key == null) return;
+    if (aiBlocked != null) {
+      say(aiBlocked!);
+      return;
+    }
+    // Sending ends listening (the words are already in the field).
+    if (aiVoiceOn) await stopVoiceSearch();
+    final List<AiTurn> history = aiTurns
+        .where((AiTurn t) => !t.error)
+        .toList();
+    _set(() {
+      aiTurns = <AiTurn>[...aiTurns, AiTurn('user', q)];
+      form['aiQ'] = '';
+      aiBusy = true;
+    });
+    try {
+      final AssistantReply r = await repo.askAssistant(
+        key,
+        q,
+        history.length > 10 ? history.sublist(history.length - 10) : history,
+      );
+      _set(
+        () => aiTurns = <AiTurn>[
+          ...aiTurns,
+          AiTurn(
+            'model',
+            r.answer.isEmpty ? 'No answer was returned.' : r.answer,
+          ),
+        ],
+      );
+    } on ApiException catch (e) {
+      _set(
+        () => aiTurns = <AiTurn>[
+          ...aiTurns,
+          AiTurn('model', _aiErr(e), error: true),
+        ],
+      );
+    } catch (_) {
+      _set(
+        () => aiTurns = <AiTurn>[
+          ...aiTurns,
+          const AiTurn('model', 'Something went wrong. Try again.', error: true),
+        ],
+      );
+    } finally {
+      _set(() => aiBusy = false);
+    }
+  }
+
+  void clearAssistantChat() => _set(() => aiTurns = const <AiTurn>[]);
+
+  // ------------------------------------------------ email reminders (bills)
+  // Outstanding → Email reminder: pick a customer, tick bills, preview what
+  // the server will send, confirm, send. The server reads the bills, amounts
+  // and email address itself; the result shown is what it reported.
+
+  /// Sheet step: `party` → `bills` → `preview` → `confirm` → `result`.
+  String emStep = 'party';
+  String emParty = '';
+  String? emLedger;
+
+  /// The party's pending receivable bills on the phone (the server re-reads
+  /// them before sending).
+  List<Bill> emBills = const <Bill>[];
+  Set<String> emPicked = <String>{};
+  ReminderPreview? emPreview;
+  ReminderOutcome? emResult;
+  ReminderTemplates? emTemplates;
+  int? emTemplateId;
+  bool emBusy = false;
+  String? emError;
+
+  /// One confirmation = one key: sending it again (after no answer) never
+  /// sends a second email.
+  String? _emKey;
+
+  /// Customers with pending receivable bills, largest total first.
+  List<({String party, int bills, num total})> get emParties {
+    final Map<String, ({int bills, num total})> by =
+        <String, ({int bills, num total})>{};
+    for (final Bill b in repo.receivables()) {
+      if (b.amt <= 0) continue;
+      final ({int bills, num total})? x = by[b.party];
+      by[b.party] = (bills: (x?.bills ?? 0) + 1, total: (x?.total ?? 0) + b.amt);
+    }
+    return <({String party, int bills, num total})>[
+      for (final MapEntry<String, ({int bills, num total})> e in by.entries)
+        (party: e.key, bills: e.value.bills, total: e.value.total),
+    ]..sort(
+      (({String party, int bills, num total}) a,
+              ({String party, int bills, num total}) b) =>
+          b.total.compareTo(a.total),
+    );
+  }
+
+  /// Why email reminders cannot be used here, or null.
+  String? get emBlocked {
+    if (demo) return kDemoReminderBlocked.message;
+    if (!repo.isRemote) {
+      return 'Email reminders need your TallyConnect account.';
+    }
+    return null;
+  }
+
+  /// Opens the email reminder sheet (for [party] directly when given).
+  void openEmailReminder({String? party}) {
+    final String? why = emBlocked;
+    if (why != null) {
+      say(why);
+      return;
+    }
+    _set(() {
+      emStep = 'party';
+      emParty = '';
+      emLedger = null;
+      emBills = const <Bill>[];
+      emPicked = <String>{};
+      emPreview = null;
+      emResult = null;
+      emError = null;
+      emBusy = false;
+      _emKey = null;
+      overlay = 'emailRem';
+    });
+    if (party != null) pickEmailParty(party);
+    unawaited(_loadEmTemplates());
+  }
+
+  Future<void> _loadEmTemplates() async {
+    try {
+      final ReminderTemplates t = await repo.reminderTemplates();
+      _set(() {
+        emTemplates = t;
+        if (emTemplateId != null &&
+            !t.templates.any((ReminderTemplate x) => x.id == emTemplateId)) {
+          emTemplateId = null;
+        }
+      });
+    } catch (_) {
+      // Templates are optional here: the server uses its default.
+    }
+  }
+
+  /// The party's Tally ledger GUID (from its bills, else the party list).
+  String? _ledgerOf(String party) {
+    for (final Bill b in repo.receivables()) {
+      if (b.party == party && (b.ledgerGuid ?? '').isNotEmpty) {
+        return b.ledgerGuid;
+      }
+    }
+    final String? g = partyPool()
+        .where((Party p) => p.name == party)
+        .firstOrNull
+        ?.guid;
+    return (g ?? '').isEmpty ? null : g;
+  }
+
+  void pickEmailParty(String party) {
+    final List<Bill> bills =
+        repo
+            .receivables()
+            .where((Bill b) => b.party == party && b.amt > 0)
+            .toList()
+          ..sort(
+            (Bill a, Bill b) => (a.dueDate ?? DateTime(9999)).compareTo(
+              b.dueDate ?? DateTime(9999),
+            ),
+          );
+    final String? ledger = _ledgerOf(party);
+    _set(() {
+      emParty = party;
+      emLedger = ledger;
+      emBills = bills;
+      emPicked = <String>{for (final Bill b in bills) b.no};
+      emPreview = null;
+      emResult = null;
+      emStep = 'bills';
+      emError = ledger == null
+          ? '$party is not linked to a Tally ledger yet. Sync Tally and try '
+                'again.'
+          : bills.isEmpty
+          ? 'No pending bills for $party.'
+          : null;
+    });
+  }
+
+  void toggleEmailBill(String no) => _set(() {
+    emPicked = <String>{...emPicked};
+    if (!emPicked.remove(no)) emPicked.add(no);
+  });
+
+  void emailAllBills(bool on) => _set(
+    () => emPicked = on
+        ? <String>{for (final Bill b in emBills) b.no}
+        : <String>{},
+  );
+
+  void setEmailTemplate(int? id) => _set(() => emTemplateId = id);
+
+  /// Back one step inside the sheet.
+  void emailBack() => _set(() {
+    emError = null;
+    emStep = switch (emStep) {
+      'confirm' => 'preview',
+      'preview' || 'result' => 'bills',
+      _ => 'party',
+    };
+  });
+
+  /// Total of the ticked bills as on the phone (the preview shows the
+  /// server's).
+  num get emPickedTotal => sumRupees(
+    emBills.where((Bill b) => emPicked.contains(b.no)).map((Bill b) => b.amt),
+  );
+
+  /// Asks the server what the email will contain.
+  Future<void> previewEmailReminder() async {
+    final String? ledger = emLedger;
+    if (emBusy || ledger == null || emPicked.isEmpty) return;
+    _set(() {
+      emBusy = true;
+      emError = null;
+    });
+    try {
+      final ReminderPreview pv = await repo.previewReminder(
+        ledgerGuid: ledger,
+        bills: <String>[
+          for (final Bill b in emBills)
+            if (emPicked.contains(b.no)) b.no,
+        ],
+        templateId: emTemplateId,
+      );
+      _set(() {
+        emBusy = false;
+        emPreview = pv;
+        emResult = null;
+        _emKey = _newKey();
+        emStep = 'preview';
+      });
+    } on ApiException catch (e) {
+      _set(() {
+        emBusy = false;
+        emError = _remError(e);
+      });
+    } catch (_) {
+      _set(() {
+        emBusy = false;
+        emError = 'Could not prepare the reminder. Try again.';
+      });
+    }
+  }
+
+  /// Explicit confirmation step before anything is sent.
+  void confirmEmailReminder() {
+    if (emPreview?.canSend != true) return;
+    _set(() => emStep = 'confirm');
+  }
+
+  /// Sends the previewed reminder (after the confirmation step only).
+  Future<void> sendEmailReminder() async {
+    final ReminderPreview? pv = emPreview;
+    if (emBusy || pv == null || emStep != 'confirm' || !pv.canSend) return;
+    if (demo) {
+      say(kDemoReminderBlocked.message);
+      return;
+    }
+    _emKey ??= _newKey();
+    _set(() => emBusy = true);
+    final ReminderOutcome r = await repo.sendReminder(
+      ledgerGuid: pv.ledgerGuid,
+      bills: <String>[for (final ReminderBill b in pv.bills) b.no],
+      expectedTotal: pv.total,
+      key: _emKey!,
+      templateId: pv.templateId,
+    );
+    _set(() {
+      emBusy = false;
+      emResult = r;
+      emStep = 'result';
+      // A new reminder needs a new confirmation — except after no answer,
+      // when "Try again" must not send a second email.
+      if (!r.unknown) _emKey = null;
+    });
+    unawaited(loadReminderHistory(pv.ledgerGuid, force: true));
+  }
+
+  /// "Try again" on the result step: the same confirmation (no answer) or
+  /// a fresh preview (data changed).
+  Future<void> emailTryAgain() async {
+    final ReminderOutcome? r = emResult;
+    if (r == null) return;
+    if (r.unknown) {
+      _set(() => emStep = 'confirm');
+      await sendEmailReminder();
+      return;
+    }
+    await previewEmailReminder();
+  }
+
+  static String _newKey() {
+    final math.Random r = math.Random.secure();
+    return List<String>.generate(
+      24,
+      (_) => r.nextInt(16).toRadixString(16),
+    ).join();
+  }
+
+  /// Server reasons → one sentence (404 page = not deployed there yet).
+  String _remError(ApiException e) =>
+      e.kind == ApiErrorKind.notFound && e.body is! Map
+      ? 'Email reminders are not available on the server yet.'
+      : e.userMessage;
+
+  // ----------------------------------------------- reminder history (party)
+  final Map<String, List<ReminderLog>> _remHist = <String, List<ReminderLog>>{};
+  final Map<String, String> _remHistErr = <String, String>{};
+  final Set<String> _remHistLoading = <String>{};
+  final Set<int> _remRetrying = <int>{};
+
+  /// This party's reminders (null until loaded).
+  List<ReminderLog>? reminderLogs(String ledgerGuid) => _remHist[ledgerGuid];
+  String? reminderLogsError(String ledgerGuid) => _remHistErr[ledgerGuid];
+  bool reminderLogsLoading(String ledgerGuid) =>
+      _remHistLoading.contains(ledgerGuid);
+  bool retrying(int id) => _remRetrying.contains(id);
+
+  Future<void> loadReminderHistory(
+    String ledgerGuid, {
+    bool force = false,
+  }) async {
+    if (emBlocked != null || ledgerGuid.isEmpty) return;
+    if (_remHistLoading.contains(ledgerGuid)) return;
+    if (!force && _remHist.containsKey(ledgerGuid)) return;
+    _set(() => _remHistLoading.add(ledgerGuid));
+    try {
+      final List<ReminderLog> l = await repo.reminderHistory(ledgerGuid);
+      _set(() {
+        _remHist[ledgerGuid] = l;
+        _remHistErr.remove(ledgerGuid);
+      });
+    } on ApiException catch (e) {
+      _set(() => _remHistErr[ledgerGuid] = _remError(e));
+    } catch (_) {
+      _set(() => _remHistErr[ledgerGuid] = 'Could not load reminders.');
+    } finally {
+      _set(() => _remHistLoading.remove(ledgerGuid));
+    }
+  }
+
+  /// Sends a failed reminder again; the toast says what the server reported.
+  Future<void> retryEmailReminder(ReminderLog l) async {
+    if (_remRetrying.contains(l.id)) return;
+    if (emBlocked != null) {
+      say(emBlocked!);
+      return;
+    }
+    _set(() => _remRetrying.add(l.id));
+    final ReminderOutcome r = await repo.retryReminder(l.id);
+    _set(() => _remRetrying.remove(l.id));
+    say(r.message);
+    await loadReminderHistory(l.ledgerGuid, force: true);
+  }
+
+  // ------------------------------------------ reminder templates (admin)
+  /// Templates are managed by the account admin, on real data only.
+  bool get canManageReminderTemplates =>
+      emBlocked == null && (repo.user?.isAdmin ?? false);
+
+  bool emTplBusy = false;
+  String? emTplError;
+
+  /// The template being edited (`null` id = a new one).
+  ReminderTemplate? emTplEdit;
+
+  void openReminderTemplates() {
+    if (!canManageReminderTemplates) {
+      say(emBlocked ?? 'Only the admin can manage email templates.');
+      return;
+    }
+    _set(() {
+      emTplError = null;
+      overlay = 'remTemplates';
+    });
+    unawaited(_loadEmTemplates());
+  }
+
+  void editReminderTemplate(ReminderTemplate? t) {
+    final ReminderTemplate base =
+        t ??
+        const ReminderTemplate(
+          id: null,
+          name: '',
+          subject: 'Payment reminder from {{company}} · {{total}} outstanding',
+          body:
+              'Dear {{party}},\n\nThe following bills are pending:\n\n'
+              '{{bills}}\n\nTotal outstanding: {{total}}\n\nRegards,\n'
+              '{{sender}}\n{{company}}',
+        );
+    // The built-in template is copied into a new one of the account's.
+    final ReminderTemplate e = base.builtIn && t != null
+        ? ReminderTemplate(
+            id: null,
+            name: '',
+            subject: base.subject,
+            body: base.body,
+            isDefault: true,
+          )
+        : base;
+    form['rtName'] = e.name;
+    form['rtSubject'] = e.subject;
+    form['rtBody'] = e.body;
+    _set(() {
+      emTplEdit = e;
+      emTplError = null;
+      overlay = 'remTemplateEdit';
+    });
+  }
+
+  void toggleTemplateDefault() => _set(() {
+    final ReminderTemplate? e = emTplEdit;
+    if (e == null) return;
+    emTplEdit = ReminderTemplate(
+      id: e.id,
+      name: e.name,
+      subject: e.subject,
+      body: e.body,
+      isDefault: !e.isDefault,
+    );
+  });
+
+  /// Why the template cannot be saved yet, or null.
+  String? get templateFormError {
+    if (f('rtName').trim().isEmpty) return 'Give the template a name';
+    if (f('rtSubject').trim().isEmpty) return 'Write a subject';
+    if (f('rtBody').trim().isEmpty) return 'Write the message';
+    return null;
+  }
+
+  Future<void> saveReminderTemplate() async {
+    final ReminderTemplate? e = emTplEdit;
+    if (e == null || emTplBusy || templateFormError != null) return;
+    _set(() {
+      emTplBusy = true;
+      emTplError = null;
+    });
+    try {
+      await repo.saveReminderTemplate(
+        ReminderTemplate(
+          id: e.id,
+          name: f('rtName').trim(),
+          subject: f('rtSubject').trim(),
+          body: f('rtBody').trim(),
+          isDefault: e.isDefault,
+        ),
+      );
+      await _loadEmTemplates();
+      _set(() {
+        emTplBusy = false;
+        emTplEdit = null;
+        overlay = 'remTemplates';
+      });
+      say('Template saved');
+    } on ApiException catch (x) {
+      _set(() {
+        emTplBusy = false;
+        emTplError = _remError(x);
+      });
+    }
+  }
+
+  Future<void> deleteReminderTemplate(ReminderTemplate t) async {
+    final int? id = t.id;
+    if (id == null || emTplBusy) return;
+    _set(() => emTplBusy = true);
+    try {
+      await repo.deleteReminderTemplate(id);
+      await _loadEmTemplates();
+      say('Template deleted');
+    } on ApiException catch (x) {
+      say(_remError(x));
+    } finally {
+      _set(() => emTplBusy = false);
+    }
+  }
+
+  // ---------------------------------------------------------- voice search
+  /// The search sheet is listening.
+  bool voiceOn = false;
+
+  /// Shown under the search field: listening / why voice could not run.
+  String? voiceNote;
+
+  static const String kVoiceListening = 'Listening… speak now';
+  static const String kVoiceDenied =
+      'Microphone permission is off. Allow it in Settings → Apps → '
+      'TallyConnect → Permissions, then tap the mic again.';
+  static const String kVoiceUnavailable =
+      'Voice search is not available on this device. Type to search.';
+  static const String kVoiceNoMatch =
+      'Didn’t catch that. Tap the mic and try again.';
+  static const String kVoiceNetwork =
+      'Voice search needs an internet connection on this phone.';
+
+  /// Mic in the search field: one tap starts listening, the next stops.
+  /// Recognised words go through the same search path as typing.
+  /// The field speech fills: `q` (search) or `aiQ` (AI assistant).
+  String _voiceField = 'q';
+
+  /// Search sheet mic (fills the search field).
+  Future<void> toggleVoiceSearch() => _toggleVoice('q');
+
+  /// AI assistant mic: speech fills the question field; the user checks it
+  /// and taps Send (nothing is sent by voice alone).
+  Future<void> toggleAssistantVoice() => _toggleVoice('aiQ');
+
+  bool get aiVoiceOn => voiceOn && _voiceField == 'aiQ';
+
+  Future<void> _toggleVoice(String field) async {
+    if (voiceOn) {
+      await stopVoiceSearch();
+      return;
+    }
+    _voiceField = field;
+    _set(() => voiceNote = null);
+    final VoiceStart s = await voice.prepare();
+    if (_disposed) return;
+    if (s != VoiceStart.ok) {
+      _set(
+        () => voiceNote = s == VoiceStart.denied
+            ? kVoiceDenied
+            : kVoiceUnavailable,
+      );
+      return;
+    }
+    _set(() {
+      voiceOn = true;
+      voiceNote = kVoiceListening;
+    });
+    try {
+      await voice.listen(
+        VoiceSession(
+          onWords: _onVoiceWords,
+          onDone: _onVoiceDone,
+          onError: _onVoiceError,
+        ),
+      );
+    } catch (_) {
+      _set(() {
+        voiceOn = false;
+        voiceNote = kVoiceUnavailable;
+      });
+    }
+  }
+
+  Future<void> stopVoiceSearch() async {
+    if (!voiceOn) return;
+    await voice.stop();
+    _onVoiceDone();
+  }
+
+  void _onVoiceWords(String words, bool isFinal) {
+    if (_disposed) return;
+    final String w = words.trim();
+    if (w.isEmpty) return;
+    if (_voiceField == 'q') {
+      // Same field, debounce and results as typing; shown at once.
+      setQuery('q', w);
+      _set();
+    } else {
+      _set(() => form[_voiceField] = w);
+    }
+    if (isFinal) _onVoiceDone();
+  }
+
+  void _onVoiceDone() {
+    if (_disposed || !voiceOn) return;
+    _set(() {
+      voiceOn = false;
+      if (voiceNote == kVoiceListening) voiceNote = null;
+    });
+  }
+
+  void _onVoiceError(String code, bool permanent) {
+    if (_disposed) return;
+    final String c = code.toLowerCase();
+    _set(() {
+      voiceOn = false;
+      voiceNote = c.contains('permission')
+          ? kVoiceDenied
+          : (c.contains('no_match') || c.contains('speech_timeout'))
+          ? kVoiceNoMatch
+          : c.contains('network')
+          ? kVoiceNetwork
+          : 'Voice input stopped ($code). You can type instead.';
+    });
+  }
+
   /// Clears a search field immediately.
   void clearQuery(String k) {
     _qTimers[k]?.cancel();
@@ -1236,7 +2049,13 @@ class AppController extends ChangeNotifier {
       final Party? p = partyPool()
           .where((Party x) => x.name == party)
           .firstOrNull;
-      if (p != null) repo.loadPartyDetail(p);
+      if (p != null) {
+        repo.loadPartyDetail(p);
+        // Email reminders go to customers (and other debtor ledgers).
+        if (p.type != 's' && (p.guid ?? '').isNotEmpty) {
+          unawaited(loadReminderHistory(p.guid!));
+        }
+      }
     } else if (s == 'entryDetail') {
       final String? g = entry?.guid;
       if (g != null && g.isNotEmpty) repo.loadVoucherLines(g);
@@ -1336,6 +2155,23 @@ class AppController extends ChangeNotifier {
       });
       say('Thank you — your feedback was sent');
     } on ApiException catch (e) {
+      // Saved on the server but the email was not sent / not confirmed:
+      // the form closes (sending again would save it twice) and the toast
+      // says exactly that — never "sent".
+      final Object? b = e.body;
+      if (b is Map && b['stored'] == true) {
+        _set(() {
+          fbSending = false;
+          form['fbMsg'] = '';
+          if (overlay == 'feedback') overlay = null;
+        });
+        say(
+          e.message.isNotEmpty
+              ? e.message
+              : 'Your feedback was saved, but the email to the team was not sent.',
+        );
+        return;
+      }
       _set(() => fbSending = false);
       // 404 = this server has no feedback endpoint (not deployed there);
       // Express's own "Cannot POST /api/feedback" page is not shown.
@@ -1495,6 +2331,91 @@ class AppController extends ChangeNotifier {
     openOverlay('dateRange');
   }
 
+  // ------------------------------------------------ one-row period bar
+  /// The period row shown on Vouchers, Reports and Outstanding (plus its
+  /// "Date range" option).
+  static const List<(String, String)> kPeriodBar = <(String, String)>[
+    ('all', 'All time'),
+    ('month', 'This month'),
+    ('week', 'Last 7 days'),
+    ('today', 'Today'),
+  ];
+
+  /// Quick periods applied as a date range on pages whose filter is a range
+  /// (Reports: Last 7 days / Today; Outstanding: all but All time).
+  final Map<String, String> _quickPeriod = <String, String>{};
+
+  /// The range a quick period stands for (both days included).
+  DateRange quickRange(String k) {
+    final DateTime t = DateTime(today.year, today.month, today.day);
+    return switch (k) {
+      'today' => DateRange(t, t),
+      'week' => DateRange(t.subtract(const Duration(days: 6)), t),
+      _ => DateRange(DateTime(t.year, t.month), t),
+    };
+  }
+
+  bool _sameRange(DateRange? a, DateRange b) =>
+      a != null &&
+      ymd(a.from) == ymd(b.from) &&
+      ymd(a.to) == ymd(b.to);
+
+  /// Selected option of [target]'s period row: a [kPeriodBar] key, or
+  /// `range` for a custom date range.
+  String periodSel(String target) {
+    String fromRange(bool on) {
+      if (!on || range == null) return 'all';
+      final String? q = _quickPeriod[target];
+      return q != null && _sameRange(range, quickRange(q)) ? q : 'range';
+    }
+
+    return switch (target) {
+      'rep' =>
+        repPeriod == 'range' ? fromRange(true) : (repPeriod == 'all' ? 'all' : 'month'),
+      'out' => fromRange(outRange),
+      _ => vPeriod,
+    };
+  }
+
+  /// A period chosen in the row. Vouchers have every period natively;
+  /// Reports have All time / This month and take the others as a range;
+  /// Outstanding filters bills by date range only.
+  void pickPeriod(String target, String k) {
+    switch (target) {
+      case 'v':
+        update(() => vPeriod = k);
+      case 'rep':
+        if (k == 'all' || k == 'month') {
+          _quickPeriod.remove('rep');
+          setRepPeriod(k);
+          return;
+        }
+        _applyQuick('rep', k);
+      case 'out':
+        if (k == 'all') {
+          _quickPeriod.remove('out');
+          _set(() => outRange = false);
+          return;
+        }
+        _applyQuick('out', k);
+    }
+  }
+
+  void _applyQuick(String target, String k) {
+    final DateRange r = quickRange(k);
+    _quickPeriod[target] = k;
+    _set(() {
+      range = r;
+      if (target == 'rep') repPeriod = 'range';
+      if (target == 'out') outRange = true;
+    });
+    store.save(LocalStorage.kDateRange, <String, String>{
+      'from': ymd(r.from),
+      'to': ymd(r.to),
+    });
+    if (target == 'rep') store.save(LocalStorage.kRepPeriod, 'range');
+  }
+
   /// Quick choices in the range sheet.
   static const List<(String, String)> kRangePresets = <(String, String)>[
     ('month', 'This month'),
@@ -1537,6 +2458,8 @@ class AppController extends ChangeNotifier {
       DateTime.parse(f('drFrom')),
       DateTime.parse(f('drTo')),
     );
+    // A custom range: no quick period is highlighted for this page.
+    _quickPeriod.remove(rangeFor);
     _set(() {
       range = r;
       switch (rangeFor) {
@@ -1561,6 +2484,7 @@ class AppController extends ChangeNotifier {
 
   /// Removes the range from a page (back to its usual view).
   void clearRange(String target) => _set(() {
+    _quickPeriod.remove(target);
     switch (target) {
       case 'rep':
         repPeriod = 'month';
@@ -1737,10 +2661,20 @@ class AppController extends ChangeNotifier {
       repo.ensure(DataSet.items);
       if (o == 'search') repo.ensure(DataSet.ledgers);
     }
-    _set(() => overlay = o);
+    _set(() {
+      if (o == 'search') voiceNote = null;
+      overlay = o;
+    });
   }
 
-  void closeOv() => _set(() => overlay = null);
+  void closeOv() {
+    // Closing the search / assistant sheet ends listening.
+    if (voiceOn) unawaited(stopVoiceSearch());
+    _set(() {
+      if (overlay == 'search' || overlay == 'assistant') voiceNote = null;
+      overlay = null;
+    });
+  }
 
   // ---------------------------------------------------------- nav actions
   /// The session is a real server account (also while Demo Company is the
@@ -1809,6 +2743,11 @@ class AppController extends ChangeNotifier {
   }
 
   void _endSession(String msg) {
+    // Signed out: the assistant forgets this account's key and chat (the
+    // key stays in the keystore for that account only).
+    _aiKey = null;
+    _aiKeyFor = null;
+    aiTurns = const <AiTurn>[];
     _set(() {
       screen = 'login';
       history = <String>[];

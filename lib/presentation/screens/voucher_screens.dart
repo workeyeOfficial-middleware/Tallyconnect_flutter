@@ -107,31 +107,14 @@ class VHubScreen extends ConsumerWidget {
       return vc?.error != null ? 'Count unavailable' : 'Counting…';
     }
 
-    const List<(String, String)> periods = <(String, String)>[
-      ('all', 'All time'),
-      ('month', 'This month'),
-      ('week', 'Last 7 days'),
-      ('today', 'Today'),
-    ];
-
     return Scr(
       children: <Widget>[
         const BackNav(),
         const H1('Vouchers', afterNav: true),
         const Sub('Entries you have already saved'),
-        // One period for the summary amounts and the tile counts below.
-        Seg(
-          margin: const EdgeInsets.only(bottom: 10),
-          items: periods.map(((String, String) e) => e.$2).toList(),
-          // None of these while a date range is on.
-          selected: period == 'range'
-              ? -1
-              : periods
-                    .indexWhere(((String, String) e) => e.$1 == period)
-                    .clamp(0, periods.length - 1),
-          onPick: (int i) => c.update(() => c.vPeriod = periods[i].$1),
-        ),
-        RangeChip(target: 'v', on: period == 'range'),
+        // One period for the summary amounts and the tile counts below
+        // (with Date range, on one row).
+        const PeriodBar(target: 'v', margin: EdgeInsets.only(bottom: 14)),
         Glass(
           padding: const EdgeInsets.all(18),
           child: Column(
@@ -563,16 +546,7 @@ class _VList extends StatelessWidget {
           total: totalText,
         ),
         VoucherTypeRow(c: c, otherTypes: otherTypes),
-        Seg(
-          hoverSelect: true,
-          margin: const EdgeInsets.only(bottom: 10),
-          items: periods.map(((String, String) e) => e.$2).toList(),
-          selected: periods.indexWhere(
-            ((String, String) e) => e.$1 == c.vPeriod,
-          ),
-          onPick: (int i) => c.update(() => c.vPeriod = periods[i].$1),
-        ),
-        RangeChip(target: 'v', on: c.vPeriod == 'range'),
+        const PeriodBar(target: 'v', margin: EdgeInsets.only(bottom: 14)),
         // Rows are built only while on screen.
         SliverGlassList(
           itemCount: v.rows.length + extra,

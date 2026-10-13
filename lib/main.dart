@@ -15,7 +15,9 @@ import 'app/providers.dart';
 import 'core/app_icon/app_icon.dart';
 import 'core/design/tc_kit.dart';
 import 'core/notify/reminder_alarms.dart';
+import 'core/storage/assistant_key_store.dart';
 import 'core/storage/local_storage.dart';
+import 'core/voice/voice_input.dart';
 import 'data/repositories/api_tally_repository.dart';
 import 'data/repositories/demo_repository.dart';
 import 'data/repositories/tally_repository.dart';
@@ -66,6 +68,12 @@ Future<Widget> _boot() async {
         : NoReminderAlarms(),
     // Theme-matched launcher icon (Android launcher aliases).
     appIcon: Platform.isAndroid ? DeviceAppIcon() : NoAppIcon(),
+    // Voice search (device speech recognition).
+    voice: Platform.isAndroid || Platform.isIOS
+        ? DeviceVoiceInput()
+        : const NoVoiceInput(),
+    // AI assistant: the user's Gemini key in the platform keystore.
+    assistantKeys: SecureAssistantKeyStore(),
   );
   // The launcher icon is switched when the app goes to the background;
   // back in front, the app checks for a new Tally sync / new alerts.

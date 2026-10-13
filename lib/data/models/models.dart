@@ -5,6 +5,9 @@ library;
 
 import '../../core/utils/format.dart' show parseDmy;
 
+export 'assistant.dart';
+export 'email_reminder.dart';
+
 /// A navigation target: `'screen'` or `['screen', {params}]`.
 class NavTo {
   const NavTo(this.screen, [this.extra = const <String, Object?>{}]);

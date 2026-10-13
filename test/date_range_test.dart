@@ -337,6 +337,16 @@ void main() {
         }
       }
 
+      // The period row scrolls sideways on phones: scroll to the option
+      // first, as a user would.
+      Future<void> tapKey(String k) async {
+        final Finder f = find.byKey(ValueKey<String>(k));
+        await t.ensureVisible(f);
+        await t.pump();
+        await t.tap(f);
+        await settle();
+      }
+
       Future<void> pickThisMonth() async {
         expect(find.text('Date range'), findsWidgets);
         await t.tap(find.text('This month').last);
@@ -350,8 +360,7 @@ void main() {
       // Vouchers hub: the option under the period choices.
       c.jump('vHub');
       await settle();
-      await t.tap(find.byKey(const ValueKey<String>('range-v')));
-      await settle();
+      await tapKey('range-v');
       expect(c.overlay, 'dateRange');
       await pickThisMonth();
       expect(c.vPeriod, 'range');
@@ -360,8 +369,7 @@ void main() {
       c.go('vList', <String, Object?>{'vFilter': 'sales', 'vPeriod': 'range'});
       await settle();
       expect(find.text(c.range!.label), findsOneWidget);
-      await t.tap(find.byKey(const ValueKey<String>('range-clear-v')));
-      await settle();
+      await tapKey('range-clear-v');
       expect(c.vPeriod, 'all');
 
       // Outstanding: calendar button beside search / Share.
@@ -375,15 +383,13 @@ void main() {
       await settle();
       expect(find.text(c.range!.label), findsOneWidget);
       expect(t.takeException(), isNull);
-      await t.tap(find.byKey(const ValueKey<String>('range-clear-out')));
-      await settle();
+      await tapKey('range-clear-out');
       expect(c.outRange, isFalse);
 
       // Reports and Top customers.
       c.jump('reports');
       await settle();
-      await t.tap(find.byKey(const ValueKey<String>('range-rep')));
-      await settle();
+      await tapKey('range-rep');
       await pickThisMonth();
       expect(c.repPeriod, 'range');
       for (final String id in <String>['top', 'day', 'sreg', 'preg', 'stock']) {

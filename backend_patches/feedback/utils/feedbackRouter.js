@@ -7,9 +7,13 @@
               PATCH /api/admin/feedback/:id             {status, admin_note}
               POST  /api/admin/feedback/:id/resend-email
 
-   Every submission is stored FIRST; the notification email is sent after
-   the response. If the email fails the feedback is kept (email_status =
-   'failed') and can be re-sent from the admin route.
+   Every submission is stored FIRST, then the notification email is sent
+   and only then does the request answer — with the real email result:
+     201 {success:true,  email_status:'sent'}    Microsoft Graph accepted it
+     502 {success:false, email_status:'failed'}  Graph refused / unreachable
+     503 {success:false, email_status:'skipped'} no recipient configured
+   The feedback is kept in every case (`stored:true`, email_status recorded)
+   and a failed email can be re-sent from the admin route.
 ========================================================= */
 import express from "express";
 import {
@@ -40,41 +44,52 @@ export function createFeedbackRouter({ db, auth, sendEmail, env = process.env, l
   const router = express.Router();
   const cfg = () => feedbackConfig(env);
 
-  /** Sends the notification for a stored row and records the outcome. */
+  /**
+   * Sends the notification for a stored row and records the outcome.
+   * @returns {Promise<{status: "sent"|"failed"|"skipped", error?: string}>}
+   */
   async function notify(row) {
     const to = cfg().notifyEmail;
     if (!to) {
+      const error = "FEEDBACK_NOTIFICATION_EMAIL is not set (or not a valid email)";
+      log.error(`feedback #${row.id} email skipped: ${error}`);
       await db
         .query(
           `UPDATE feedback SET email_status = 'skipped',
-             email_error = 'FEEDBACK_NOTIFICATION_EMAIL is not set', updated_at = NOW()
+             email_error = $2, updated_at = NOW()
            WHERE id = $1`,
-          [row.id]
+          [row.id, error]
         )
         .catch((e) => log.error("feedback email status update failed:", e.message));
-      return "skipped";
+      return { status: "skipped", error };
     }
     try {
       const { subject, html } = buildFeedbackEmail(row);
-      await sendEmail({ to, subject, html, replyTo: row.user_email || null });
+      const res = await sendEmail({ to, subject, html, replyTo: row.user_email || null });
+      (log.info || log.log || (() => {})).call(
+        log,
+        `feedback #${row.id} email accepted by Microsoft Graph` +
+          ` (HTTP ${res?.status ?? "?"}, request-id ${res?.requestId ?? "-"})`
+      );
       await db.query(
         `UPDATE feedback SET email_status = 'sent', email_error = NULL,
            email_attempts = email_attempts + 1, emailed_at = NOW(), updated_at = NOW()
          WHERE id = $1`,
         [row.id]
       );
-      return "sent";
+      return { status: "sent" };
     } catch (err) {
-      log.error(`feedback #${row.id} email failed:`, err?.message || err);
+      const error = String(err?.message || err).slice(0, 500);
+      log.error(`feedback #${row.id} email failed:`, error);
       await db
         .query(
           `UPDATE feedback SET email_status = 'failed', email_error = $2,
              email_attempts = email_attempts + 1, updated_at = NOW()
            WHERE id = $1`,
-          [row.id, String(err?.message || err).slice(0, 500)]
+          [row.id, error]
         )
         .catch((e) => log.error("feedback email status update failed:", e.message));
-      return "failed";
+      return { status: "failed", error };
     }
   }
 
@@ -143,10 +158,24 @@ export function createFeedbackRouter({ db, auth, sendEmail, env = process.env, l
         ]
       );
       const row = ins.rows[0];
-      res.status(201).json({ success: true, id: row.id });
 
-      // After the response: the feedback is already stored either way.
-      notify(row).catch((e) => log.error("feedback notify error:", e?.message || e));
+      // Answer only once the email result is known (the row is stored
+      // whatever happens). Provider details stay in the log / database.
+      const email = await notify(row);
+      if (email.status === "sent") {
+        return res.status(201).json({ success: true, id: row.id, email_status: "sent" });
+      }
+      const skipped = email.status === "skipped";
+      return res.status(skipped ? 503 : 502).json({
+        success: false,
+        stored: true,
+        id: row.id,
+        email_status: email.status,
+        code: skipped ? "email_not_configured" : "email_failed",
+        message: skipped
+          ? `Your feedback was saved (#${row.id}), but feedback email is not set up on the server, so the TallyConnect team was not emailed.`
+          : `Your feedback was saved (#${row.id}), but the email to the TallyConnect team could not be sent. Please try again later.`,
+      });
     } catch (err) {
       log.error("feedback submit error:", err.message);
       if (!res.headersSent) {
@@ -210,6 +239,22 @@ export function createFeedbackRouter({ db, auth, sendEmail, env = process.env, l
     }
   });
 
+  /** Which email settings the running server has (never their values,
+   *  except the recipient address the team chose). */
+  router.get("/api/admin/feedback/email-config", auth, requireFeedbackAdmin, (req, res) => {
+    const has = (k) => Boolean(String(env[k] || "").trim());
+    res.json({
+      success: true,
+      notify_email: cfg().notifyEmail,
+      graph: {
+        MICROSOFT_TENANT_ID: has("MICROSOFT_TENANT_ID"),
+        MICROSOFT_CLIENT_ID: has("MICROSOFT_CLIENT_ID"),
+        MICROSOFT_CLIENT_SECRET: has("MICROSOFT_CLIENT_SECRET"),
+        MICROSOFT_SENDER_EMAIL: has("MICROSOFT_SENDER_EMAIL"),
+      },
+    });
+  });
+
   router.get("/api/admin/feedback/:id", auth, requireFeedbackAdmin, async (req, res) => {
     const id = idOf(req);
     if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
@@ -259,8 +304,12 @@ export function createFeedbackRouter({ db, auth, sendEmail, env = process.env, l
     try {
       const r = await db.query(`SELECT ${SELECT_COLS} FROM feedback WHERE id = $1`, [id]);
       if (!r.rows[0]) return res.status(404).json({ success: false, message: "Not found" });
-      const emailStatus = await notify(r.rows[0]);
-      res.json({ success: emailStatus === "sent", email_status: emailStatus });
+      const email = await notify(r.rows[0]);
+      res.json({
+        success: email.status === "sent",
+        email_status: email.status,
+        email_error: email.error || null,
+      });
     } catch (err) {
       log.error("feedback resend error:", err.message);
       res.status(500).json({ success: false, message: "Server error" });

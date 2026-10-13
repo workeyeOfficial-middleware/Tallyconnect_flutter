@@ -66,42 +66,52 @@ class OutHubScreen extends ConsumerWidget {
     final List<Bill> soon = dueSoon(recv, payb, c.today);
     return Scr(
       children: <Widget>[
-        NavRow(
-          children: <Widget>[
-            CBtn('menu', onTap: () => c.openOverlay('menu')),
-            // Shrinks with "…" on narrow phones (the buttons always fit).
-            Expanded(
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: Bdg(
-                  c.repo.isRemote ? 'As on ${dmy(c.today)}' : 'Sample data',
-                  kind: BadgeKind.acc,
+        // Compact action icons (as in every header with several actions).
+        NavDense(
+          on: true,
+          child: NavRow(
+            gap: MediaQuery.sizeOf(context).width < 360 ? 5 : 8,
+            children: <Widget>[
+              CBtn(
+                'menu',
+                size: 44,
+                iconSize: IcSize.m,
+                onTap: () => c.openOverlay('menu'),
+              ),
+              // Shrinks with "…" on narrow phones (the buttons always fit).
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Bdg(
+                    c.repo.isRemote ? 'As on ${dmy(c.today)}' : 'Sample data',
+                    kind: BadgeKind.acc,
+                  ),
                 ),
               ),
-            ),
-            CBtn(
-              'calendar',
-              key: const ValueKey<String>('outRangeBtn'),
-              dot: rng,
-              onTap: () => c.openRange('out'),
-            ),
-            CBtn(
-              'search',
-              key: const ValueKey<String>('outSearchBtn'),
-              onTap: c.toggleOutSearch,
-            ),
-            // All active reminders (dot: one is due now).
-            CBtn(
-              'bell',
-              key: const ValueKey<String>('remindersBtn'),
-              dot: c.dueReminders.isNotEmpty,
-              onTap: () => c.openOverlay('reminders'),
-            ),
-          ],
+              CBtn(
+                'calendar',
+                key: const ValueKey<String>('outRangeBtn'),
+                dot: rng,
+                onTap: () => c.openRange('out'),
+              ),
+              CBtn(
+                'search',
+                key: const ValueKey<String>('outSearchBtn'),
+                onTap: c.toggleOutSearch,
+              ),
+              // All active reminders (dot: one is due now).
+              CBtn(
+                'bell',
+                key: const ValueKey<String>('remindersBtn'),
+                dot: c.dueReminders.isNotEmpty,
+                onTap: () => c.openOverlay('reminders'),
+              ),
+            ],
+          ),
         ),
         const H1('Outstanding', afterNav: true),
         const Sub('Receivable and payable bills still to be settled'),
-        if (rng) const RangeChip(target: 'out', on: true),
+        const PeriodBar(target: 'out'),
         if (c.outSearch) ...<Widget>[
           OutSearchBox(c: c),
           if (c.outQuery.trim().isNotEmpty) ...<Widget>[
@@ -428,7 +438,7 @@ class OutListScreen extends ConsumerWidget {
               ? 'Money customers owe you (Outstanding)'
               : 'Money you owe suppliers (Outstanding)',
         ),
-        if (rng) const RangeChip(target: 'out', on: true),
+        const PeriodBar(target: 'out'),
         if (c.outSearch) ...<Widget>[
           OutSearchBox(c: c),
           if (c.outQuery.trim().isNotEmpty)
@@ -518,6 +528,23 @@ class OutListScreen extends ConsumerWidget {
             ],
           ),
         ),
+        // Receivables: email a customer a reminder of their pending bills.
+        if (isR)
+          GlassRow(
+            key: const ValueKey<String>('outEmailRem'),
+            margin: const EdgeInsets.only(top: 12),
+            onTap: c.openEmailReminder,
+            children: <Widget>[
+              Ico('mail', size: IcoSize.xs, color: p.navy, icon: IcSize.s),
+              Expanded(
+                child: RTx(
+                  'Email reminder',
+                  c.emBlocked ?? 'Email a customer their pending bills',
+                ),
+              ),
+              chevR(),
+            ],
+          ),
         if (!isR)
           GlassRow(
             margin: const EdgeInsets.only(top: 12),

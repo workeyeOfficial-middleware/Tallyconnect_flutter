@@ -1,5 +1,20 @@
 # Feedback API — manual deployment
 
+> **2026-10-12 fix — email result.** `POST /api/feedback` now answers only
+> after the email was tried: `201 {email_status:"sent"}` (Microsoft Graph
+> accepted it, HTTP 202), `502 {email_status:"failed"}`, or
+> `503 {email_status:"skipped"}` when `FEEDBACK_NOTIFICATION_EMAIL` is
+> missing / invalid. The feedback is stored in every case (`stored:true`).
+> The app shows "Thank you — your feedback was sent" only for `sent`.
+> Updated files: `utils/feedbackRouter.js`, `utils/sendFeedbackEmail.js`.
+> New team check: `GET /api/admin/feedback/email-config` (needs
+> `FEEDBACK_ADMIN_EMAILS`) shows the recipient and which `MICROSOFT_*`
+> variables are present (never their values).
+>
+> **Check the recipient spelling** in `tally-backend/.env` on the server:
+> it must be exactly the inbox that should receive feedback (e.g.
+> `work272002@gmail.com` — the example below used `wokk2720022@gmail.com`).
+
 Everything here is applied **by hand**. Nothing has been run against any
 database or server.
 

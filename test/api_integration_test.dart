@@ -88,6 +88,51 @@ class FakeBackend {
   /// A server deployed without the feedback route (Express's own 404).
   bool feedbackMissing = false;
 
+  /// What happens to the notification email: `sent` (Graph accepted it),
+  /// `failed` (502), `skipped` (503, no recipient set) or `legacy` (the old
+  /// server: 201 before trying the email, no `email_status`).
+  String feedbackEmail = 'sent';
+
+  // ------------------------------------------- /api/reminders/* (fake)
+  /// The server's own pending bills of ledger L1 (it never takes amounts
+  /// from the app): bill no. → (pending, due).
+  Map<String, (num, String)> remBills = <String, (num, String)>{
+    'S/101': (10000.50, '2026-09-20'),
+    'S/102': (5000.00, '2026-10-05'),
+  };
+
+  /// L1's email in Tally (null: none saved).
+  String? remEmail = 'accounts@mehta.in';
+
+  /// Server deployed without the reminder routes (Express's own 404).
+  bool remMissing = false;
+
+  /// MICROSOFT_* variables missing on the server.
+  bool remNotConfigured = false;
+
+  /// Microsoft Graph refuses the email.
+  bool remSendFail = false;
+
+  /// Bodies of POST /api/reminders/send (one per real send attempt).
+  final List<Map<String, Object?>> remSends = <Map<String, Object?>>[];
+  final List<Map<String, Object?>> remLogs = <Map<String, Object?>>[];
+  final List<Map<String, Object?>> remTemplates = <Map<String, Object?>>[];
+  int _remId = 1;
+
+  // -------------------------------------------- /api/assistant/* (fake)
+  /// Gemini keys the fake Gemini accepts.
+  Set<String> aiValidKeys = <String>{'AIzaGOODKEY_1234567890abcdef'};
+
+  /// `quota` (429), `down` (502) or null.
+  String? aiFail;
+
+  /// Server deployed without the assistant routes.
+  bool aiMissing = false;
+
+  /// Bodies of POST /api/assistant/ask; X-Gemini-Key of every call.
+  final List<Map<String, Object?>> aiAsks = <Map<String, Object?>>[];
+  final List<String?> aiKeysSeen = <String?>[];
+
   /// Users removed with DELETE /users/:id.
   final Set<String> deletedUsers = <String>{};
 
@@ -124,6 +169,8 @@ class FakeBackend {
           );
       }
     }
+    if (p.startsWith('/api/reminders')) return _reminders(r, p);
+    if (p.startsWith('/api/assistant')) return _assistant(r, p);
     if (p == '/api/feedback' && r.method == 'POST') {
       if (feedbackMissing) {
         return http.Response(
@@ -141,10 +188,35 @@ class FakeBackend {
         );
       }
       feedback.add(jsonDecode(r.body) as Map<String, Object?>);
-      return http.Response(
-        jsonEncode(<String, Object?>{'success': true, 'id': feedback.length}),
-        201,
-      );
+      final int id = feedback.length;
+      return switch (feedbackEmail) {
+        'legacy' => http.Response(
+          jsonEncode(<String, Object?>{'success': true, 'id': id}),
+          201,
+        ),
+        'failed' || 'skipped' => _json(
+          feedbackEmail == 'failed' ? 502 : 503,
+          <String, Object?>{
+            'success': false,
+            'stored': true,
+            'id': id,
+            'email_status': feedbackEmail,
+            'code': feedbackEmail == 'failed'
+                ? 'email_failed'
+                : 'email_not_configured',
+            'message': feedbackEmail == 'failed'
+                ? 'Your feedback was saved (#$id), but the email to the '
+                      'TallyConnect team could not be sent. Please try again later.'
+                : 'Your feedback was saved (#$id), but feedback email is not '
+                      'set up on the server, so the TallyConnect team was not emailed.',
+          },
+        ),
+        _ => _json(201, <String, Object?>{
+          'success': true,
+          'id': id,
+          'email_status': 'sent',
+        }),
+      };
     }
     switch (p) {
       case '/auth/login':
@@ -637,6 +709,11 @@ class FakeBackend {
             p.endsWith('-permissions') &&
             r.method == 'PUT') {
           body = <String, Object?>{'success': true};
+        } else if (p.startsWith('/voucher-entry/ledger/') ||
+            p.startsWith('/ledger-items/ledger/') ||
+            p.startsWith('/bill/ledger/')) {
+          // Party detail: no entries / items / bills for this ledger.
+          body = <String, Object?>{'success': true, 'data': <Object?>[]};
         } else if (p.startsWith('/users/') && r.method == 'DELETE') {
           deletedUsers.add(p.substring('/users/'.length));
           body = <String, Object?>{'success': true};
@@ -650,6 +727,274 @@ class FakeBackend {
       headers: <String, String>{'content-type': 'application/json'},
     );
   });
+
+  http.Response _json(int status, Object body) => http.Response(
+    jsonEncode(body),
+    status,
+    headers: <String, String>{'content-type': 'application/json'},
+  );
+
+  /// The assistant API as the backend implements it: key from the header,
+  /// Gemini failures never 401.
+  http.Response _assistant(http.Request r, String p) {
+    if (aiMissing) {
+      return http.Response(
+        '<!DOCTYPE html><html><body><pre>Cannot POST $p</pre></body></html>',
+        404,
+        headers: <String, String>{'content-type': 'text/html'},
+      );
+    }
+    final String? key = r.headers['X-Gemini-Key'] ?? r.headers['x-gemini-key'];
+    aiKeysSeen.add(key);
+    if (key == null || key.isEmpty) {
+      return _json(400, <String, Object?>{
+        'success': false,
+        'code': 'no_key',
+        'message': 'Connect your Gemini API key first.',
+      });
+    }
+    if (!aiValidKeys.contains(key)) {
+      return _json(422, <String, Object?>{
+        'success': false,
+        'code': 'invalid_key',
+        'message': 'Gemini rejected this API key. Check it and connect again.',
+      });
+    }
+    if (aiFail == 'quota') {
+      return _json(429, <String, Object?>{
+        'success': false,
+        'code': 'quota',
+        'message':
+            'Your Gemini API quota or rate limit is used up. Try again later or check your plan in Google AI Studio.',
+      });
+    }
+    if (aiFail == 'down') {
+      return _json(502, <String, Object?>{
+        'success': false,
+        'code': 'provider_error',
+        'message': 'Gemini is not answering right now. Try again in a moment.',
+      });
+    }
+    if (p == '/api/assistant/verify') {
+      return _json(200, <String, Object?>{'success': true, 'model': 'gemini-2.5-flash'});
+    }
+    final Map<String, Object?> b = jsonDecode(r.body) as Map<String, Object?>;
+    aiAsks.add(b);
+    return _json(200, <String, Object?>{
+      'success': true,
+      'answer':
+          'Mehta Electricals owes the most: ₹15,000.50 across 2 bills.',
+      'tools_used': <String>['outstanding_summary'],
+    });
+  }
+
+  /// The reminder API as the backend implements it (scoping, server-side
+  /// amounts, honest send results).
+  http.Response _reminders(http.Request r, String p) {
+    if (remMissing) {
+      return http.Response(
+        '<!DOCTYPE html><html><body><pre>Cannot ${r.method} $p</pre></body></html>',
+        404,
+        headers: <String, String>{'content-type': 'text/html'},
+      );
+    }
+    final Map<String, Object?> b = r.body.isEmpty
+        ? <String, Object?>{}
+        : jsonDecode(r.body) as Map<String, Object?>;
+    String inrS(num v) => '₹${v.toStringAsFixed(2)}';
+    Map<String, Object?> compose() {
+      final List<String> names = <String>[
+        for (final Object? x in (b['bill_names'] as List<Object?>? ?? <Object?>[]))
+          '$x',
+      ];
+      final List<Map<String, Object?>> bills = <Map<String, Object?>>[
+        for (final String n in names)
+          if (remBills[n] != null)
+            <String, Object?>{
+              'bill_name': n,
+              'bill_date': null,
+              'due_date': remBills[n]!.$2,
+              'pending_amount': remBills[n]!.$1,
+              'overdue_days': n == 'S/101' ? 13 : 0,
+            },
+      ];
+      final num total = bills.fold<num>(
+        0,
+        (num s, Map<String, Object?> x) => s + (x['pending_amount']! as num),
+      );
+      final List<String> to = remEmail == null ? <String>[] : <String>[remEmail!];
+      final List<String> problems = <String>[
+        if (bills.isEmpty) 'None of the selected bills is pending any more.',
+        if (to.isEmpty) 'No valid email address is saved for Mehta Electricals in Tally.',
+        if (remNotConfigured) 'Email sending is not configured on the server.',
+      ];
+      return <String, Object?>{
+        'ledger_guid': 'L1',
+        'party': 'Mehta Electricals',
+        'company': 'Gupta Industries',
+        'recipients': to,
+        'subject': 'Payment reminder from Gupta Industries · ${inrS(total)} outstanding',
+        'text': 'Dear Mehta Electricals,\n${bills.map((Map<String, Object?> x) => '• ${x['bill_name']}').join('\n')}\nTotal outstanding: ${inrS(total)}',
+        'bills': bills,
+        'missing_bills': <String>[
+          for (final String n in names)
+            if (remBills[n] == null) n,
+        ],
+        'total': total,
+        'currency': 'INR',
+        'template': <String, Object?>{'id': null, 'name': 'Standard reminder'},
+        'email_configured': !remNotConfigured,
+        'can_send': problems.isEmpty,
+        'problems': problems,
+      };
+    }
+
+    Map<String, Object?> logOf(Map<String, Object?> c, String status, String? error) =>
+        <String, Object?>{
+          'id': _remId++,
+          'ledger_guid': 'L1',
+          'party': 'Mehta Electricals',
+          'recipients': c['recipients'],
+          'subject': c['subject'],
+          'bills': c['bills'],
+          'total': c['total'],
+          'status': status,
+          'error': error,
+          'attempts': 1,
+          'sent_by': 'ravi@x.in',
+          'created_at': '2026-10-03T05:30:00.000Z',
+          'sent_at': status == 'accepted' ? '2026-10-03T05:30:01.000Z' : null,
+          'key': b['idempotency_key'],
+        };
+
+    http.Response result(Map<String, Object?> log) {
+      if (log['status'] == 'accepted') {
+        return _json(200, <String, Object?>{
+          'success': true,
+          'data': log,
+          'message':
+              'Accepted by Microsoft 365 for delivery to ${(log['recipients']! as List<Object?>).join(', ')}. '
+              'Delivery to the inbox is not confirmed.',
+        });
+      }
+      final bool nc = remNotConfigured;
+      return _json(nc ? 503 : 502, <String, Object?>{
+        'success': false,
+        'code': nc ? 'email_not_configured' : 'send_failed',
+        'data': log,
+        'message': nc
+            ? 'Email sending is not configured on the server. Nothing was sent.'
+            : 'The email was not sent: ${log['error']}',
+      });
+    }
+
+    switch ((r.method, p)) {
+      case ('GET', '/api/reminders/templates'):
+        return _json(200, <String, Object?>{
+          'success': true,
+          'data': remTemplates.isEmpty
+              ? <Object?>[
+                  <String, Object?>{
+                    'id': null,
+                    'name': 'Standard reminder',
+                    'subject': 'Payment reminder from {{company}}',
+                    'body': 'Dear {{party}},\n{{bills}}',
+                    'is_default': true,
+                  },
+                ]
+              : remTemplates,
+          'placeholders': <String>['party', 'company', 'bills', 'total', 'count', 'sender'],
+          'can_edit': true,
+          'email_configured': !remNotConfigured,
+        });
+      case ('POST', '/api/reminders/templates'):
+        final Map<String, Object?> t = <String, Object?>{...b, 'id': _remId++};
+        remTemplates.add(t);
+        return _json(201, <String, Object?>{'success': true, 'data': t});
+      case ('POST', '/api/reminders/preview'):
+        if (b['ledger_guid'] != 'L1') {
+          return _json(404, <String, Object?>{
+            'success': false,
+            'message': 'Party not found in the selected company.',
+          });
+        }
+        return _json(200, <String, Object?>{'success': true, 'data': compose()});
+      case ('POST', '/api/reminders/send'):
+        // The app sends references only — never amounts or addresses.
+        for (final String k in b.keys) {
+          if (!<String>['ledger_guid', 'bill_names', 'expected_total', 'idempotency_key', 'template_id']
+              .contains(k)) {
+            violations.add('reminder send body has $k');
+          }
+        }
+        final Map<String, Object?>? prev = remLogs
+            .where((Map<String, Object?> l) => l['key'] != null && l['key'] == b['idempotency_key'])
+            .firstOrNull;
+        if (prev != null) {
+          return _json(200, <String, Object?>{
+            'success': prev['status'] == 'accepted',
+            'replay': true,
+            'data': prev,
+          });
+        }
+        final Map<String, Object?> c = compose();
+        if ((c['bills']! as List<Object?>).isEmpty) {
+          return _json(409, <String, Object?>{
+            'success': false,
+            'code': 'nothing_pending',
+            'message': 'None of the selected bills is pending any more.',
+          });
+        }
+        if (((b['expected_total'] as num?) ?? 0) != c['total']) {
+          return _json(409, <String, Object?>{
+            'success': false,
+            'code': 'changed',
+            'message': 'The bills changed in Tally since the preview. Review the reminder again.',
+          });
+        }
+        remSends.add(b);
+        final Map<String, Object?> log = logOf(
+          c,
+          remNotConfigured || remSendFail ? 'failed' : 'accepted',
+          remNotConfigured
+              ? 'Email sending is not configured on the server (MICROSOFT_* variables).'
+              : remSendFail
+              ? 'Microsoft Graph refused the email (HTTP 403): Access denied'
+              : null,
+        );
+        remLogs.add(log);
+        return result(log);
+      case ('GET', '/api/reminders/history'):
+        return _json(200, <String, Object?>{
+          'success': true,
+          'data': <Object?>[
+            for (final Map<String, Object?> l in remLogs.reversed)
+              if (l['ledger_guid'] == r.url.queryParameters['ledger_guid']) l,
+          ],
+        });
+    }
+    final RegExpMatch? m = RegExp(r'^/api/reminders/(\d+)/retry$').firstMatch(p);
+    if (m != null && r.method == 'POST') {
+      final Map<String, Object?>? l = remLogs
+          .where((Map<String, Object?> x) => x['id'] == int.parse(m[1]!))
+          .firstOrNull;
+      if (l == null || l['status'] != 'failed') {
+        return _json(409, <String, Object?>{
+          'success': false,
+          'code': 'not_failed',
+          'message': 'Only a reminder that failed can be retried.',
+        });
+      }
+      remSends.add(<String, Object?>{'retry': l['id']});
+      l['attempts'] = (l['attempts']! as int) + 1;
+      if (!remSendFail && !remNotConfigured) {
+        l['status'] = 'accepted';
+        l['error'] = null;
+      }
+      return result(l);
+    }
+    return _json(404, <String, Object?>{'success': false, 'message': 'Not found'});
+  }
 
   ApiTallyRepository repo() => ApiTallyRepository(
     client: ApiClient(client: client, baseUrl: 'https://api.test'),

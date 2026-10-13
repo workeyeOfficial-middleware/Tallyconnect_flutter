@@ -30,27 +30,36 @@ async function getAccessToken() {
 }
 
 /**
+ * Graph's sendMail answers 202 Accepted when it takes the message for
+ * delivery; anything else is treated as a failure.
  * @param {{to: string, subject: string, html: string, replyTo?: string|null}} m
+ * @returns {Promise<{status: number, requestId: string|null}>}
  */
 export async function sendFeedbackEmail({ to, subject, html, replyTo }) {
   const sender = process.env.MICROSOFT_SENDER_EMAIL;
   if (!sender) throw new Error("MICROSOFT_SENDER_EMAIL is not set");
   try {
     const token = await getAccessToken();
+    if (!token) throw new Error("Microsoft sign-in returned no access token");
     const message = {
       subject,
       body: { contentType: "HTML", content: html },
       toRecipients: [{ emailAddress: { address: to } }],
     };
     if (replyTo) message.replyTo = [{ emailAddress: { address: replyTo } }];
-    await axios.post(
+    const res = await axios.post(
       `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`,
-      { message, saveToSentItems: false },
+      // Kept in the sender mailbox's Sent Items, so a send can be checked there.
+      { message, saveToSentItems: true },
       {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         timeout: TIMEOUT_MS,
       }
     );
+    if (res.status !== 202) {
+      throw new Error(`unexpected Microsoft Graph answer HTTP ${res.status}`);
+    }
+    return { status: res.status, requestId: res.headers?.["request-id"] || null };
   } catch (err) {
     const detail = err.response?.data?.error?.message || err.message || "unknown error";
     throw new Error(`Feedback email failed: ${detail}`);

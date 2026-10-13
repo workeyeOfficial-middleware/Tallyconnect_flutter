@@ -8,6 +8,10 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Pick a photo to use as your TallyConnect wallpaper.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Speak to search your parties, items and entries.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Turns what you say into text for TallyConnect search.</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

@@ -157,6 +157,30 @@ class _Profile extends ConsumerWidget {
               ],
             ),
           ),
+        // Outstanding email reminder templates: account admin, real data.
+        if (c.canManageReminderTemplates)
+          Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: GlassList(
+              children: <Widget>[
+                RowX(
+                  key: const ValueKey<String>('remTemplatesRow'),
+                  minHeight: 60,
+                  onTap: c.openReminderTemplates,
+                  children: <Widget>[
+                    Ico('mail', size: IcoSize.xs, color: p.navy, icon: IcSize.s),
+                    const Expanded(
+                      child: RTx(
+                        'Email reminder templates',
+                        'Subject and message for outstanding reminders',
+                      ),
+                    ),
+                    chevR(),
+                  ],
+                ),
+              ],
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.only(top: 18),
           child: Btn(

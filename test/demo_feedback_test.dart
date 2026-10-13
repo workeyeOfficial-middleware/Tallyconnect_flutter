@@ -295,6 +295,29 @@ void main() {
       c.dispose();
     });
 
+    for (final (String mode, String says) x in <(String, String)>[
+      ('failed', 'could not be sent'),
+      ('skipped', 'not set up on the server'),
+      ('legacy', 'did not confirm'),
+    ]) {
+      test('email ${x.$1}: saved, never shown as sent', () async {
+        final FakeBackend f = FakeBackend()..feedbackEmail = x.$1;
+        final (DemoAwareRepository _, AppController c) = await _start(f);
+        c.openFeedback();
+        c.setF('fbMsg', 'Totals look wrong');
+        await c.submitFeedback();
+        expect(f.feedback, hasLength(1)); // stored once
+        expect(c.toast, contains('saved (#1)'));
+        expect(c.toast, contains(x.$2));
+        expect(c.toast, isNot(contains('Thank you')));
+        expect(c.toast, isNot(contains('your feedback was sent')));
+        // Saved: the form closes (resending would store it twice).
+        expect(c.overlay, isNull);
+        expect(c.fbSending, isFalse);
+        c.dispose();
+      });
+    }
+
     test('rate limited: message kept, form stays open', () async {
       final FakeBackend f = FakeBackend()..feedbackLimited = true;
       final (DemoAwareRepository _, AppController c) = await _start(f);
