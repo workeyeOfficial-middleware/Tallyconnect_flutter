@@ -22,6 +22,7 @@ import {
   rankModels,
   readKey,
   systemPrompt,
+  blocksFor,
   todayIso,
   validateAsk,
 } from "./assistantCore.js";
@@ -192,6 +193,10 @@ export function createAssistantRouter({ db, auth, gemini, env = process.env, log
         { role: "user", parts: [{ text: v.value.question }] },
       ];
       const used = [];
+      // Cards / tables for the app, from the lookups' own results (one set
+      // per distinct lookup; the model's text never supplies figures).
+      const blocks = [];
+      const seen = new Set();
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
         // No output-token cap: newer "thinking" models spend tokens before
         // answering, and a small cap leaves an empty answer.
@@ -222,7 +227,7 @@ export function createAssistantRouter({ db, auth, gemini, env = process.env, log
               blocked ? "Gemini declined to answer this question." : "Gemini returned no answer. Try again."
             );
           }
-          return res.json({ success: true, answer: text, tools_used: used, model });
+          return res.json({ success: true, answer: text, blocks: blocks.slice(0, 8), tools_used: used, model });
         }
         if (round === MAX_TOOL_ROUNDS) break;
         // Keep the model's turn as returned (incl. thought signatures), then
@@ -233,6 +238,11 @@ export function createAssistantRouter({ db, auth, gemini, env = process.env, log
           const name = String(p.functionCall.name || "");
           used.push(name);
           const result = await run(name, p.functionCall.args);
+          const sig = `${name}|${JSON.stringify(p.functionCall.args || {})}`;
+          if (!seen.has(sig)) {
+            seen.add(sig);
+            blocks.push(...blocksFor(name, result));
+          }
           responses.push({ functionResponse: { name, response: { result } } });
         }
         contents.push({ role: "user", parts: responses });

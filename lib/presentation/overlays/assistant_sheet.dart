@@ -15,6 +15,7 @@ import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
+import 'assistant_answer.dart';
 
 /// Home: round chat button at the bottom right, above the tab bar.
 class AssistantFab extends ConsumerWidget {
@@ -293,6 +294,44 @@ class _Bubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
     final bool mine = t.mine;
+    // An answer: a full-width card with KPI cards, the formatted summary
+    // and tables (never raw Markdown).
+    if (!mine && !t.error && !busy) {
+      return Container(
+        key: const ValueKey<String>('aiAnswer'),
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: .42),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.white.withValues(alpha: .7)),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: navyA(.08),
+              blurRadius: 14,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Ic('chat', size: IcSize.xs, color: p.acc),
+                const SizedBox(width: 6),
+                Text(
+                  'TallyConnect AI',
+                  style: ts(12, w: w800, c: p.acc, ls: .3),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            AiAnswer(t),
+          ],
+        ),
+      );
+    }
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(

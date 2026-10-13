@@ -524,9 +524,6 @@ class _ScrState extends ConsumerState<Scr> {
     c.reg.screenScroll = _sc;
     c.reg.screenViewport = _vp;
     final bool wt = c.showTabs;
-    // Home's AI assistant button sits above the tab bar: the last card can
-    // scroll clear of it.
-    final double fab = wt && c.loggedIn && c.screen == 'home' ? 64 : 0;
     // There is no Scaffold, so the keyboard must be made room for here:
     // fields near the bottom stay reachable above it.
     final double kb = MediaQuery.viewInsetsOf(context).bottom;
@@ -545,7 +542,7 @@ class _ScrState extends ConsumerState<Scr> {
             topIn(context),
             16,
             (wt
-                    ? wtBottom(context) + 20 + fab
+                    ? wtBottom(context) + 20
                     : 36 + MediaQuery.paddingOf(context).bottom) +
                 kb,
           ),

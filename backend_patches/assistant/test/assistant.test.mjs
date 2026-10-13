@@ -5,7 +5,7 @@ import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 
-import { geminiFailure, rankModels, readKey, validateAsk } from "../utils/assistantCore.js";
+import { OFF_TOPIC_REPLY, geminiFailure, rankModels, readKey, validateAsk } from "../utils/assistantCore.js";
 import { createAssistantRouter } from "../utils/assistantRouter.js";
 import { GeminiHttpError } from "../utils/geminiClient.js";
 
@@ -373,6 +373,49 @@ describe("routes", () => {
     assert.ok(!lt.body.answer.includes('"type":"Sales"'));
     const un = await ask(ADMIN, "?", [{ name: "drop_tables", args: {} }]);
     assert.match(un.body.answer, /Unknown tool/);
+  });
+
+  test("cards and tables come from the lookups' own figures", async () => {
+    const r = await ask(ADMIN, "Who owes me the most?", [{ name: "outstanding_summary", args: { kind: "receivable" } }]);
+    const [kpis, tbl] = r.body.blocks;
+    assert.equal(kpis.type, "kpis");
+    assert.deepEqual(
+      kpis.items.map((i) => [i.label, i.value]),
+      [["Total pending", 19000.5], ["Overdue", 14000.5], ["Bills", 3], ["Parties", 2]]
+    );
+    assert.equal(kpis.items[0].format, "money");
+    assert.equal(tbl.type, "table");
+    assert.deepEqual(tbl.rows[0], ["Mehta Electricals", 2, 15000.5, 10000.5]);
+    assert.equal(tbl.total_rows, 2);
+    // Party not found / ambiguous → a note; transactions → a table; empty.
+    const amb = await ask(ADMIN, "?", [{ name: "party_bills", args: { party: "a" } }]);
+    assert.equal(amb.body.blocks[0].type, "note");
+    const lt = await ask(ADMIN, "Receipts", [{ name: "list_transactions", args: { voucher_type: "Receipt", from: "2026-10-01", to: "2026-10-31" } }]);
+    assert.deepEqual(lt.body.blocks[0].rows, [["2026-10-03", "Receipt", "Mehta Electricals", 2000]]);
+    const none = await ask(ADMIN, "Today", [{ name: "list_transactions", args: { from: "2020-01-01", to: "2020-01-02" } }]);
+    assert.equal(none.body.blocks[0].rows.length, 0);
+    assert.equal(none.body.blocks[0].empty, "No entries found for this period.");
+    // The same lookup twice → one set of cards.
+    const twice = await ask(ADMIN, "?", [
+      { name: "outstanding_summary", args: { kind: "payable" } },
+      { name: "outstanding_summary", args: { kind: "payable" } },
+    ]);
+    assert.equal(twice.body.blocks.length, 2);
+    // A USER login's cards hold only their permitted data.
+    const u = await ask(USER, "Outstanding?", [{ name: "outstanding_summary", args: { kind: "receivable" } }]);
+    assert.ok(!JSON.stringify(u.body.blocks).includes("Mehta"));
+  });
+
+  test("prompt: TallyConnect-only scope with the exact refusal; summary format", async () => {
+    await ask(ADMIN, "Who won the cricket match?");
+    const sys = gem.bodies[0].systemInstruction.parts[0].text;
+    assert.ok(sys.includes(OFF_TOPIC_REPLY));
+    assert.match(sys, /Never write tables/);
+    assert.match(sys, /₹1,23,456.78/);
+    assert.equal(
+      OFF_TOPIC_REPLY,
+      "I’m the TallyConnect AI Assistant, designed to help you with TallyConnect and your accounting data. Please ask me something related to TallyConnect."
+    );
   });
 
   test("other account's admin never sees this account's data", async () => {

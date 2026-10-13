@@ -165,9 +165,18 @@ export function todayIso(now = new Date()) {
   return new Date(now.getTime() + 330 * 60000).toISOString().slice(0, 10);
 }
 
+/** Exact reply for questions outside TallyConnect / accounting. */
+export const OFF_TOPIC_REPLY =
+  "I’m the TallyConnect AI Assistant, designed to help you with TallyConnect and your accounting data. Please ask me something related to TallyConnect.";
+
 export function systemPrompt({ company, today, role }) {
   return [
-    "You are the TallyConnect financial assistant for an Indian business.",
+    "You are the TallyConnect AI Assistant for an Indian business.",
+    "SCOPE: only TallyConnect (its features and how to use them) and the user's accounting / financial data " +
+      "(ledgers, parties, outstanding, receivables, payables, sales, purchases, receipts, payments, entries, " +
+      "stock and accounting terms). For ANY other question (general knowledge, coding, news, weather, " +
+      "personal topics, jokes, other apps…) reply with exactly this sentence and nothing else: " +
+      `"${OFF_TOPIC_REPLY}"`,
     `The user's active Tally company is "${String(company || "the selected company").replace(/"/g, "'")}".`,
     `Today is ${today}. Amounts are Indian rupees (₹, Indian digit grouping).`,
     role === "ADMIN"
@@ -271,14 +280,7 @@ export const MAX_TABLE_ROWS = 10;
 const kindLabel = { receivable: "Receivables", payable: "Payables" };
 
 function table(title, columns, rows, empty) {
-  return {
-    type: "table",
-    title,
-    columns,
-    rows: rows.slice(0, MAX_TABLE_ROWS),
-    total_rows: rows.length,
-    empty,
-  };
+  return { type: "table", title, columns, rows: rows.slice(0, MAX_TABLE_ROWS), total_rows: rows.length, empty };
 }
 
 /**
@@ -291,13 +293,13 @@ export function blocksFor(tool, result) {
   const count = (label) => ({ label, format: "count", align: "end" });
   const text = (label) => ({ label, format: "text", align: "start" });
   const date = (label) => ({ label, format: "date", align: "start" });
+  const r2 = (n) => Math.round(Number(n || 0) * 100) / 100;
   switch (tool) {
-    case "outstanding_summary": {
-      const k = kindLabel[result.kind] || "Outstanding";
+    case "outstanding_summary":
       return [
         {
           type: "kpis",
-          title: `${k} · as on ${result.as_on}`,
+          title: `${kindLabel[result.kind] || "Outstanding"} · as on ${result.as_on}`,
           items: [
             { label: "Total pending", value: result.total_pending, format: "money", tone: "primary" },
             { label: "Overdue", value: result.total_overdue, format: "money", tone: result.total_overdue > 0 ? "neg" : null },
@@ -312,7 +314,6 @@ export function blocksFor(tool, result) {
           `No pending ${result.kind === "payable" ? "payables" : "receivables"}.`
         ),
       ];
-    }
     case "party_bills": {
       if (!result.found) {
         return [
@@ -325,7 +326,7 @@ export function blocksFor(tool, result) {
         ];
       }
       const bills = result.bills || [];
-      const overdue = bills.filter((b) => b.overdue_days > 0);
+      const late = bills.filter((b) => b.overdue_days > 0);
       return [
         {
           type: "kpis",
@@ -333,13 +334,8 @@ export function blocksFor(tool, result) {
           items: [
             { label: "Pending", value: result.pending_total, format: "money", tone: "primary" },
             { label: "Bills", value: bills.length, format: "count" },
-            {
-              label: "Overdue",
-              value: Math.round(overdue.reduce((a, b) => a + b.pending, 0) * 100) / 100,
-              format: "money",
-              tone: overdue.length ? "neg" : null,
-            },
-            { label: "Overdue bills", value: overdue.length, format: "count" },
+            { label: "Overdue", value: r2(late.reduce((a, b) => a + b.pending, 0)), format: "money", tone: late.length ? "neg" : null },
+            { label: "Overdue bills", value: late.length, format: "count" },
           ],
         },
         table(
@@ -368,11 +364,7 @@ export function blocksFor(tool, result) {
           items: [
             { label: `Total ${String(result.voucher_type).toLowerCase()}`, value: result.total, format: "money", tone: "primary" },
             { label: "Entries", value: result.count, format: "count" },
-            {
-              label: "Average",
-              value: result.count ? Math.round((result.total / result.count) * 100) / 100 : 0,
-              format: "money",
-            },
+            { label: "Average", value: result.count ? r2(result.total / result.count) : 0, format: "money" },
           ],
         },
         table(
@@ -386,17 +378,15 @@ export function blocksFor(tool, result) {
           : []),
       ];
     }
-    case "list_transactions": {
-      const rows = result.entries || [];
+    case "list_transactions":
       return [
         table(
           `Entries · ${result.from} to ${result.to}`,
           [date("Date"), text("Type"), text("Party"), money("Amount")],
-          rows.map((e) => [e.date, e.type, e.party || "—", e.amount]),
+          (result.entries || []).map((e) => [e.date, e.type, e.party || "—", e.amount]),
           "No entries found for this period."
         ),
       ];
-    }
     default:
       return [];
   }

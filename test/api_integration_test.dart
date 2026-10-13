@@ -129,6 +129,9 @@ class FakeBackend {
   /// Server deployed without the assistant routes.
   bool aiMissing = false;
 
+  /// Replaces the default answer of POST /api/assistant/ask (whole body).
+  Map<String, Object?>? aiReply;
+
   /// Bodies of POST /api/assistant/ask; X-Gemini-Key of every call.
   final List<Map<String, Object?>> aiAsks = <Map<String, Object?>>[];
   final List<String?> aiKeysSeen = <String?>[];
@@ -194,23 +197,23 @@ class FakeBackend {
           jsonEncode(<String, Object?>{'success': true, 'id': id}),
           201,
         ),
-        'failed' || 'skipped' => _json(
-          feedbackEmail == 'failed' ? 502 : 503,
-          <String, Object?>{
-            'success': false,
-            'stored': true,
-            'id': id,
-            'email_status': feedbackEmail,
-            'code': feedbackEmail == 'failed'
-                ? 'email_failed'
-                : 'email_not_configured',
-            'message': feedbackEmail == 'failed'
-                ? 'Your feedback was saved (#$id), but the email to the '
-                      'TallyConnect team could not be sent. Please try again later.'
-                : 'Your feedback was saved (#$id), but feedback email is not '
-                      'set up on the server, so the TallyConnect team was not emailed.',
-          },
-        ),
+        'failed' || 'skipped' => _json(feedbackEmail == 'failed' ? 502 : 503, <
+          String,
+          Object?
+        >{
+          'success': false,
+          'stored': true,
+          'id': id,
+          'email_status': feedbackEmail,
+          'code': feedbackEmail == 'failed'
+              ? 'email_failed'
+              : 'email_not_configured',
+          'message': feedbackEmail == 'failed'
+              ? 'Your feedback was saved (#$id), but the email to the '
+                    'TallyConnect team could not be sent. Please try again later.'
+              : 'Your feedback was saved (#$id), but feedback email is not '
+                    'set up on the server, so the TallyConnect team was not emailed.',
+        }),
         _ => _json(201, <String, Object?>{
           'success': true,
           'id': id,
@@ -608,12 +611,18 @@ class FakeBackend {
         // the email before '@'; duplicate email → 400.
         final Map<String, Object?> b =
             jsonDecode(r.body) as Map<String, Object?>;
-        if (b.keys.toSet().difference(<String>{'email', 'password'}).isNotEmpty) {
+        if (b.keys.toSet().difference(<String>{
+          'email',
+          'password',
+        }).isNotEmpty) {
           violations.add('POST /users extra fields: ${b.keys}');
         }
         final String em = '${b['email'] ?? ''}'.toLowerCase();
         if (em.isEmpty || '${b['password'] ?? ''}'.isEmpty) {
-          return http.Response('{"message":"Email and password required"}', 400);
+          return http.Response(
+            '{"message":"Email and password required"}',
+            400,
+          );
         }
         if (<String>['ravi@x.in', 'asha@x.in'].contains(em) ||
             createdUsers.any((Map<String, Object?> u) => u['email'] == em)) {
@@ -776,16 +785,70 @@ class FakeBackend {
       });
     }
     if (p == '/api/assistant/verify') {
-      return _json(200, <String, Object?>{'success': true, 'model': 'gemini-2.5-flash'});
+      return _json(200, <String, Object?>{
+        'success': true,
+        'model': 'gemini-2.5-flash',
+      });
     }
     final Map<String, Object?> b = jsonDecode(r.body) as Map<String, Object?>;
     aiAsks.add(b);
-    return _json(200, <String, Object?>{
-      'success': true,
-      'answer':
-          'Mehta Electricals owes the most: ₹15,000.50 across 2 bills.',
-      'tools_used': <String>['outstanding_summary'],
-    });
+    return _json(
+      200,
+      aiReply ??
+          <String, Object?>{
+            'success': true,
+            'answer':
+                'Mehta Electricals owes the most: **₹15,000.50** across 2 bills.\n'
+                '- **₹10,000.50** is overdue since 20-09-2026\n'
+                '- Polycab Wires is a supplier (payable)',
+            'blocks': <Object?>[
+              <String, Object?>{
+                'type': 'kpis',
+                'title': 'Receivables · as on 2026-10-03',
+                'items': <Object?>[
+                  <String, Object?>{
+                    'label': 'Total pending',
+                    'value': 15000.5,
+                    'format': 'money',
+                    'tone': 'primary',
+                  },
+                  <String, Object?>{
+                    'label': 'Overdue',
+                    'value': 10000.5,
+                    'format': 'money',
+                    'tone': 'neg',
+                  },
+                  <String, Object?>{
+                    'label': 'Bills',
+                    'value': 2,
+                    'format': 'count',
+                  },
+                  <String, Object?>{
+                    'label': 'Parties',
+                    'value': 1,
+                    'format': 'count',
+                  },
+                ],
+              },
+              <String, Object?>{
+                'type': 'table',
+                'title': 'Top parties',
+                'columns': <Object?>[
+                  <String, Object?>{'label': 'Party', 'format': 'text'},
+                  <String, Object?>{'label': 'Bills', 'format': 'count'},
+                  <String, Object?>{'label': 'Pending', 'format': 'money'},
+                  <String, Object?>{'label': 'Overdue', 'format': 'money'},
+                ],
+                'rows': <Object?>[
+                  <Object?>['Mehta Electricals', 2, 15000.5, 10000.5],
+                ],
+                'total_rows': 1,
+                'empty': 'No pending receivables.',
+              },
+            ],
+            'tools_used': <String>['outstanding_summary'],
+          },
+    );
   }
 
   /// The reminder API as the backend implements it (scoping, server-side
@@ -804,7 +867,8 @@ class FakeBackend {
     String inrS(num v) => '₹${v.toStringAsFixed(2)}';
     Map<String, Object?> compose() {
       final List<String> names = <String>[
-        for (final Object? x in (b['bill_names'] as List<Object?>? ?? <Object?>[]))
+        for (final Object? x
+            in (b['bill_names'] as List<Object?>? ?? <Object?>[]))
           '$x',
       ];
       final List<Map<String, Object?>> bills = <Map<String, Object?>>[
@@ -822,10 +886,13 @@ class FakeBackend {
         0,
         (num s, Map<String, Object?> x) => s + (x['pending_amount']! as num),
       );
-      final List<String> to = remEmail == null ? <String>[] : <String>[remEmail!];
+      final List<String> to = remEmail == null
+          ? <String>[]
+          : <String>[remEmail!];
       final List<String> problems = <String>[
         if (bills.isEmpty) 'None of the selected bills is pending any more.',
-        if (to.isEmpty) 'No valid email address is saved for Mehta Electricals in Tally.',
+        if (to.isEmpty)
+          'No valid email address is saved for Mehta Electricals in Tally.',
         if (remNotConfigured) 'Email sending is not configured on the server.',
       ];
       return <String, Object?>{
@@ -833,8 +900,10 @@ class FakeBackend {
         'party': 'Mehta Electricals',
         'company': 'Gupta Industries',
         'recipients': to,
-        'subject': 'Payment reminder from Gupta Industries · ${inrS(total)} outstanding',
-        'text': 'Dear Mehta Electricals,\n${bills.map((Map<String, Object?> x) => '• ${x['bill_name']}').join('\n')}\nTotal outstanding: ${inrS(total)}',
+        'subject':
+            'Payment reminder from Gupta Industries · ${inrS(total)} outstanding',
+        'text':
+            'Dear Mehta Electricals,\n${bills.map((Map<String, Object?> x) => '• ${x['bill_name']}').join('\n')}\nTotal outstanding: ${inrS(total)}',
         'bills': bills,
         'missing_bills': <String>[
           for (final String n in names)
@@ -849,23 +918,26 @@ class FakeBackend {
       };
     }
 
-    Map<String, Object?> logOf(Map<String, Object?> c, String status, String? error) =>
-        <String, Object?>{
-          'id': _remId++,
-          'ledger_guid': 'L1',
-          'party': 'Mehta Electricals',
-          'recipients': c['recipients'],
-          'subject': c['subject'],
-          'bills': c['bills'],
-          'total': c['total'],
-          'status': status,
-          'error': error,
-          'attempts': 1,
-          'sent_by': 'ravi@x.in',
-          'created_at': '2026-10-03T05:30:00.000Z',
-          'sent_at': status == 'accepted' ? '2026-10-03T05:30:01.000Z' : null,
-          'key': b['idempotency_key'],
-        };
+    Map<String, Object?> logOf(
+      Map<String, Object?> c,
+      String status,
+      String? error,
+    ) => <String, Object?>{
+      'id': _remId++,
+      'ledger_guid': 'L1',
+      'party': 'Mehta Electricals',
+      'recipients': c['recipients'],
+      'subject': c['subject'],
+      'bills': c['bills'],
+      'total': c['total'],
+      'status': status,
+      'error': error,
+      'attempts': 1,
+      'sent_by': 'ravi@x.in',
+      'created_at': '2026-10-03T05:30:00.000Z',
+      'sent_at': status == 'accepted' ? '2026-10-03T05:30:01.000Z' : null,
+      'key': b['idempotency_key'],
+    };
 
     http.Response result(Map<String, Object?> log) {
       if (log['status'] == 'accepted') {
@@ -903,7 +975,14 @@ class FakeBackend {
                   },
                 ]
               : remTemplates,
-          'placeholders': <String>['party', 'company', 'bills', 'total', 'count', 'sender'],
+          'placeholders': <String>[
+            'party',
+            'company',
+            'bills',
+            'total',
+            'count',
+            'sender',
+          ],
           'can_edit': true,
           'email_configured': !remNotConfigured,
         });
@@ -918,17 +997,28 @@ class FakeBackend {
             'message': 'Party not found in the selected company.',
           });
         }
-        return _json(200, <String, Object?>{'success': true, 'data': compose()});
+        return _json(200, <String, Object?>{
+          'success': true,
+          'data': compose(),
+        });
       case ('POST', '/api/reminders/send'):
         // The app sends references only — never amounts or addresses.
         for (final String k in b.keys) {
-          if (!<String>['ledger_guid', 'bill_names', 'expected_total', 'idempotency_key', 'template_id']
-              .contains(k)) {
+          if (!<String>[
+            'ledger_guid',
+            'bill_names',
+            'expected_total',
+            'idempotency_key',
+            'template_id',
+          ].contains(k)) {
             violations.add('reminder send body has $k');
           }
         }
         final Map<String, Object?>? prev = remLogs
-            .where((Map<String, Object?> l) => l['key'] != null && l['key'] == b['idempotency_key'])
+            .where(
+              (Map<String, Object?> l) =>
+                  l['key'] != null && l['key'] == b['idempotency_key'],
+            )
             .firstOrNull;
         if (prev != null) {
           return _json(200, <String, Object?>{
@@ -949,7 +1039,8 @@ class FakeBackend {
           return _json(409, <String, Object?>{
             'success': false,
             'code': 'changed',
-            'message': 'The bills changed in Tally since the preview. Review the reminder again.',
+            'message':
+                'The bills changed in Tally since the preview. Review the reminder again.',
           });
         }
         remSends.add(b);
@@ -973,7 +1064,9 @@ class FakeBackend {
           ],
         });
     }
-    final RegExpMatch? m = RegExp(r'^/api/reminders/(\d+)/retry$').firstMatch(p);
+    final RegExpMatch? m = RegExp(
+      r'^/api/reminders/(\d+)/retry$',
+    ).firstMatch(p);
     if (m != null && r.method == 'POST') {
       final Map<String, Object?>? l = remLogs
           .where((Map<String, Object?> x) => x['id'] == int.parse(m[1]!))
@@ -993,7 +1086,10 @@ class FakeBackend {
       }
       return result(l);
     }
-    return _json(404, <String, Object?>{'success': false, 'message': 'Not found'});
+    return _json(404, <String, Object?>{
+      'success': false,
+      'message': 'Not found',
+    });
   }
 
   ApiTallyRepository repo() => ApiTallyRepository(
@@ -1696,7 +1792,10 @@ void main() {
       expect(find.text('S/101 · 2 Oct · Sales'), findsOneWidget);
       expect(find.text('R/5 · 3 Oct · Receipt'), findsOneWidget);
       expect(find.text('P/0 · 29 Sep · Payment'), findsOneWidget);
-      expect(find.text('P/1 · 1 Oct · Payment'), findsOneWidget); // reset-flagged row
+      expect(
+        find.text('P/1 · 1 Oct · Payment'),
+        findsOneWidget,
+      ); // reset-flagged row
       expect(find.text('5'), findsOneWidget);
       expect(find.text('₹1,15,399.25'), findsOneWidget);
       expect(find.textContaining('No entries'), findsNothing);

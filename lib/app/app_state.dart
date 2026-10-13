@@ -1301,7 +1301,10 @@ class AppController extends ChangeNotifier {
           ...aiTurns,
           AiTurn(
             'model',
-            r.answer.isEmpty ? 'No answer was returned.' : r.answer,
+            r.answer.isEmpty && r.blocks.isEmpty
+                ? 'No answer was returned. Try asking again.'
+                : r.answer,
+            blocks: r.blocks,
           ),
         ],
       );
