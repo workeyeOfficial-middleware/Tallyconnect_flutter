@@ -100,8 +100,7 @@ class DemoAwareRepository extends TallyRepository {
       _demoOn ? Future<T>.error(kDemoReminderBlocked) : real();
 
   @override
-  Future<ReminderTemplates> reminderTemplates() =>
-      _rem(live.reminderTemplates);
+  Future<ReminderTemplates> reminderTemplates() => _rem(live.reminderTemplates);
   @override
   Future<ReminderTemplate> saveReminderTemplate(ReminderTemplate t) =>
       _rem(() => live.saveReminderTemplate(t));
@@ -143,25 +142,85 @@ class DemoAwareRepository extends TallyRepository {
   Future<ReminderOutcome> retryReminder(int id) =>
       _rem(() => live.retryReminder(id));
 
+  // ------------------- financial statements: real company data only
+  @override
+  Future<bool> financialCanView() async =>
+      !_demoOn && await live.financialCanView();
+  @override
+  Future<FinPeriods> financialPeriods() => _demoOn
+      ? Future<FinPeriods>.error(kDemoFinancialBlocked)
+      : live.financialPeriods();
+  @override
+  Future<TallyReportPeriods> tallyReportPeriods() => _demoOn
+      ? Future<TallyReportPeriods>.error(kDemoFinancialBlocked)
+      : live.tallyReportPeriods();
+  @override
+  Future<TallyReport> tallyReport(
+    String report, {
+    DateTime? from,
+    DateTime? to,
+  }) => _demoOn
+      ? Future<TallyReport>.error(kDemoFinancialBlocked)
+      : live.tallyReport(report, from: from, to: to);
+  @override
+  Future<CashForecast> cashflowForecast({
+    String mode = 'adjusted',
+    bool doubtful = false,
+    bool refresh = false,
+  }) => _demoOn
+      ? Future<CashForecast>.error(kDemoFinancialBlocked)
+      : live.cashflowForecast(mode: mode, doubtful: doubtful, refresh: refresh);
+  @override
+  Future<CashWeekDetail> cashflowWeek(
+    String start, {
+    String mode = 'adjusted',
+    bool doubtful = false,
+  }) => _demoOn
+      ? Future<CashWeekDetail>.error(kDemoFinancialBlocked)
+      : live.cashflowWeek(start, mode: mode, doubtful: doubtful);
+  @override
+  Future<SalesDash> salesAnalytics(String from, String to) => _demoOn
+      ? Future<SalesDash>.error(kDemoAnalyticsBlocked)
+      : live.salesAnalytics(from, to);
+  @override
+  Future<FinReport> financialReport(
+    String kind, {
+    required DateTime to,
+    DateTime? from,
+    bool includePurchases = false,
+  }) => _demoOn
+      ? Future<FinReport>.error(kDemoFinancialBlocked)
+      : live.financialReport(
+          kind,
+          to: to,
+          from: from,
+          includePurchases: includePurchases,
+        );
+  @override
+  Future<Set<String>> financialAccess() => live.financialAccess();
+  @override
+  Future<void> setFinancialAccess(String userId, bool enabled) =>
+      live.setFinancialAccess(userId, enabled);
+
   // ---------------------- AI assistant: real company data only (no demo)
   @override
-  Future<void> verifyAssistantKey(String geminiKey) => _demoOn
-      ? Future<void>.error(kDemoAssistantBlocked)
-      : live.verifyAssistantKey(geminiKey);
+  Future<AiStatus> assistantStatus() => _demoOn
+      ? Future<AiStatus>.error(kDemoAssistantBlocked)
+      : live.assistantStatus();
   @override
   Future<AssistantReply> askAssistant(
-    String geminiKey,
     String question,
     List<AiTurn> history,
   ) => _demoOn
       ? Future<AssistantReply>.error(kDemoAssistantBlocked)
-      : live.askAssistant(geminiKey, question, history);
+      : live.askAssistant(question, history);
 
   // ---------------------------------------------------------- loading
   /// The real data is always refreshed (also while demo data is shown), so
   /// the app can tell when the account's first Tally sync has arrived.
   @override
-  Future<void> refreshAll({bool force = false}) => live.refreshAll(force: force);
+  Future<void> refreshAll({bool force = false}) =>
+      live.refreshAll(force: force);
   @override
   Future<void> refreshActivity() => _src.refreshActivity();
   @override
@@ -323,6 +382,20 @@ const ApiException kDemoReminderBlocked = ApiException(
   ApiErrorKind.forbidden,
   'Email reminders are off for Demo Company (sample data). Switch to your '
   'Tally company to send them.',
+);
+
+/// Financial statements come from the real company's Tally figures.
+const ApiException kDemoFinancialBlocked = ApiException(
+  ApiErrorKind.forbidden,
+  'Financial reports show your Tally company, not Demo Company. Switch to '
+  'your company to see them.',
+);
+
+/// Sales analytics are worked out on the server from the real company.
+const ApiException kDemoAnalyticsBlocked = ApiException(
+  ApiErrorKind.forbidden,
+  'Sales analytics show your Tally company, not Demo Company. Switch to '
+  'your company to see them.',
 );
 
 /// The AI assistant reads the real company on the server, never demo data.

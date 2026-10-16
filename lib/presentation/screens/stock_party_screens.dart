@@ -19,6 +19,7 @@ import '../../data/models/models.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../../data/repositories/tally_repository.dart' show HistoryTotals;
 import '../overlays/email_reminder_sheets.dart' show PartyReminders;
+import '../widgets/bulk_bar.dart';
 import '../widgets/common.dart';
 
 /// `.tot.stat` (centred column) / `.glass.stat` (left).
@@ -474,10 +475,17 @@ class PartyScreen extends ConsumerWidget {
     final String sortLabel = c.partySort == 'amt'
         ? 'Sorted by balance · tap ⇅ for A–Z'
         : 'Sorted A–Z · tap ⇅ for balance';
+    final bool selecting = c.pSelecting;
     return Scr(
+      bottomBar: selecting ? _PartySelectBar(c: c, rows: v.rows) : null,
       children: <Widget>[
         BackNav(
           actions: <Widget>[
+            CBtn(
+              selecting ? 'close' : 'check',
+              key: const ValueKey<String>('pSelect'),
+              onTap: selecting ? c.endPartySelect : c.startPartySelect,
+            ),
             CBtn(
               'file',
               onTap: () => c.previewDoc(docParties(v.rows, c.companyName)),
@@ -526,7 +534,12 @@ class PartyScreen extends ConsumerWidget {
             // stays inside the card and never covers name or balance.
             pinOverlay: false,
             child: RowX(
+              key: selecting ? ValueKey<String>('pPick-${x.name}') : null,
               onTap: () {
+                if (selecting) {
+                  c.togglePartyPicked(x);
+                  return;
+                }
                 if (c.guardTap('party', x.name)) {
                   c.go('partyDetail', <String, Object?>{
                     'party': x.name,
@@ -535,7 +548,18 @@ class PartyScreen extends ConsumerWidget {
                 }
               },
               children: <Widget>[
-                Av(initials(x.name)),
+                if (selecting)
+                  SizedBox(
+                    width: 40,
+                    height: 40,
+                    child: Center(
+                      child: SelectBox(
+                        checked: c.pPicked.containsKey(x.name),
+                      ),
+                    ),
+                  )
+                else
+                  Av(initials(x.name)),
                 Expanded(
                   child: RTx(
                     x.name,
@@ -609,6 +633,47 @@ class PartyScreen extends ConsumerWidget {
           empty: rows.isEmpty
               ? c.emptyText(DataSet.ledgers, 'No party found.')
               : null,
+        ),
+      ],
+    );
+  }
+}
+
+/// Selecting parties (floating): how many, what they owe / are owed,
+/// Select all / Clear, Share via WhatsApp (one message) or one PDF.
+class _PartySelectBar extends StatelessWidget {
+  const _PartySelectBar({required this.c, required this.rows});
+  final AppController c;
+  final List<Party> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final int n = c.pPicked.length;
+    final bool all =
+        rows.isNotEmpty &&
+        n >= rows.length &&
+        rows.every((Party x) => c.pPicked.containsKey(x.name));
+    final (num get, num give) = c.pickedPartyTotals;
+    return BulkBar(
+      key: const ValueKey<String>('pSelectBarFloat'),
+      keyPrefix: 'pSelect',
+      count: n,
+      detail: <String>[
+        if (get > 0) 'To receive ${inr(get)}',
+        if (give > 0) 'To pay ${inr(give)}',
+      ].join(' · '),
+      allSelected: all,
+      selectAllLabel: 'Select all (${grouped(rows.length)})',
+      emptyText: 'Tap parties to select them',
+      onSelectAll: () => c.selectAllParties(rows),
+      onClear: c.clearPartyPicked,
+      onWhatsApp: c.whatsAppPickedParties,
+      actions: <BulkAction>[
+        BulkAction(
+          'PDF',
+          'file',
+          c.sharePickedParties,
+          key: const ValueKey<String>('pSharePdf'),
         ),
       ],
     );

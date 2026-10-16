@@ -155,6 +155,40 @@ class TeamUserScreen extends ConsumerWidget {
                     ),
                 ],
               ),
+              // Financial statements: hidden from team members unless the
+              // admin switches them on here.
+              const Sec('Reports'),
+              GlassList(
+                children: <Widget>[
+                  RowX(
+                    key: const ValueKey<String>('finAccessRow'),
+                    minHeight: 60,
+                    onTap: c.finAccessIds == null || c.finAccessBusy
+                        ? null
+                        : () => c.setMemberFinancialAccess(
+                            m,
+                            !c.finAccessIds!.contains(m.id),
+                          ),
+                    children: <Widget>[
+                      Ico(
+                        'chart',
+                        size: IcoSize.xs,
+                        color: p.acc,
+                        icon: IcSize.s,
+                      ),
+                      Expanded(
+                        child: RTx(
+                          'Financial statements',
+                          c.finAccessIds == null
+                              ? 'Not available on the server yet'
+                              : 'P&L, Balance Sheet, Trial Balance, Expenses',
+                        ),
+                      ),
+                      Sw(c.finAccessIds?.contains(m.id) ?? false),
+                    ],
+                  ),
+                ],
+              ),
               InfoBox(
                 'Changes are saved only for ${m.name}. Admins always see everything.',
                 icon: 'info',

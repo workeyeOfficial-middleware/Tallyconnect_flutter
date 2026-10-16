@@ -137,11 +137,12 @@ void main() {
   });
 
   group('home pages: pin / hide / unhide', () {
-    test('default page = newEntry + workspace shortcuts + money', () {
+    test('default page = newEntry + sales analytics + workspace shortcuts + money', () {
       final AppController c = make();
       expect(c.curPages(), <List<String>>[
         <String>[
           'newEntry',
+          AppController.kSalesCard,
           'items',
           'party',
           'vouchers',
@@ -163,6 +164,7 @@ void main() {
       c.restoreHidden(<String>['vouchers']);
       expect(c.curPages().first, <String>[
         'newEntry',
+        AppController.kSalesCard,
         'items',
         'party',
         'vouchers',

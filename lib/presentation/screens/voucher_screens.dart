@@ -18,6 +18,7 @@ import '../../data/models/models.dart';
 import '../../data/repositories/tally_repository.dart'
     show VoucherCounts, VoucherPager, VoucherQuery;
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
+import '../widgets/bulk_bar.dart';
 import '../widgets/common.dart';
 
 /// `vsum` (2501): the four totals shared by Vouchers and Reports, for
@@ -203,22 +204,36 @@ const List<(String, String)> kVF = <(String, String)>[
 /// One voucher row (shared by the list and reports).
 Widget voucherRow(BuildContext context, AppController c, Voucher x) {
   final TcPalette p = Tc.of(context);
+  final bool selecting = c.vSelecting && c.screen == 'vList';
+  final bool picked = selecting && c.vPicked.containsKey(x.key);
   return LRow(
     list: 'vouchers',
     lk: x.key,
     child: RowX(
+      key: selecting ? ValueKey<String>('vPick-${x.key}') : null,
       onTap: () {
+        if (selecting) {
+          c.togglePicked(x);
+          return;
+        }
         if (c.guardTap('vouchers', x.key)) {
           c.go('entryDetail', <String, Object?>{'entry': x});
         }
       },
       children: <Widget>[
-        Ico(
-          kKinds[x.kind]!.ic,
-          size: IcoSize.xs,
-          color: p.cat(kKinds[x.kind]!.c),
-          icon: IcSize.s,
-        ),
+        if (selecting)
+          SizedBox(
+            width: 34,
+            height: 34,
+            child: Center(child: SelectBox(checked: picked)),
+          )
+        else
+          Ico(
+            kKinds[x.kind]!.ic,
+            size: IcoSize.xs,
+            color: p.cat(kKinds[x.kind]!.c),
+            icon: IcSize.s,
+          ),
         // Number · date · voucher type (Tally sync status is not shown).
         Expanded(
           child: RTx(
@@ -504,6 +519,7 @@ class _VList extends StatelessWidget {
         pg != null && (pg.hasMore || pg.loading || pg.error != null);
     final int extra = (v.hidden > 0 ? 1 : 0) + (more || vrows.isEmpty ? 1 : 0);
     return Scr(
+      bottomBar: c.vSelecting ? _SelectBar(c: c, rows: v.rows) : null,
       // Next page near the end; after a failed page only Retry reloads (no
       // automatic hammering of the server).
       onNearEnd: pg == null
@@ -514,6 +530,11 @@ class _VList extends StatelessWidget {
       children: <Widget>[
         BackNav(
           actions: <Widget>[
+            CBtn(
+              c.vSelecting ? 'close' : 'check',
+              key: const ValueKey<String>('vSelect'),
+              onTap: c.vSelecting ? c.endVoucherSelect : c.startVoucherSelect,
+            ),
             CBtn('search', onTap: () => c.openOverlay('search')),
             CBtn('sync', onTap: c.refreshNow),
             CBtn('plus', onTap: () => c.go('newEntry')),
@@ -807,6 +828,50 @@ class EntryDetailScreen extends ConsumerWidget {
                 ('${l.debit ? 'Dr' : 'Cr'} · ${l.ledger}', inr(l.amt), false),
             ]),
         ],
+      ],
+    );
+  }
+}
+
+/// Selecting vouchers (floating): how many / how much, Select all / Clear,
+/// Share via WhatsApp (one message), one list PDF or one PDF each.
+class _SelectBar extends StatelessWidget {
+  const _SelectBar({required this.c, required this.rows});
+  final AppController c;
+  final List<Voucher> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final int n = c.vPicked.length;
+    final bool all =
+        rows.isNotEmpty &&
+        n >= rows.length &&
+        rows.every((Voucher v) => c.vPicked.containsKey(v.key));
+    final Party? party = c.pickedParty;
+    return BulkBar(
+      key: const ValueKey<String>('vSelectBarFloat'),
+      keyPrefix: 'vSelect',
+      count: n,
+      detail: '${inr(c.pickedTotal)}${party != null ? ' · ${party.name}' : ''}',
+      allSelected: all,
+      selectAllLabel: 'Select all (${rows.length})',
+      emptyText: 'Tap entries to select them',
+      onSelectAll: () => c.selectAllPicked(rows),
+      onClear: c.clearPicked,
+      onWhatsApp: c.whatsAppPicked,
+      actions: <BulkAction>[
+        BulkAction(
+          'List',
+          'file',
+          c.sharePickedList,
+          key: const ValueKey<String>('vShareList'),
+        ),
+        BulkAction(
+          'PDFs',
+          'share',
+          c.sharePickedEach,
+          key: const ValueKey<String>('vShareEach'),
+        ),
       ],
     );
   }

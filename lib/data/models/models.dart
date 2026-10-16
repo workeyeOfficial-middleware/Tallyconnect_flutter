@@ -6,7 +6,11 @@ library;
 import '../../core/utils/format.dart' show parseDmy;
 
 export 'assistant.dart';
+export 'cashflow.dart';
 export 'email_reminder.dart';
+export 'financial.dart';
+export 'sales_analytics.dart';
+export 'tally_report.dart';
 
 /// A navigation target: `'screen'` or `['screen', {params}]`.
 class NavTo {
@@ -567,9 +571,25 @@ class Profile {
 
 /// `GET /agent-status/sync-status`.
 class SyncInfo {
-  const SyncInfo(this.lastSyncAt, this.inProgress);
+  const SyncInfo(
+    this.lastSyncAt,
+    this.inProgress, {
+    this.state,
+    this.percent,
+    this.error,
+  });
   final DateTime? lastSyncAt;
   final bool inProgress;
+
+  /// Multi-company Agents: `syncing` | `synced` | `error` | `not_open` |
+  /// `locked` | `stalled` | `idle` (null: older server / Agent).
+  final String? state;
+
+  /// Progress of a running sync (0–100), when the Agent reports it.
+  final int? percent;
+
+  /// Why the last sync of this company failed.
+  final String? error;
 }
 
 /// Receivable or payable outstanding, computed from the same bill list the

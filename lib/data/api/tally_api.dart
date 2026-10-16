@@ -54,20 +54,46 @@ class TallyApi {
   Future<Object?> sendFeedback(Json body) =>
       http.post('/api/feedback', body: body);
 
-  // ------------------------------------------------- AI assistant (Gemini)
-  // The user's own Gemini key goes in a header of these two requests only;
-  // the server uses it for the request and does not keep it.
-  Future<Object?> verifyAssistant(String geminiKey) => http.post(
-    '/api/assistant/verify',
-    headers: <String, String>{'X-Gemini-Key': geminiKey},
+  // ------------------------------------------------- financial statements
+  // Admins always; team members only when the admin granted access. The
+  // server scopes everything to the login's account and active company.
+  Future<Object?> financialMe() => http.get('/api/financial/me');
+  Future<Object?> financialPeriods() => http.get('/api/financial/periods');
+
+  /// Official Tally reports fetched by the Agent (what exists; one report).
+  Future<Object?> tallyReportPeriods() =>
+      http.get('/api/tally-reports/periods');
+  Future<Object?> tallyReport(String report, Map<String, String> q) =>
+      http.get('/api/tally-reports/${Uri.encodeComponent(report)}', query: q);
+
+  /// GET /api/cashflow/forecast (13 weeks) and one week's bills.
+  Future<Object?> cashflowForecast(Map<String, String> q) =>
+      http.get('/api/cashflow/forecast', query: q);
+  Future<Object?> cashflowWeek(Map<String, String> q) =>
+      http.get('/api/cashflow/week', query: q);
+
+  /// GET /api/analytics/sales?from=&to= (the whole dashboard).
+  Future<Object?> salesAnalytics(String from, String to) => http.get(
+    '/api/analytics/sales',
+    query: <String, Object?>{'from': from, 'to': to},
+  );
+  Future<Object?> financialReport(String path, Map<String, Object?> q) =>
+      http.get('/api/financial/$path', query: q);
+  Future<Object?> financialAccess() => http.get('/api/financial/access');
+  Future<Object?> setFinancialAccess(String userId, bool enabled) => http.put(
+    '/api/financial/access/${Uri.encodeComponent(userId)}',
+    body: <String, Object?>{'enabled': enabled},
   );
 
-  /// POST /api/assistant/ask `{question, history:[{role, text}]}`
-  Future<Object?> askAssistant(String geminiKey, Json body) => http.post(
-    '/api/assistant/ask',
-    body: body,
-    headers: <String, String>{'X-Gemini-Key': geminiKey},
-  );
+  // ------------------------------------------------------ AI assistant
+  // The AI provider and its key are set on the server; the app sends none.
+
+  /// GET /api/assistant/status → `{enabled, provider, usage}`
+  Future<Object?> assistantStatus() => http.get('/api/assistant/status');
+
+  /// POST /api/assistant/ask `{question, history}` → answer + usage.
+  Future<Object?> askAssistant(Json body) =>
+      http.post('/api/assistant/ask', body: body);
 
   // ---------------------------------------------- outstanding reminders
   // The server scopes all of these to the login's active company and the
@@ -144,6 +170,8 @@ class TallyApi {
       http.post('/api/mobile-voucher-command/payment/create', body: body);
   Future<Object?> createJournal(Json body) =>
       http.post('/api/mobile-voucher-command/journal/create', body: body);
+  Future<Object?> createContra(Json body) =>
+      http.post('/api/mobile-voucher-command/contra/create', body: body);
 
   // ------------------------------------------------------ vouchers (§13)
   Future<Object?> vouchersPaged({
@@ -288,8 +316,7 @@ class TallyApi {
       http.getText('/api/mobile/notifications');
   Future<String> notificationConfigText() =>
       http.getText('/api/mobile/notifications/config');
-  Future<String> webNotificationsText() =>
-      http.getText('/admin/notifications');
+  Future<String> webNotificationsText() => http.getText('/admin/notifications');
   Future<String> webNotificationPrefsText() =>
       http.getText('/users/me/notifications');
   Future<String> queueActivityText(String companyGuid) => http.getText(

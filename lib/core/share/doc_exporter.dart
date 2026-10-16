@@ -21,6 +21,13 @@ abstract interface class DocExporter {
   /// Opens the Android / iOS system share sheet with the PDF and a text summary.
   Future<void> share(ShareDoc d, Uint8List bytes);
 
+  /// One share sheet with several PDFs (e.g. selected invoices) and [text].
+  Future<void> shareMany(
+    List<(ShareDoc, Uint8List)> docs, {
+    required String text,
+    String? subject,
+  });
+
   /// Saves the PDF where the user can find it; returns a display path.
   Future<String> download(String fileName, Uint8List bytes);
 
@@ -61,6 +68,30 @@ class PlatformDocExporter implements DocExporter {
             ? '${d.invoice!.heading} ${d.invoice!.no}'
             : d.title,
       ),
+    );
+  }
+
+  @override
+  Future<void> shareMany(
+    List<(ShareDoc, Uint8List)> docs, {
+    required String text,
+    String? subject,
+  }) async {
+    final Directory tmp = await getTemporaryDirectory();
+    final List<XFile> files = <XFile>[];
+    final Set<String> names = <String>{};
+    for (final (ShareDoc d, Uint8List bytes) in docs) {
+      // Two vouchers with the same number: keep both files.
+      String name = d.fileName;
+      for (int i = 2; !names.add(name); i++) {
+        name = d.fileName.replaceFirst(RegExp(r'\.pdf$'), '_$i.pdf');
+      }
+      final File f = File(p.join(tmp.path, name));
+      await f.writeAsBytes(bytes, flush: true);
+      files.add(XFile(f.path, mimeType: 'application/pdf', name: name));
+    }
+    await SharePlus.instance.share(
+      ShareParams(files: files, text: text, subject: subject),
     );
   }
 

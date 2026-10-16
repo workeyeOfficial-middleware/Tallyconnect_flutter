@@ -37,6 +37,17 @@ class FakeExporter implements DocExporter {
       Uint8List.fromList('%PDF-fake ${d.title}'.codeUnits);
   @override
   Future<void> share(ShareDoc d, Uint8List bytes) async => shared.add(d.title);
+
+  /// Titles of each multi-file share (one list per share sheet).
+  final List<List<String>> sharedMany = <List<String>>[];
+  @override
+  Future<void> shareMany(
+    List<(ShareDoc, Uint8List)> docs, {
+    required String text,
+    String? subject,
+  }) async => sharedMany.add(<String>[
+    for (final (ShareDoc d, Uint8List _) in docs) d.fileName,
+  ]);
   @override
   Future<String> download(String fileName, Uint8List bytes) async {
     saved.add(fileName);

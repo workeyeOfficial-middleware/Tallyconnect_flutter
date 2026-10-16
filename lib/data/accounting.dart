@@ -111,16 +111,13 @@ MonthTotals monthTotals(
   DateTime today, {
   bool complete = true,
 }) {
-  return kindTotals(
-    <Voucher>[
-      for (final Voucher v in vouchers)
-        if (v.date != null &&
-            v.date!.year == today.year &&
-            v.date!.month == today.month)
-          v,
-    ],
-    complete: complete,
-  );
+  return kindTotals(<Voucher>[
+    for (final Voucher v in vouchers)
+      if (v.date != null &&
+          v.date!.year == today.year &&
+          v.date!.month == today.month)
+        v,
+  ], complete: complete);
 }
 
 /// Amount and count per kind over every voucher passed in (all history).

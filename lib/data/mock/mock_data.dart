@@ -49,6 +49,7 @@ const Map<String, String> kTitles = <String, String>{
   'partyDetail': 'Party',
   'reports': 'Reports',
   'report': 'Reports',
+  'finReport': 'Financials',
   'activity': 'Activity',
   'actDetail': 'Activity',
   'team': 'Team',
@@ -527,6 +528,21 @@ const Map<String, FlowType> kFlowTypes = <String, FlowType>{
     partyLabel: 'Main account',
     noLabel: 'Entry no.',
   ),
+  // Money moved between cash and bank accounts. [partyLabel] is the account
+  // money goes out of (form `kParty`), [accLabel] the one it goes into
+  // (`kAcc`) — both picked from the synced cash / bank accounts.
+  'contra': FlowType(
+    title: 'Contra',
+    sub: 'Cash ↔ bank transfer',
+    ic: 'swap',
+    c: 'contra',
+    steps: <String>['Details', 'To account', 'Check'],
+    p: 'k',
+    partyLabel: 'From account (money goes out)',
+    noLabel: 'Contra no.',
+    amtLabel: 'Amount',
+    accLabel: 'To account (money comes in)',
+  ),
 };
 
 const List<PayMode> kModes = <PayMode>[
@@ -588,6 +604,14 @@ const Map<String, String> kForm = <String, String>{
   'jDate': '2026-09-26',
   'jParty': 'Salaries A/c',
   'jNote': 'Salary provision for September 2026',
+  // Contra: kParty = from account (money goes out), kAcc = to account.
+  'kNo': '',
+  'kDate': '2026-09-26',
+  'kParty': 'Cash in hand',
+  'kAcc': 'HDFC Bank – Current',
+  'kAmt': '25000',
+  'kUtr': '',
+  'kNote': 'Cash deposited in bank',
   'niName': 'Supreme PVC Pipe 1 inch',
   'niHsn': '',
   'niDisc': '0',

@@ -72,7 +72,8 @@ class EntryDraft {
   /// Set when [party] was created in this entry (not in Tally yet).
   final NewParty? newParty;
 
-  /// sales | purchase | receipt | payment | journal
+  /// sales | purchase | receipt | payment | journal | contra
+  /// (contra: [party] = from account, [account] = to account).
   final String type;
   final String no, date, party, due, note, ref, mode, bank, utr, account;
   final String supplierInvoice;
@@ -273,18 +274,70 @@ abstract class TallyRepository extends ChangeNotifier {
   /// Sends a failed reminder again (bills and recipient read again).
   Future<ReminderOutcome> retryReminder(int id) async => throw noReminders;
 
-  // ------------------------------------------------- AI assistant (Gemini)
+  // ------------------------------------------------ financial statements
+  static const ApiException noFinancial = ApiException(
+    ApiErrorKind.forbidden,
+    'Financial reports need your TallyConnect account and a Tally company.',
+  );
+
+  /// May this login see financial reports (admins: always).
+  Future<bool> financialCanView() async => false;
+  Future<FinPeriods> financialPeriods() async => throw noFinancial;
+
+  /// Official Tally reports the Agent has fetched (periods per report).
+  Future<TallyReportPeriods> tallyReportPeriods() async => throw noFinancial;
+
+  /// One official Tally report; [from] / [to] null → the newest period.
+  Future<TallyReport> tallyReport(
+    String report, {
+    DateTime? from,
+    DateTime? to,
+  }) async => throw noFinancial;
+
+  /// Cash flow forecast of the active company. [mode]: `adjusted` (usual
+  /// payment delays) or `due` (due dates).
+  Future<CashForecast> cashflowForecast({
+    String mode = 'adjusted',
+    bool doubtful = false,
+    bool refresh = false,
+  }) async => throw noFinancial;
+
+  /// The bills expected in the forecast week starting [start] (`YYYY-MM-DD`).
+  Future<CashWeekDetail> cashflowWeek(
+    String start, {
+    String mode = 'adjusted',
+    bool doubtful = false,
+  }) async => throw noFinancial;
+
+  /// Sales analytics for [from]…[to] (`YYYY-MM-DD`), active company.
+  Future<SalesDash> salesAnalytics(String from, String to) async =>
+      throw noFinancial;
+
+  /// [kind]: `pl` / `exp` (from–to) or `bs` / `tb` (as on [to]).
+  Future<FinReport> financialReport(
+    String kind, {
+    required DateTime to,
+    DateTime? from,
+    bool includePurchases = false,
+  }) async => throw noFinancial;
+
+  /// Team members the admin allowed (user ids).
+  Future<Set<String>> financialAccess() async => throw noFinancial;
+  Future<void> setFinancialAccess(String userId, bool enabled) async =>
+      throw noFinancial;
+
+  // ------------------------------------------------------- AI assistant
   static const ApiException noAssistant = ApiException(
     ApiErrorKind.forbidden,
     'The AI assistant needs your TallyConnect account and a Tally company.',
   );
 
-  /// Checks that the user's Gemini key works (`POST /api/assistant/verify`).
-  Future<void> verifyAssistantKey(String geminiKey) async => throw noAssistant;
+  /// Is the assistant on; this login's AI plan and token usage.
+  Future<AiStatus> assistantStatus() async => throw noAssistant;
 
-  /// Answers [question] from the active company's data the user may see.
+  /// Answers [question] from the active company's data the user may see
+  /// (the server's AI provider; counts against the user's tokens).
   Future<AssistantReply> askAssistant(
-    String geminiKey,
     String question,
     List<AiTurn> history,
   ) async => throw noAssistant;

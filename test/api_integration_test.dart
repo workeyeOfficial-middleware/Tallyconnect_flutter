@@ -61,6 +61,10 @@ class FakeBackend {
   /// Agent's last finished sync (GET /agent-status/sync-status).
   String lastSync = '2026-10-03T04:00:00.000Z';
 
+  /// Extra fields of GET /agent-status/sync-status (multi-company Agents:
+  /// state, percent, last_error, sync_in_progress).
+  Map<String, Object?> syncExtra = <String, Object?>{};
+
   /// `SUM(net_amount)` the server reports per type filter (null: 0).
   Map<String, num>? typeTotals;
   num totalFor(String? type) {
@@ -119,11 +123,55 @@ class FakeBackend {
   final List<Map<String, Object?>> remTemplates = <Map<String, Object?>>[];
   int _remId = 1;
 
-  // -------------------------------------------- /api/assistant/* (fake)
-  /// Gemini keys the fake Gemini accepts.
-  Set<String> aiValidKeys = <String>{'AIzaGOODKEY_1234567890abcdef'};
+  // -------------------------------------------- /api/financial/* (fake)
+  /// This login may see financial statements.
+  bool finAllowed = true;
 
-  /// `quota` (429), `down` (502) or null.
+  /// Agent has not synced the figures yet.
+  bool finNotSynced = false;
+
+  /// GET /api/financial/periods `message` (why no date yet), or none.
+  String? finReason;
+
+  // ----------------------------------------- /api/analytics/sales (fake)
+  /// Query of every call; server deployed without the route; no sales.
+  final List<Map<String, String>> salesQueries = <Map<String, String>>[];
+  bool salesMissing = false;
+
+  /// Server deployed without the Contra route (404, no JSON body).
+  bool contraMissing = false;
+
+  // ---------------------------------------- /api/cashflow/* (fake)
+  /// Query of every call; server without the routes; no cash figures.
+  final List<Map<String, String>> cashflowQueries = <Map<String, String>>[];
+  bool cashflowMissing = false;
+  bool cashflowNoOpening = false;
+
+  // ---------------------------------- /api/tally-reports/* (fake)
+  /// Reports "fetched by the Agent": report → [{from, to, rows}].
+  final Map<String, List<Map<String, Object?>>> tallyReports =
+      <String, List<Map<String, Object?>>>{};
+  bool tallyReportsMissing = false;
+  bool salesEmpty = false;
+
+  /// Team members granted access; PUT bodies.
+  final Set<String> finGranted = <String>{};
+  final List<Map<String, Object?>> finRequests = <Map<String, Object?>>[];
+
+  // -------------------------------------------- /api/assistant/* (fake)
+  // As the backend: the server's own AI key, a token allowance per login.
+
+  /// The free allowance and what this login has used (server-side).
+  int aiLimit = 10000;
+  int aiUsed = 0;
+
+  /// Tokens one answer costs.
+  int aiCost = 240;
+
+  /// AI_API_KEY not set on the server.
+  bool aiDisabled = false;
+
+  /// `busy` (provider quota, 503) or `down` (502) or null.
   String? aiFail;
 
   /// Server deployed without the assistant routes.
@@ -132,9 +180,21 @@ class FakeBackend {
   /// Replaces the default answer of POST /api/assistant/ask (whole body).
   Map<String, Object?>? aiReply;
 
-  /// Bodies of POST /api/assistant/ask; X-Gemini-Key of every call.
+  /// Bodies of POST /api/assistant/ask; headers of every assistant call.
   final List<Map<String, Object?>> aiAsks = <Map<String, Object?>>[];
-  final List<String?> aiKeysSeen = <String?>[];
+  final List<Map<String, String>> aiHeadersSeen = <Map<String, String>>[];
+
+  Map<String, Object?> get _aiUsage => <String, Object?>{
+    'plan': <String, Object?>{
+      'code': 'free',
+      'name': 'Free',
+      'period': 'lifetime',
+    },
+    'limit': aiLimit,
+    'used': aiUsed,
+    'remaining': aiUsed >= aiLimit ? 0 : aiLimit - aiUsed,
+    'exhausted': aiUsed >= aiLimit,
+  };
 
   /// Users removed with DELETE /users/:id.
   final Set<String> deletedUsers = <String>{};
@@ -174,6 +234,10 @@ class FakeBackend {
     }
     if (p.startsWith('/api/reminders')) return _reminders(r, p);
     if (p.startsWith('/api/assistant')) return _assistant(r, p);
+    if (p.startsWith('/api/financial')) return _financial(r, p);
+    if (p == '/api/analytics/sales') return _sales(r);
+    if (p.startsWith('/api/cashflow/')) return _cashflow(r, p);
+    if (p.startsWith('/api/tally-reports/')) return _tallyReports(r, p);
     if (p == '/api/feedback' && r.method == 'POST') {
       if (feedbackMissing) {
         return http.Response(
@@ -279,6 +343,7 @@ class FakeBackend {
           'success': true,
           'last_sync_at': lastSync,
           'sync_in_progress': false,
+          ...syncExtra,
         };
       case '/users/me':
         body = <String, Object?>{
@@ -702,8 +767,11 @@ class FakeBackend {
       case '/inventory/user-inventory':
       case '/send-invite':
         body = <String, Object?>{'success': true};
+      case '/api/mobile-voucher-command/contra/create' when contraMissing:
+        return http.Response('Cannot POST', 404);
       case '/api/mobile-voucher-command/receipt/create':
       case '/api/mobile-voucher-command/journal/create':
+      case '/api/mobile-voucher-command/contra/create':
       case '/api/mobile-voucher-command/create':
         body = <String, Object?>{
           'success': true,
@@ -743,8 +811,596 @@ class FakeBackend {
     headers: <String, String>{'content-type': 'application/json'},
   );
 
-  /// The assistant API as the backend implements it: key from the header,
-  /// Gemini failures never 401.
+  /// Official Tally reports, answering in the backend's shapes.
+  http.Response _tallyReports(http.Request r, String p) {
+    if (tallyReportsMissing) {
+      return http.Response(
+        '<!DOCTYPE html><html><body><pre>Cannot GET $p</pre></body></html>',
+        404,
+        headers: <String, String>{'content-type': 'text/html'},
+      );
+    }
+    if (!finAllowed) {
+      return _json(403, <String, Object?>{
+        'success': false,
+        'message': 'Ask your admin for access to financial reports.',
+        'code': 'no_access',
+      });
+    }
+    const List<String> keys = <String>[
+      'trial_balance',
+      'profit_loss',
+      'balance_sheet',
+      'cash_flow',
+    ];
+    List<Map<String, Object?>> of(String k) =>
+        List<Map<String, Object?>>.of(
+          tallyReports[k] ?? const <Map<String, Object?>>[],
+        )..sort(
+          (Map<String, Object?> a, Map<String, Object?> b) =>
+              '${b['to']}'.compareTo('${a['to']}'),
+        );
+    if (p == '/api/tally-reports/periods') {
+      return _json(200, <String, Object?>{
+        'success': true,
+        'company': 'Rajlaxmi Traders',
+        'reports': <String, Object?>{
+          for (final String k in keys)
+            k: <Object?>[
+              for (final Map<String, Object?> x in of(k))
+                <String, Object?>{
+                  'from': x['from'],
+                  'to': x['to'],
+                  'fetched_at': '2026-10-03T08:30:00.000Z',
+                },
+            ],
+        },
+      });
+    }
+    final String report = p.substring('/api/tally-reports/'.length);
+    final String? from = r.url.queryParameters['from'];
+    final String? to = r.url.queryParameters['to'];
+    final Map<String, Object?>? hit = of(report)
+        .where(
+          (Map<String, Object?> x) =>
+              from == null || (x['from'] == from && x['to'] == to),
+        )
+        .firstOrNull;
+    if (hit == null) {
+      return _json(404, <String, Object?>{
+        'success': false,
+        'message': 'No figures from Tally for this period yet.',
+        'code': 'not_fetched',
+      });
+    }
+    final List<Object?> rows = hit['rows']! as List<Object?>;
+    Map<String, Object?> checks = <String, Object?>{};
+    if (report == 'trial_balance') {
+      num dr = 0, cr = 0;
+      for (final Object? x in rows) {
+        final num c = ((x! as Map<String, Object?>)['closing'] ?? 0) as num;
+        if (c < 0) {
+          dr += -c;
+        } else {
+          cr += c;
+        }
+      }
+      checks = <String, Object?>{
+        'debit': dr,
+        'credit': cr,
+        'difference': (dr - cr).abs(),
+        'balanced': (dr - cr).abs() < 1,
+      };
+    } else if (report != 'cash_flow') {
+      num pos = 0, neg = 0;
+      for (final Object? x in rows) {
+        final Map<String, Object?> a =
+            (x! as Map<String, Object?>)['amounts']! as Map<String, Object?>;
+        final num v = (a['BSMAINAMT'] ?? a['PLSUBAMT'] ?? 0) as num;
+        if (v > 0) {
+          pos += v;
+        } else {
+          neg += -v;
+        }
+      }
+      checks = <String, Object?>{
+        'credit_side': pos,
+        'debit_side': neg,
+        'difference': (pos - neg).abs(),
+        'balanced': (pos - neg).abs() < 1,
+      };
+    }
+    return _json(200, <String, Object?>{
+      'success': true,
+      'data': <String, Object?>{
+        'report': report,
+        'company': 'Rajlaxmi Traders',
+        'period_from': hit['from'],
+        'period_to': hit['to'],
+        'fetched_at': '2026-10-03T08:30:00.000Z',
+        'fetch_seconds': 12.4,
+        'source': 'tally',
+        'rows': rows,
+        'checks': checks,
+      },
+    });
+  }
+
+  /// The cash flow forecast API, answering in the backend's shapes (two
+  /// weeks with figures, the rest empty; a shortfall in week 2).
+  http.Response _cashflow(http.Request r, String p) {
+    if (cashflowMissing) {
+      return http.Response(
+        '<!DOCTYPE html><html><body><pre>Cannot GET $p</pre></body></html>',
+        404,
+        headers: <String, String>{'content-type': 'text/html'},
+      );
+    }
+    if (!finAllowed) {
+      return _json(403, <String, Object?>{
+        'success': false,
+        'message': 'Ask your admin for access to financial reports.',
+        'code': 'no_access',
+      });
+    }
+    final Map<String, String> q = Map<String, String>.of(r.url.queryParameters);
+    cashflowQueries.add(<String, String>{'path': p, ...q});
+    final bool adjusted = q['mode'] != 'due';
+    final num? opening = cashflowNoOpening ? null : 21000;
+    final DateTime w0 = DateTime(2026, 9, 28);
+    final List<Map<String, Object?>> weeks = <Map<String, Object?>>[];
+    num? run = opening;
+    for (int i = 0; i < 13; i++) {
+      final DateTime s = w0.add(Duration(days: 7 * i));
+      final num inflow = i == 0 ? 750 : (i == (adjusted ? 2 : 1) ? 4000 : 0);
+      final num outflow = i == 1 ? 25000 : 0;
+      final num? closing = run == null ? null : run + inflow - outflow;
+      weeks.add(<String, Object?>{
+        'start': ymd(s),
+        'end': ymd(s.add(const Duration(days: 6))),
+        'opening': run,
+        'inflow': inflow,
+        'outflow': outflow,
+        'net': inflow - outflow,
+        'closing': closing,
+        'inflow_bills': inflow > 0 ? 1 : 0,
+        'outflow_bills': outflow > 0 ? 1 : 0,
+        'overdue_inflow': i == 0 ? 750 : 0,
+        'shortfall': closing != null && closing < 0,
+      });
+      run = closing;
+    }
+    if (p == '/api/cashflow/week') {
+      final Map<String, Object?>? w = weeks
+          .where((Map<String, Object?> x) => x['start'] == q['start'])
+          .firstOrNull;
+      if (w == null) {
+        return _json(404, <String, Object?>{
+          'success': false,
+          'message': 'That week is not in the forecast.',
+          'code': 'no_week',
+        });
+      }
+      return _json(200, <String, Object?>{
+        'success': true,
+        'data': <String, Object?>{
+          ...w,
+          'inflows': <Object?>[
+            if ((w['inflow']! as num) > 0)
+              <String, Object?>{
+                'party': 'Mehta Electricals',
+                'bill': 'S/9',
+                'due': '2026-10-02',
+                'expected': adjusted ? '2026-10-14' : '2026-10-02',
+                'amount': w['inflow'],
+                'delay_days': adjusted ? 12 : 0,
+                'delay_source': adjusted ? 'party' : 'due',
+                'overdue': false,
+              },
+          ],
+          'outflows': <Object?>[
+            if ((w['outflow']! as num) > 0)
+              <String, Object?>{
+                'party': 'Polycab Wires',
+                'bill': 'P/3',
+                'due': '2026-10-06',
+                'expected': '2026-10-06',
+                'amount': w['outflow'],
+                'overdue': false,
+              },
+          ],
+        },
+      });
+    }
+    return _json(200, <String, Object?>{
+      'success': true,
+      'data': <String, Object?>{
+        'company': 'Rajlaxmi Traders',
+        'as_on': '2026-10-03',
+        'generated_at': '2026-10-03T06:00:00.000Z',
+        'mode': adjusted ? 'adjusted' : 'due',
+        'first_week': '2026-09-28',
+        'weeks': weeks,
+        'totals': <String, Object?>{
+          'inflow': 4750,
+          'outflow': 25000,
+          'net': -20250,
+        },
+        'later': <String, Object?>{
+          'inflow': 300,
+          'outflow': 0,
+          'inflow_bills': 1,
+          'outflow_bills': 0,
+        },
+        'doubtful': <String, Object?>{
+          'amount': q['doubtful'] == '1' ? 0 : 900,
+          'bills': q['doubtful'] == '1' ? 0 : 1,
+          'days': 90,
+        },
+        'no_due_date': <String, Object?>{'amount': 0, 'bills': 0},
+        'shortfall_week': opening == null ? null : '2026-10-05',
+        'opening': opening == null
+            ? <String, Object?>{
+                'amount': null,
+                'reason': 'financial_not_synced',
+              }
+            : <String, Object?>{
+                'amount': opening,
+                'based_on': '2026-09-30',
+                'accounts': <Object?>[
+                  <String, Object?>{
+                    'name': 'HDFC Bank',
+                    'group': 'Bank Accounts',
+                    'balance': 19500,
+                  },
+                  <String, Object?>{
+                    'name': 'Cash',
+                    'group': 'Cash-in-Hand',
+                    'balance': 1500,
+                  },
+                ],
+              },
+        'advances_checked': true,
+        'advances': <String, Object?>{
+          'received': <String, Object?>{'amount': 600, 'bills': 1},
+          'paid': <String, Object?>{'amount': 0, 'bills': 0},
+        },
+        'delays': <String, Object?>{
+          'method': 'mixed',
+          'parties_exact': 1,
+          'window_days': 365,
+          'company_median': 9,
+          'company_bills': 41,
+          'company_on_time_pct': 38,
+          'parties_with_history': 12,
+        },
+        'top_receivables': <Object?>[
+          <String, Object?>{
+            'party': 'Mehta Electricals',
+            'amount': 4000,
+            'delay_days': 12,
+            'delay_source': 'party',
+            'history_bills': 18,
+            'on_time_pct': 20,
+            'method': 'alloc',
+          },
+          <String, Object?>{
+            'party': 'New Customer',
+            'amount': 750,
+            'delay_days': 9,
+            'delay_source': 'company',
+            'history_bills': 0,
+            'on_time_pct': null,
+          },
+        ],
+        'counts': <String, Object?>{'receivable_bills': 3, 'payable_bills': 1},
+      },
+    });
+  }
+
+  /// The financial statements API, answering in the backend's shapes.
+  http.Response _sales(http.Request r) {
+    if (salesMissing) {
+      return http.Response(
+        '<!DOCTYPE html><html><body><pre>Cannot GET /api/analytics/sales</pre></body></html>',
+        404,
+        headers: <String, String>{'content-type': 'text/html'},
+      );
+    }
+    salesQueries.add(Map<String, String>.of(r.url.queryParameters));
+    final String from = r.url.queryParameters['from'] ?? '';
+    final String to = r.url.queryParameters['to'] ?? '';
+    final bool byDay =
+        DateTime.parse(to).difference(DateTime.parse(from)).inDays <= 62;
+    return _json(200, <String, Object?>{
+      'success': true,
+      'data': <String, Object?>{
+        'company': 'Gupta Industries',
+        'from': from,
+        'to': to,
+        'kpis': <String, Object?>{
+          'sales': salesEmpty ? 0 : 20060,
+          'invoices': salesEmpty ? 0 : 3,
+          'avg_invoice': salesEmpty ? 0 : 6686.67,
+          'customers': salesEmpty ? 0 : 2,
+          'returns': salesEmpty ? 0 : 1180,
+          'returns_count': salesEmpty ? 0 : 1,
+          'net_sales': salesEmpty ? 0 : 18880,
+          'prev_sales': 10000,
+          'growth_pct': salesEmpty ? -100 : 100.6,
+        },
+        'trend': <String, Object?>{
+          'unit': byDay ? 'day' : 'month',
+          'points': <Object?>[
+            for (int i = 1; i <= (byDay ? 30 : 12); i++)
+              <String, Object?>{
+                'key': byDay
+                    ? '2026-09-${i.toString().padLeft(2, '0')}'
+                    : '2026-${i.toString().padLeft(2, '0')}',
+                'sales': salesEmpty
+                    ? 0
+                    : (i == 5 ? 11800 : (i == 20 ? 5900 : 0)),
+                'invoices': i == 5 || i == 20 ? 1 : 0,
+              },
+          ],
+        },
+        'top_customers': salesEmpty
+            ? <Object?>[]
+            : <Object?>[
+                <String, Object?>{
+                  'party':
+                      'Mehta Electricals with a long name for small phones',
+                  'sales': 14160,
+                  'invoices': 2,
+                  'share': 70.6,
+                },
+                <String, Object?>{
+                  'party': 'Gupta Stores',
+                  'sales': 5900,
+                  'invoices': 1,
+                  'share': 29.4,
+                },
+              ],
+        'top_items': salesEmpty
+            ? <Object?>[]
+            : <Object?>[
+                <String, Object?>{
+                  'item': 'Copper Wire 1.5mm',
+                  'amount': 8000,
+                  'qty': 10,
+                  'invoices': 1,
+                },
+                <String, Object?>{
+                  'item': 'Switch 6A',
+                  'amount': 7000,
+                  'qty': 70,
+                  'invoices': 2,
+                },
+              ],
+        'top_items_qty': salesEmpty
+            ? <Object?>[]
+            : <Object?>[
+                <String, Object?>{
+                  'item': 'Switch 6A',
+                  'amount': 7000,
+                  'qty': 70,
+                  'invoices': 2,
+                },
+                <String, Object?>{
+                  'item': 'Copper Wire 1.5mm',
+                  'amount': 8000,
+                  'qty': 10,
+                  'invoices': 1,
+                },
+              ],
+        'item_groups': salesEmpty
+            ? <Object?>[]
+            : <Object?>[
+                <String, Object?>{'group': 'Switchgear', 'amount': 9000},
+                <String, Object?>{'group': 'Wires', 'amount': 8000},
+              ],
+        'customers': <String, Object?>{
+          'new': salesEmpty ? 0 : 1,
+          'repeat': salesEmpty ? 0 : 1,
+        },
+      },
+    });
+  }
+
+  http.Response _financial(http.Request r, String p) {
+    finRequests.add(<String, Object?>{
+      'path': p,
+      'method': r.method,
+      ...r.url.queryParameters,
+    });
+    if (p == '/api/financial/me') {
+      return _json(200, <String, Object?>{
+        'success': true,
+        'can_view': finAllowed,
+      });
+    }
+    if (p == '/api/financial/access' && r.method == 'GET') {
+      return _json(200, <String, Object?>{
+        'success': true,
+        'user_ids': <Object?>[for (final String x in finGranted) int.parse(x)],
+      });
+    }
+    if (p.startsWith('/api/financial/access/') && r.method == 'PUT') {
+      final String id = p.substring('/api/financial/access/'.length);
+      final bool on =
+          (jsonDecode(r.body) as Map<String, Object?>)['enabled'] == true;
+      on ? finGranted.add(id) : finGranted.remove(id);
+      return _json(200, <String, Object?>{'success': true, 'enabled': on});
+    }
+    if (!finAllowed) {
+      return _json(403, <String, Object?>{
+        'success': false,
+        'code': 'no_access',
+        'message': 'Ask your admin for access to financial reports.',
+      });
+    }
+    if (p == '/api/financial/periods') {
+      return _json(200, <String, Object?>{
+        'success': true,
+        'company': 'Gupta Industries',
+        'groups_synced': !finNotSynced,
+        'message': ?finReason,
+        'snapshots': finNotSynced
+            ? <Object?>[]
+            : <Object?>[
+                for (final (String, String) s in <(String, String)>[
+                  ('2026-10-03', '2026-04-01'),
+                  ('2026-09-30', '2026-04-01'),
+                  ('2026-08-31', '2026-04-01'),
+                  ('2026-03-31', '2025-04-01'),
+                ])
+                  <String, Object?>{
+                    'as_on': s.$1,
+                    'fy_from': s.$2,
+                    'synced_at': '2026-10-03T05:00:00.000Z',
+                  },
+              ],
+      });
+    }
+    Map<String, Object?> g(
+      String name,
+      num amount, [
+      List<Object?> ch = const <Object?>[],
+    ]) => <String, Object?>{
+      'type': 'group',
+      'name': name,
+      'amount': amount,
+      'children': ch,
+    };
+    Map<String, Object?> l(String name, num amount) => <String, Object?>{
+      'type': 'ledger',
+      'name': name,
+      'guid': 'g-$name',
+      'amount': amount,
+    };
+    final Object? data = switch (p) {
+      '/api/financial/profit-loss' => <String, Object?>{
+        'from': r.url.queryParameters['from'],
+        'to': r.url.queryParameters['to'],
+        'company': 'Gupta Industries',
+        'trading': <String, Object?>{
+          'income': <Object?>[
+            g('Sales Accounts', 200000, <Object?>[l('Sales', 200000)]),
+          ],
+          'expense': <Object?>[
+            g('Purchase Accounts', 120000, <Object?>[l('Purchase', 120000)]),
+            g('Direct Expenses', 5000, <Object?>[l('Freight Inward', 5000)]),
+          ],
+          'opening_stock': 15000,
+          'closing_stock': 25000,
+          'total_income': 225000,
+          'total_expense': 140000,
+        },
+        'gross_profit': 85000,
+        'indirect': <String, Object?>{
+          'income': <Object?>[
+            g('Indirect Incomes', 2000, <Object?>[
+              l('Interest Received', 2000),
+            ]),
+          ],
+          'expense': <Object?>[
+            g('Indirect Expenses', 30000, <Object?>[
+              g('Office Expenses', 12000, <Object?>[l('Office Rent', 12000)]),
+              l('Salary', 18000),
+            ]),
+          ],
+          'total_income': 2000,
+          'total_expense': 30000,
+        },
+        'net_profit': 57000,
+        'total_revenue': 202000,
+        'total_expenses': 155000,
+      },
+      '/api/financial/balance-sheet' => <String, Object?>{
+        'as_on': r.url.queryParameters['as_on'],
+        'company': 'Gupta Industries',
+        'liabilities': <Object?>[
+          g('Capital Account', 115000, <Object?>[l('Capital A/c', 115000)]),
+          g('Current Liabilities', 35000, <Object?>[
+            g('Sundry Creditors', 30000, <Object?>[l('Polycab Wires', 30000)]),
+            g('Duties & Taxes', 5000, <Object?>[l('GST Payable', 5000)]),
+          ]),
+        ],
+        'assets': <Object?>[
+          g('Fixed Assets', 50000, <Object?>[l('Furniture', 50000)]),
+          g('Current Assets', 167000, <Object?>[
+            g('Stock-in-Hand', 25000),
+            l('Mehta Electricals', 77000),
+          ]),
+        ],
+        'profit_loss': <String, Object?>{
+          'opening': 10000,
+          'current_period': 57000,
+          'total': 67000,
+        },
+        'total_liabilities': 217000,
+        'total_assets': 217000,
+        'difference': 0,
+      },
+      '/api/financial/trial-balance' => <String, Object?>{
+        'as_on': r.url.queryParameters['as_on'],
+        'company': 'Gupta Industries',
+        'sections': <Object?>[
+          <String, Object?>{
+            ...g('Current Assets', 157000, <Object?>[
+              l('Mehta Electricals', 77000),
+            ]),
+            'nature': 'asset',
+          },
+          <String, Object?>{
+            ...g('Capital Account', -115000, <Object?>[
+              l('Capital A/c', -115000),
+            ]),
+            'nature': 'liability',
+          },
+        ],
+        'opening_stock': 15000,
+        'total_debit': 362000,
+        'total_credit': 362000,
+        'difference': 0,
+        'ungrouped': <Object?>[],
+      },
+      '/api/financial/expenses' => <String, Object?>{
+        'from': r.url.queryParameters['from'],
+        'to': r.url.queryParameters['to'],
+        'company': 'Gupta Industries',
+        'include_purchases': r.url.queryParameters['purchases'] == '1',
+        'sections': <Object?>[
+          g('Indirect Expenses', 30000, <Object?>[l('Salary', 18000)]),
+        ],
+        'total': r.url.queryParameters['purchases'] == '1' ? 155000 : 35000,
+        'top_ledgers': <Object?>[l('Salary', 18000), l('Office Rent', 12000)],
+        'by_month': <Object?>[
+          <String, Object?>{
+            'month': '2026-08',
+            'as_on': '2026-08-31',
+            'amount': 29000,
+          },
+          <String, Object?>{
+            'month': '2026-09',
+            'as_on': '2026-09-30',
+            'amount': 6000,
+          },
+        ],
+      },
+      _ => null,
+    };
+    if (data == null) {
+      return _json(404, <String, Object?>{
+        'success': false,
+        'message': 'Not found',
+      });
+    }
+    return _json(200, <String, Object?>{'success': true, 'data': data});
+  }
+
+  /// The assistant API as the backend implements it: the server's AI key,
+  /// tokens counted per login, 402 when used up, provider errors never 401.
   http.Response _assistant(http.Request r, String p) {
     if (aiMissing) {
       return http.Response(
@@ -753,44 +1409,54 @@ class FakeBackend {
         headers: <String, String>{'content-type': 'text/html'},
       );
     }
-    final String? key = r.headers['X-Gemini-Key'] ?? r.headers['x-gemini-key'];
-    aiKeysSeen.add(key);
-    if (key == null || key.isEmpty) {
-      return _json(400, <String, Object?>{
-        'success': false,
-        'code': 'no_key',
-        'message': 'Connect your Gemini API key first.',
+    aiHeadersSeen.add(Map<String, String>.of(r.headers));
+    if (p == '/api/assistant/status') {
+      return _json(200, <String, Object?>{
+        'success': true,
+        'enabled': !aiDisabled,
+        'provider': aiDisabled
+            ? null
+            : <String, Object?>{'id': 'gemini', 'label': 'Google Gemini'},
+        'usage': _aiUsage,
       });
     }
-    if (!aiValidKeys.contains(key)) {
-      return _json(422, <String, Object?>{
+    final Map<String, Object?> req = r.body.isEmpty
+        ? <String, Object?>{}
+        : jsonDecode(r.body) as Map<String, Object?>;
+    if (aiDisabled) {
+      return _json(503, <String, Object?>{
         'success': false,
-        'code': 'invalid_key',
-        'message': 'Gemini rejected this API key. Check it and connect again.',
+        'code': 'ai_not_configured',
+        'message': 'The AI Assistant is not available right now.',
       });
     }
-    if (aiFail == 'quota') {
-      return _json(429, <String, Object?>{
+    if (aiUsed >= aiLimit) {
+      return _json(402, <String, Object?>{
         'success': false,
-        'code': 'quota',
+        'code': 'ai_quota_exhausted',
         'message':
-            'Your Gemini API quota or rate limit is used up. Try again later or check your plan in Google AI Studio.',
+            'Your free AI access has ended. Upgrade your plan to continue.',
+        'usage': _aiUsage,
+      });
+    }
+    if (aiFail == 'busy') {
+      return _json(503, <String, Object?>{
+        'success': false,
+        'code': 'ai_busy',
+        'message':
+            'The AI Assistant is busy right now. Try again in a few minutes.',
       });
     }
     if (aiFail == 'down') {
       return _json(502, <String, Object?>{
         'success': false,
-        'code': 'provider_error',
-        'message': 'Gemini is not answering right now. Try again in a moment.',
+        'code': 'ai_unavailable',
+        'message':
+            'The AI Assistant is not answering right now. Try again in a moment.',
       });
     }
-    if (p == '/api/assistant/verify') {
-      return _json(200, <String, Object?>{
-        'success': true,
-        'model': 'gemini-2.5-flash',
-      });
-    }
-    final Map<String, Object?> b = jsonDecode(r.body) as Map<String, Object?>;
+    aiUsed += aiCost;
+    final Map<String, Object?> b = req;
     aiAsks.add(b);
     return _json(
       200,
@@ -847,6 +1513,7 @@ class FakeBackend {
               },
             ],
             'tools_used': <String>['outstanding_summary'],
+            'usage': _aiUsage,
           },
     );
   }

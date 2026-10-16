@@ -21,6 +21,9 @@ import '../../data/repositories/voucher_pager.dart';
 import '../widgets/common.dart';
 import '../widgets/report_chart.dart';
 import '../widgets/tab_bar.dart' show PillFilter;
+import 'cashflow_screens.dart' show CashflowTile;
+import 'financial_screens.dart' show FinancialTiles;
+import 'sales_screens.dart' show SalesTile;
 import 'stock_party_screens.dart' show StatBox;
 import 'voucher_screens.dart' show monthSums;
 
@@ -116,6 +119,12 @@ class ReportsScreen extends ConsumerWidget {
               ),
           ],
         ),
+        // Sales dashboard (real company).
+        const SalesTile(),
+        // Next 13 weeks of money in / out (same access as below).
+        const CashflowTile(),
+        // P&L, Balance Sheet, Trial Balance, Expenses (when allowed).
+        const FinancialTiles(),
         Grid(
           cols: 2,
           children: <Widget>[
@@ -745,7 +754,9 @@ class ActDetailScreen extends ConsumerWidget {
         const Sec('Entry details'),
         KvList(rows),
         if (a0.items.isNotEmpty) ...<Widget>[
-          Sec(a0.kind == 'journal' ? 'Accounts' : 'Items'),
+          Sec(
+            a0.kind == 'journal' || a0.kind == 'contra' ? 'Accounts' : 'Items',
+          ),
           GlassList(
             children: <Widget>[
               for (int i = 0; i < a0.items.length; i++)
@@ -753,7 +764,7 @@ class ActDetailScreen extends ConsumerWidget {
                   children: <Widget>[
                     Expanded(
                       child: RTx(
-                        a0.kind == 'journal'
+                        a0.kind == 'journal' || a0.kind == 'contra'
                             ? a0.items[i].$1
                             : '${i + 1}. ${a0.items[i].$1}',
                         a0.items[i].$2,

@@ -1,7 +1,7 @@
-// AI financial assistant: the floating chat button on Home and the chat
-// sheet. The user connects their own Gemini API key; questions are answered
-// by the TallyConnect server from the active company's data the user may
-// see (never demo data).
+// AI financial assistant: the floating chat button on Home, the chat sheet
+// and the "free AI access ended" popup. The TallyConnect server answers with
+// its own AI provider (no key in the app) from the active company's data
+// the user may see (never demo data); each login has a token allowance.
 library;
 
 import 'package:flutter/material.dart';
@@ -13,6 +13,7 @@ import '../../core/design/tc_fields.dart';
 import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
+import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
 import 'assistant_answer.dart';
@@ -50,7 +51,7 @@ class AssistantFab extends ConsumerWidget {
                 ),
               ],
             ),
-            child: const Ic('chat', size: IcSize.m, color: Colors.white),
+            child: const Ic('spark', size: IcSize.m, color: Colors.white),
           ),
         ),
       ),
@@ -77,14 +78,20 @@ class AssistantSheet extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            SheetHead(
-              'AI assistant',
-              sub: c.aiConnected
-                  ? 'Answers from ${c.companyName} · Gemini'
-                  : 'Ask about your Tally data with your own Gemini key',
-            ),
+            SheetHead('AI assistant', sub: 'Answers from ${c.companyName}'),
+            if (c.aiUsage != null) _UsageMeter(c.aiUsage!),
             Expanded(
-              child: c.aiConnected ? _Chat(c: c) : _Connect(c: c),
+              child: c.aiEnabled
+                  ? _Chat(c: c)
+                  : Align(
+                      alignment: Alignment.topCenter,
+                      child: InfoBox(
+                        c.aiError ??
+                            'The AI Assistant is not available right now.',
+                        key: const ValueKey<String>('aiOff'),
+                        icon: 'alert',
+                      ),
+                    ),
             ),
           ],
         ),
@@ -93,58 +100,137 @@ class AssistantSheet extends ConsumerWidget {
   }
 }
 
-class _Connect extends StatelessWidget {
-  const _Connect({required this.c});
+/// "Free plan · 7,600 of 10,000 AI tokens left" with a thin bar.
+class _UsageMeter extends StatelessWidget {
+  const _UsageMeter(this.u);
+  final AiUsage u;
+
+  @override
+  Widget build(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    final Color bar = u.exhausted
+        ? p.neg
+        : (u.fraction >= .8 ? p.warn : p.acc);
+    return Container(
+      key: const ValueKey<String>('aiUsage'),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
+      decoration: BoxDecoration(
+        color: navyA(.05),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            u.exhausted
+                ? '${u.planName} plan · AI tokens used up'
+                : '${u.planName} plan · ${grouped(u.remaining)} of '
+                      '${grouped(u.limit)} AI tokens left',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: ts(13, w: w700, c: u.exhausted ? p.neg : p.ink),
+          ),
+          const SizedBox(height: 7),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: SizedBox(
+              height: 5,
+              child: Stack(
+                children: <Widget>[
+                  Positioned.fill(child: ColoredBox(color: navyA(.08))),
+                  FractionallySizedBox(
+                    widthFactor: u.fraction,
+                    heightFactor: 1,
+                    child: ColoredBox(color: bar),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// In the chat once the allowance is used up (asking is off).
+class _LimitBanner extends StatelessWidget {
+  const _LimitBanner({required this.c});
   final AppController c;
 
   @override
   Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
-    return SingleChildScrollView(
+    return Container(
+      key: const ValueKey<String>('aiLimitBanner'),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: p.neg.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Fld(
-            label: 'Gemini API key',
-            req: true,
-            child: Inp(
-              key: const ValueKey<String>('aiKeyField'),
-              value: c.f('aiKey'),
-              onChanged: (String v) => c.setF('aiKey', v),
-              placeholder: 'Paste your key',
-              icon: 'lock',
-              obscure: true,
-            ),
-          ),
-          if (c.aiError != null) InfoBox(c.aiError!, icon: 'alert'),
-          Btn(
-            key: const ValueKey<String>('aiConnect'),
-            label: c.aiConnecting ? 'Checking key…' : 'Connect',
-            icon: 'check',
-            enabled: !c.aiConnecting,
-            onTap: c.connectAssistant,
-          ),
-          const SizedBox(height: 14),
-          Tap(
-            onTap: () =>
-                c.openUri(Uri.parse('https://aistudio.google.com/apikey')),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Text(
-                'Get a free key at aistudio.google.com/apikey',
-                textAlign: TextAlign.center,
-                style: ts(14, w: w700, c: p.acc),
-              ),
-            ),
+          Text(
+            AppController.kAiLimitMessage,
+            style: ts(14, w: w600, h: 1.35, c: p.ink),
           ),
           const SizedBox(height: 10),
-          const InfoBox(
-            'Your key is kept only on this phone (secure storage) and is sent '
-            'to TallyConnect with each question; the server does not save it. '
-            'Your question and the Tally figures needed to answer it are sent '
-            'to Google Gemini under your key. The assistant can only read '
-            'data — it never changes anything in Tally.',
-            icon: 'shield',
+          Btn(
+            key: const ValueKey<String>('aiBannerPlans'),
+            label: 'View plans',
+            height: 46,
+            fontSize: 15,
+            onTap: c.viewAiPlans,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The allowance is used up: the exact message and the way to the plans.
+class AiLimitSheet extends ConsumerWidget {
+  const AiLimitSheet({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    return Sheet(
+      key: const ValueKey<String>('aiLimitSheet'),
+      onClose: c.dismissAiLimit,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const SizedBox(height: 6),
+          Center(child: Ico('spark', size: IcoSize.sm, color: p.acc)),
+          const SizedBox(height: 14),
+          Text(
+            'Free AI access ended',
+            textAlign: TextAlign.center,
+            style: ts(19, w: w800, c: p.ink),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            AppController.kAiLimitMessage,
+            key: const ValueKey<String>('aiLimitText'),
+            textAlign: TextAlign.center,
+            style: ts(15, h: 1.4, c: p.ink2),
+          ),
+          const SizedBox(height: 20),
+          Btn(
+            key: const ValueKey<String>('aiViewPlans'),
+            label: 'View plans',
+            onTap: c.viewAiPlans,
+          ),
+          const SizedBox(height: 10),
+          Btn(
+            key: const ValueKey<String>('aiLimitClose'),
+            label: 'Not now',
+            kind: BtnKind.g,
+            onTap: c.dismissAiLimit,
           ),
         ],
       ),
@@ -205,9 +291,12 @@ class _Chat extends StatelessWidget {
                 ),
         ),
         const SizedBox(height: 10),
-        // Type, or tap the mic and speak (the words fill the field; the
-        // user checks them and taps Send).
-        Row(
+        if (c.aiExhausted)
+          _LimitBanner(c: c)
+        else
+          // Type, or tap the mic and speak (the words fill the field; the
+          // user checks them and taps Send).
+          Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: <Widget>[
             Expanded(
@@ -259,26 +348,12 @@ class _Chat extends StatelessWidget {
               style: ts(13, w: w600, c: c.aiVoiceOn ? p.acc : p.ink2),
             ),
           ),
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: Text(
-                'Answers can be wrong — check important figures in Tally.',
-                style: ts(12, c: p.ink3),
-              ),
-            ),
-            Tap(
-              key: const ValueKey<String>('aiDisconnect'),
-              onTap: c.disconnectAssistant,
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Text(
-                  'Remove key',
-                  style: ts(12.5, w: w700, c: p.neg),
-                ),
-              ),
-            ),
-          ],
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            'Answers can be wrong — check important figures in Tally.',
+            style: ts(12, c: p.ink3),
+          ),
         ),
       ],
     );
@@ -318,7 +393,7 @@ class _Bubble extends StatelessWidget {
           children: <Widget>[
             Row(
               children: <Widget>[
-                Ic('chat', size: IcSize.xs, color: p.acc),
+                Ic('spark', size: IcSize.xs, color: p.acc),
                 const SizedBox(width: 6),
                 Text(
                   'TallyConnect AI',

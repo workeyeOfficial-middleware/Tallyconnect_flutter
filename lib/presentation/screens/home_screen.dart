@@ -17,6 +17,7 @@ import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
+import 'sales_screens.dart' show SalesHomeCard;
 
 double homePagerTop(BuildContext c) => topIn(c) + 148;
 double homePagerBottom(BuildContext c) => barBottom(c) + 102;
@@ -109,7 +110,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       dot: c.unread > 0,
                     ),
                     CBtn(
-                      'chat',
+                      'feedback',
                       key: const ValueKey<String>('feedbackBtn'),
                       onTap: c.openFeedback,
                     ),
@@ -429,7 +430,7 @@ class _Page extends ConsumerWidget {
 
     for (final String id in ids) {
       if (c.widgetMeta(id) == null) continue;
-      if (id == 'newEntry' || id == 'money') {
+      if (AppController.isWideCard(id)) {
         flush();
         if (rows.isNotEmpty) rows.add(const SizedBox(height: 12));
         rows.add(_Card(id: id));
@@ -516,7 +517,7 @@ class _Card extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    final bool wide = id == 'newEntry' || id == 'money';
+    final bool wide = AppController.isWideCard(id);
     final bool armed = c.armed?.matches('home', id) ?? false;
     final bool ghosted = c.drag?.id == id;
     final bool lifted =
@@ -535,6 +536,8 @@ class _Card extends ConsumerWidget {
       body = _EntryHero(open: open);
     } else if (id == 'money') {
       body = _MoneyCard(open: open);
+    } else if (id == AppController.kSalesCard) {
+      body = SalesHomeCard(open: open);
     } else {
       final Shortcut t = kShortcuts[id]!;
       body = Tap(

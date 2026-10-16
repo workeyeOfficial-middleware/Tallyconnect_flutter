@@ -561,7 +561,7 @@ ShareDoc docAct(Act a, String company) => ShareDoc(
       : DocTable(
           <String>[
             '#',
-            a.kind == 'journal' ? 'Account' : 'Item',
+            a.kind == 'journal' || a.kind == 'contra' ? 'Account' : 'Item',
             'Details',
             'Amount',
           ],

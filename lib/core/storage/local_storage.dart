@@ -39,6 +39,10 @@ class LocalStorage {
   static const String kBgShade = 'tc-liquid-bg-shade';
   static const String kReminders = 'tc-outstanding-reminders';
 
+  /// Set once the Sales analytics card was added to saved Home layouts
+  /// (after that, hiding or moving it is the user's choice).
+  static const String kHomeSalesCard = 'tc-home-sales-card';
+
   /// Due-bill alerts switch (3 days before due) and the notification ids
   /// armed for it.
   static const String kAutoRemind = 'tc-due-alerts-on';

@@ -20,6 +20,7 @@ import '../../core/utils/phone.dart' show phoneLabel;
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../screens/account_screens.dart' show CompanyRow;
+import '../screens/financial_screens.dart' show FinPickSheet;
 import '../screens/insight_screens.dart' show kTS;
 import '../screens/voucher_screens.dart' show kVF;
 import '../widgets/common.dart';
@@ -57,6 +58,8 @@ class OverlayLayer extends ConsumerWidget {
       'callPick' => const CallPickSheet(),
       'mailPick' => const MailPickSheet(),
       'assistant' => const AssistantSheet(),
+      'aiLimit' => const AiLimitSheet(),
+      'finPick' => const FinPickSheet(),
       'emailRem' => const EmailReminderSheet(),
       'remTemplates' => const ReminderTemplatesSheet(),
       'remTemplateEdit' => const ReminderTemplateEditSheet(),

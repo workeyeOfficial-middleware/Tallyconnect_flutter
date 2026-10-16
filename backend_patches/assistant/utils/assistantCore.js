@@ -1,9 +1,9 @@
 /* =========================================================
    AI FINANCIAL ASSISTANT — pure helpers (no database, no network)
 
-   The user's own Gemini API key comes with each request (header
-   X-Gemini-Key) and is used only for that request: never stored, never
-   logged, never returned. Gemini sees only what the read-only, company-
+   The AI provider, model and API key are set on the server (.env:
+   AI_PROVIDER, AI_MODEL, AI_API_KEY); the key is never sent to the app,
+   logged or returned. The provider sees only what the read-only, company-
    and permission-scoped tools return (see assistantTools.js).
 ========================================================= */
 
@@ -53,19 +53,114 @@ export class AssistantError extends Error {
 }
 
 /**
- * A Gemini API key: letters, digits, `.`, `_` and `-` — both the classic
- * `AIza…` keys and the newer `AQ.…` keys (never echoed back).
+ * The user's own AI key, from `X-AI-Key` (or the older `X-Gemini-Key`):
+ * printable characters, no spaces (Gemini `AIza…` / `AQ.…`, OpenAI `sk-…`,
+ * Anthropic `sk-ant-…`, …). Never echoed back.
  */
 export function readKey(headers) {
-  const raw = headers?.["x-gemini-key"];
+  const raw = headers?.["x-ai-key"] ?? headers?.["x-gemini-key"];
   const key = typeof raw === "string" ? raw.trim() : "";
   if (!key) {
-    throw new AssistantError("no_key", 400, "Connect your Gemini API key first.");
+    throw new AssistantError("no_key", 400, "Connect your AI provider's API key first.");
   }
-  if (!/^[A-Za-z0-9._-]{20,200}$/.test(key)) {
-    throw new AssistantError("invalid_key", 422, "This does not look like a Gemini API key.");
+  if (!/^[\x21-\x7E]{16,300}$/.test(key)) {
+    throw new AssistantError("invalid_key", 422, "This does not look like an API key.");
   }
   return key;
+}
+
+/** Provider id from the body or `X-AI-Provider` (older apps: Gemini). */
+export function readProvider(req, known) {
+  const raw = req.body?.provider ?? req.headers?.["x-ai-provider"] ?? "gemini";
+  const id = String(raw).trim().toLowerCase();
+  if (!known[id]) throw new AssistantError("bad_provider", 400, "Unknown AI provider.");
+  return id;
+}
+
+/** An optional model id chosen by the user. */
+export function readModel(raw) {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const m = String(raw).trim();
+  if (!/^[A-Za-z0-9._:/@-]{1,120}$/.test(m)) throw new AssistantError("bad_model", 400, "Unknown model.");
+  return m.replace(/^models\//, "");
+}
+
+/**
+ * Provider HTTP failure → what the user is told (never the key, never the
+ * raw body). Gemini keeps its own specific messages.
+ */
+export function providerFailure(provider, label, status, body) {
+  if (provider === "gemini") return geminiFailure(status, body);
+  const msg = String(body?.error?.message || body?.message || body?.error || "");
+  if (status === 401 || status === 403) {
+    return new AssistantError("invalid_key", 422, `${label} rejected this API key. Check it and connect again.`);
+  }
+  if (status === 402 || /credit|billing|insufficient_quota|payment/i.test(msg)) {
+    return new AssistantError("quota", 429, `Your ${label} account has no credit or quota left. Check billing on the provider's site.`);
+  }
+  if (status === 429) {
+    return new AssistantError("quota", 429, `${label} rate limit or quota reached. Try again in a minute.`);
+  }
+  if (status === 404 || (status === 400 && /model/i.test(msg) && /(not (found|exist|available|support)|invalid|does not)/i.test(msg))) {
+    return new AssistantError("model_unavailable", 502, `This ${label} model is not available for your key. Choose another model.`);
+  }
+  if (status === 400 && /tool|function/i.test(msg)) {
+    return new AssistantError("model_unavailable", 502, `This ${label} model cannot look up data (no tool support). Choose another model.`);
+  }
+  if (status === 400) {
+    return new AssistantError("bad_request", 502, `${label} could not process this question. Try rephrasing it.`);
+  }
+  return new AssistantError("provider_error", 502, `${label} is not answering right now. Try again in a moment.`);
+}
+
+/**
+ * A provider failure on the server's own key → what users are told. Key,
+ * billing and model problems are the operator's to fix (logged); users
+ * never see "your key" messages and are never signed out (no 401).
+ */
+export function serviceFailure(err) {
+  switch (err?.code) {
+    case "invalid_key":
+    case "key_forbidden":
+    case "key_suspended":
+    case "api_disabled":
+    case "model_unavailable":
+      return new AssistantError("ai_unavailable", 503, "The AI Assistant is temporarily unavailable. Please try again later.");
+    case "quota":
+      return new AssistantError("ai_busy", 503, "The AI Assistant is busy right now. Try again in a few minutes.");
+    case "bad_request":
+      return new AssistantError("bad_request", 502, "The AI Assistant could not process this question. Try rephrasing it.");
+    case "timeout":
+      return new AssistantError("timeout", 504, "The AI Assistant took too long to answer. Try again.");
+    case "unavailable":
+    case "provider_error":
+      return new AssistantError("ai_unavailable", 502, "The AI Assistant is not answering right now. Try again in a moment.");
+    default:
+      return err;
+  }
+}
+
+/** The tools in neutral form: JSON Schema + the Gemini original. */
+export function neutralTools() {
+  return TOOL_DECLARATIONS.map((t) => ({
+    name: t.name,
+    description: t.description,
+    parameters: toJsonSchemaLocal(t.parameters),
+    geminiParameters: t.parameters,
+  }));
+}
+
+function toJsonSchemaLocal(s) {
+  if (!s || typeof s !== "object") return s;
+  const out = {};
+  for (const [k, v] of Object.entries(s)) {
+    if (k === "type" && typeof v === "string") out.type = v.toLowerCase();
+    else if (k === "properties" && v && typeof v === "object") {
+      out.properties = Object.fromEntries(Object.entries(v).map(([pk, pv]) => [pk, toJsonSchemaLocal(pv)]));
+    } else out[k] = v;
+  }
+  if (out.type === "object" && !out.properties) out.properties = {};
+  return out;
 }
 
 /** Validates POST /api/assistant/ask. */
@@ -93,17 +188,22 @@ export function validateAsk(body) {
 }
 
 export function assistantConfig(env = process.env) {
-  const model = String(env.GEMINI_MODEL || "").trim();
+  const provider = String(env.AI_PROVIDER || "gemini").trim().toLowerCase();
+  const apiKey = String(env.AI_API_KEY || (provider === "gemini" ? env.GEMINI_API_KEY : "") || "").trim();
+  const model = String(env.AI_MODEL || (provider === "gemini" ? env.GEMINI_MODEL : "") || "").trim();
   const n = (v, d, lo, hi) => {
     const x = Number.parseInt(String(v ?? ""), 10);
     return Number.isInteger(x) && x >= lo && x <= hi ? x : d;
   };
   return {
-    // Optional: a model to use first when the key offers it; otherwise the
-    // best model the key can use is picked (see rankModels).
-    model: /^[A-Za-z0-9._-]{3,80}$/.test(model) ? model.replace(/^models\//, "") : null,
-    // Questions per user per 10 minutes (protects the server; Gemini quota
-    // is the user's own).
+    // The one AI provider and key every user's questions go to.
+    provider,
+    apiKey: /^[\x21-\x7E]{16,300}$/.test(apiKey) ? apiKey : "",
+    // Optional: the model to use; otherwise the best model the key can use
+    // is picked (see rankModels).
+    model: /^[A-Za-z0-9._:/@-]{3,120}$/.test(model) ? model.replace(/^models\//, "") : null,
+    // Questions per user per 10 minutes (protects the server and the
+    // shared AI key).
     perTenMinutes: n(env.ASSISTANT_RATE_LIMIT_PER_10_MIN, 30, 1, 1000),
   };
 }

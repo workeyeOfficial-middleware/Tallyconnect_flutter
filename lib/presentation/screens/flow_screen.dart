@@ -34,9 +34,15 @@ class FlowScreen extends ConsumerWidget {
     final String pf = cfg.p;
     final num payAmt = numOf(c.form['${pf}Amt']);
     final bool balanced = c.drSum == c.crSum && c.drSum > 0;
+    final String contraTo = c.f('kAcc').trim();
     final bool nextOff =
         (cfg.items && step == 1 && lines.isEmpty) ||
         (c.flowType == 'journal' && step == 1 && !balanced) ||
+        (c.flowType == 'contra' &&
+            step == 1 &&
+            (contraTo.isEmpty ||
+                contraTo.toLowerCase() ==
+                    c.f('kParty').trim().toLowerCase())) ||
         (step == 0 && c.f('${pf}Party').isEmpty);
 
     Widget body;
@@ -50,6 +56,8 @@ class FlowScreen extends ConsumerWidget {
       body = _Pay(cfg: cfg, tot: tot, payAmt: payAmt);
     } else if (c.flowType == 'journal') {
       body = const _Ledgers();
+    } else if (c.flowType == 'contra') {
+      body = _ContraTo(cfg: cfg, payAmt: payAmt);
     } else {
       body = _Mode(cfg: cfg, payAmt: payAmt);
     }
@@ -225,6 +233,7 @@ class _Details extends ConsumerWidget {
     final String pf = cfg.p;
     final String type = c.flowType;
     final bool journal = type == 'journal';
+    final bool contra = type == 'contra';
     // Same 12 px gap below the step bar as every other step's card (this
     // card had none, so it sat under the step bar's edge and shadow).
     return Rise(
@@ -271,10 +280,20 @@ class _Details extends ConsumerWidget {
                   children: <Widget>[
                     Expanded(
                       child: SelBtn(
-                        leading: Av(initials(c.f('${pf}Party')), size: Av.sm),
+                        key: ValueKey<String>('${pf}PartyPick'),
+                        leading: contra
+                            ? _accIcon(context, c.f('${pf}Party'))
+                            : Av(initials(c.f('${pf}Party')), size: Av.sm),
                         text: c.f('${pf}Party'),
                         onTap: () {
-                          if (journal) {
+                          if (contra) {
+                            // Cash / bank accounts only (Contra).
+                            c.openPick(
+                              'Money goes out of',
+                              'kParty',
+                              c.repo.accounts(),
+                            );
+                          } else if (journal) {
                             c.openPick(
                               'Choose account',
                               'jParty',
@@ -299,7 +318,7 @@ class _Details extends ConsumerWidget {
                         },
                       ),
                     ),
-                    if (!journal) ...<Widget>[
+                    if (!journal && !contra) ...<Widget>[
                       const SizedBox(width: 10),
                       CBtn(
                         'plus',
@@ -340,14 +359,15 @@ class _Details extends ConsumerWidget {
                     fontWeight: w800,
                   ),
                 ),
-                Fld(
-                  label: 'Against which bill? (optional)',
-                  icon: 'hash',
-                  child: Inp(
-                    value: c.f('${pf}Ref'),
-                    onChanged: (String v) => c.setF('${pf}Ref', v),
+                if (!contra)
+                  Fld(
+                    label: 'Against which bill? (optional)',
+                    icon: 'hash',
+                    child: Inp(
+                      value: c.f('${pf}Ref'),
+                      onChanged: (String v) => c.setF('${pf}Ref', v),
+                    ),
                   ),
-                ),
               ],
               if (cfg.items)
                 Fld(
@@ -784,6 +804,117 @@ class _Mode extends ConsumerWidget {
   }
 }
 
+/// Cash or bank icon for an account name.
+Widget _accIcon(BuildContext context, String acc) => Ico(
+  acc.toLowerCase().contains('cash') ? 'cash' : 'bank',
+  size: IcoSize.xs,
+  color: Tc.of(context).navy,
+  icon: IcSize.s,
+);
+
+/// Contra step 2: the account the money goes into (another cash / bank
+/// account) and an optional cheque / UTR number.
+class _ContraTo extends ConsumerWidget {
+  const _ContraTo({required this.cfg, required this.payAmt});
+  final FlowType cfg;
+  final num payAmt;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    final String from = c.f('kParty').trim();
+    final String to = c.f('kAcc').trim();
+    final bool same = to.isNotEmpty && to.toLowerCase() == from.toLowerCase();
+    Widget end(String label, String name) => Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            label,
+            style: ts(12, w: w700, c: p.ink3),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            name.isEmpty ? '—' : name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: ts(15, w: w800, h: 1.25, c: p.ink),
+          ),
+        ],
+      ),
+    );
+    return Rise(
+      child: Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: Glass(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Tot(
+                margin: const EdgeInsets.only(bottom: 14),
+                child: Row(
+                  children: <Widget>[
+                    end('From', from),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Ic('arrow', color: p.acc),
+                    ),
+                    end('To', to),
+                  ],
+                ),
+              ),
+              Fld(
+                label: cfg.accLabel,
+                req: true,
+                child: SelBtn(
+                  key: const ValueKey<String>('kAccPick'),
+                  leading: _accIcon(context, to),
+                  text: to,
+                  onTap: () => c.openPick(
+                    'Money goes into',
+                    'kAcc',
+                    c.repo
+                        .accounts()
+                        .where(
+                          (Opt o) =>
+                              o.t.trim().toLowerCase() != from.toLowerCase(),
+                        )
+                        .toList(),
+                  ),
+                ),
+              ),
+              if (same)
+                const Banner2(
+                  'From and To must be different accounts',
+                  ok: false,
+                ),
+              Fld(
+                label: 'Cheque / UTR no. (optional)',
+                icon: 'hash',
+                child: Inp(
+                  value: c.f('kUtr'),
+                  onChanged: (String v) => c.setF('kUtr', v),
+                ),
+              ),
+              Tot(
+                margin: EdgeInsets.zero,
+                child: Row(
+                  children: <Widget>[
+                    Expanded(child: Text(cfg.amtLabel ?? '')),
+                    Text(inr(payAmt), style: amtStyle(context)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Ledgers extends ConsumerWidget {
   const _Ledgers();
 
@@ -1163,6 +1294,28 @@ class _Summary extends ConsumerWidget {
                 inr(j.amt),
                 false,
               ),
+          ],
+        ),
+      ];
+    } else if (type == 'contra') {
+      sections = <(String, int, List<(String, String, bool)>)>[
+        (
+          'Details',
+          0,
+          <(String, String, bool)>[
+            (cfg.noLabel, v('No'), false),
+            ('Date', fdate(v('Date')), false),
+            ('From (money goes out)', v('Party'), false),
+            (cfg.amtLabel ?? '', inr(payAmt), true),
+            ('Note', orDash(v('Note')), false),
+          ],
+        ),
+        (
+          'To account',
+          1,
+          <(String, String, bool)>[
+            ('To (money comes in)', orDash(v('Acc')), false),
+            ('Cheque / UTR no.', orDash(v('Utr')), false),
           ],
         ),
       ];

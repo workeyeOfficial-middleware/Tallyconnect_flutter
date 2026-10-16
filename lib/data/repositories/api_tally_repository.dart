@@ -1403,6 +1403,7 @@ class ApiTallyRepository extends TallyRepository {
         'receipt' => await _api.createReceipt(receiptBody(d)),
         'payment' => await _api.createPayment(paymentBody(d)),
         'journal' => await _api.createJournal(journalBody(d)),
+        'contra' => await _api.createContra(contraBody(d)),
         _ => throw ApiException(
           ApiErrorKind.badRequest,
           'Unsupported entry type ${d.type}',
@@ -1415,6 +1416,13 @@ class ApiTallyRepository extends TallyRepository {
       if (e.kind == ApiErrorKind.unauthorized) {
         _expired = true;
         _notify();
+      }
+      // A server without the Contra route answers 404 without a JSON body.
+      if (d.type == 'contra' && e.status == 404 && e.body is! Map) {
+        return const SubmitResult(
+          ok: false,
+          message: 'Contra entries are not available on the server yet.',
+        );
       }
       return SubmitResult(ok: false, message: e.userMessage);
     }
@@ -1487,18 +1495,133 @@ class ApiTallyRepository extends TallyRepository {
     }
   }
 
+  // ------------------------------------------------ financial statements
+  static String _ymd(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
   @override
-  Future<void> verifyAssistantKey(String geminiKey) =>
-      _rem(() => _api.verifyAssistant(geminiKey));
+  Future<bool> financialCanView() async {
+    if (_client.token == null) return false;
+    try {
+      final Object? r = await _rem(_api.financialMe);
+      return r is Map && r['can_view'] == true;
+    } on ApiException {
+      // Older server without the feature, or no company yet: hidden.
+      return false;
+    }
+  }
+
+  @override
+  Future<FinPeriods> financialPeriods() =>
+      _rem(() async => FinPeriods.fromJson(await _api.financialPeriods()));
+
+  @override
+  Future<TallyReportPeriods> tallyReportPeriods() => _rem(
+    () async => TallyReportPeriods.fromJson(await _api.tallyReportPeriods()),
+  );
+
+  @override
+  Future<TallyReport> tallyReport(
+    String report, {
+    DateTime? from,
+    DateTime? to,
+  }) => _rem(
+    () async => TallyReport.fromJson(
+      await _api.tallyReport(report, <String, String>{
+        if (from != null && to != null) 'from': ymd(from),
+        if (from != null && to != null) 'to': ymd(to),
+      }),
+    ),
+  );
+
+  @override
+  Future<CashForecast> cashflowForecast({
+    String mode = 'adjusted',
+    bool doubtful = false,
+    bool refresh = false,
+  }) => _rem(
+    () async => CashForecast.fromJson(
+      await _api.cashflowForecast(<String, String>{
+        'mode': mode,
+        'doubtful': doubtful ? '1' : '0',
+        if (refresh) 'refresh': '1',
+      }),
+    ),
+  );
+
+  @override
+  Future<CashWeekDetail> cashflowWeek(
+    String start, {
+    String mode = 'adjusted',
+    bool doubtful = false,
+  }) => _rem(
+    () async => CashWeekDetail.fromJson(
+      await _api.cashflowWeek(<String, String>{
+        'start': start,
+        'mode': mode,
+        'doubtful': doubtful ? '1' : '0',
+      }),
+    ),
+  );
+
+  @override
+  Future<SalesDash> salesAnalytics(String from, String to) => _rem(
+    () async => SalesDash.fromJson(await _api.salesAnalytics(from, to)),
+  );
+
+  @override
+  Future<FinReport> financialReport(
+    String kind, {
+    required DateTime to,
+    DateTime? from,
+    bool includePurchases = false,
+  }) => _rem(() async {
+    final (String path, Map<String, Object?> q) = switch (kind) {
+      'pl' => (
+        'profit-loss',
+        <String, Object?>{'from': _ymd(from ?? to), 'to': _ymd(to)},
+      ),
+      'exp' => (
+        'expenses',
+        <String, Object?>{
+          'from': _ymd(from ?? to),
+          'to': _ymd(to),
+          if (includePurchases) 'purchases': '1',
+        },
+      ),
+      'tb' => ('trial-balance', <String, Object?>{'as_on': _ymd(to)}),
+      _ => ('balance-sheet', <String, Object?>{'as_on': _ymd(to)}),
+    };
+    final Object? r = await _api.financialReport(path, q);
+    final Object? d = r is Map ? r['data'] : null;
+    return FinReport(kind, d is Map ? d : const <Object?, Object?>{});
+  });
+
+  @override
+  Future<Set<String>> financialAccess() => _rem(() async {
+    final Object? r = await _api.financialAccess();
+    final Object? ids = r is Map ? r['user_ids'] : null;
+    return <String>{
+      if (ids is List)
+        for (final Object? x in ids) '$x',
+    };
+  });
+
+  @override
+  Future<void> setFinancialAccess(String userId, bool enabled) =>
+      _rem(() => _api.setFinancialAccess(userId, enabled));
+
+  @override
+  Future<AiStatus> assistantStatus() =>
+      _rem(() async => AiStatus.fromJson(await _api.assistantStatus()));
 
   @override
   Future<AssistantReply> askAssistant(
-    String geminiKey,
     String question,
     List<AiTurn> history,
   ) => _rem(
     () async => AssistantReply.fromJson(
-      await _api.askAssistant(geminiKey, <String, Object?>{
+      await _api.askAssistant(<String, Object?>{
         'question': question,
         'history': <Map<String, Object?>>[
           for (final AiTurn t in history)
@@ -1509,8 +1632,9 @@ class ApiTallyRepository extends TallyRepository {
   );
 
   @override
-  Future<ReminderTemplates> reminderTemplates() =>
-      _rem(() async => ReminderTemplates.fromJson(await _api.reminderTemplates()));
+  Future<ReminderTemplates> reminderTemplates() => _rem(
+    () async => ReminderTemplates.fromJson(await _api.reminderTemplates()),
+  );
 
   @override
   Future<ReminderTemplate> saveReminderTemplate(ReminderTemplate t) =>
@@ -1559,15 +1683,16 @@ class ApiTallyRepository extends TallyRepository {
   );
 
   @override
-  Future<List<ReminderLog>> reminderHistory(String ledgerGuid) => _rem(() async {
-    final Object? r = await _api.reminderHistory(ledgerGuid);
-    final Object? d = r is Map ? r['data'] : null;
-    return <ReminderLog>[
-      if (d is List)
-        for (final Object? x in d)
-          if (x is Map) ReminderLog.fromJson(x),
-    ];
-  });
+  Future<List<ReminderLog>> reminderHistory(String ledgerGuid) =>
+      _rem(() async {
+        final Object? r = await _api.reminderHistory(ledgerGuid);
+        final Object? d = r is Map ? r['data'] : null;
+        return <ReminderLog>[
+          if (d is List)
+            for (final Object? x in d)
+              if (x is Map) ReminderLog.fromJson(x),
+        ];
+      });
 
   @override
   Future<ReminderOutcome> retryReminder(int id) =>
@@ -1740,6 +1865,19 @@ Map<String, Object?> paymentBody(EntryDraft d) => _clean(<String, Object?>{
     if (d.mode != 'cash') 'transaction_instrument_no': _opt(d.utr),
     if (d.mode != 'cash') 'remarks': _opt(d.bank),
   }),
+});
+
+/// Contra body (`…/contra/create`): money moved from one cash / bank
+/// account ([EntryDraft.party]) into another ([EntryDraft.account]). The
+/// server queues it as To account Dr, From account Cr.
+Map<String, Object?> contraBody(EntryDraft d) => _clean(<String, Object?>{
+  'voucher_date': d.date,
+  'voucher_no': _opt(d.no),
+  'from_account': d.party.trim(),
+  'to_account': d.account.trim(),
+  'amount': paise(d.amount),
+  'instrument_no': _opt(d.utr),
+  'narration': _opt(d.note),
 });
 
 /// Journal body (`…/journal/create`): Dr → is_debit true, Cr → false.

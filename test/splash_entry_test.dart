@@ -152,14 +152,12 @@ void main() {
       await t.pump(const Duration(seconds: 6));
     });
 
-    testWidgets('Contra is not posted as another voucher type', (
-      WidgetTester t,
-    ) async {
+    testWidgets('Contra opens the contra flow', (WidgetTester t) async {
       final AppController c = await open(t);
       await t.tap(find.text('Contra'));
-      await t.pump(const Duration(milliseconds: 300));
-      expect(c.screen, 'newEntry');
-      expect(c.toast, contains('Contra'));
+      await t.pump(const Duration(milliseconds: 600));
+      expect(c.screen, 'flow');
+      expect(c.flowType, 'contra');
       await t.pump(const Duration(seconds: 6));
     });
   });

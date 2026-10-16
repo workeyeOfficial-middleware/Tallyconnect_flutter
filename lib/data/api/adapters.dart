@@ -86,7 +86,15 @@ SyncInfo syncFrom(Object? body) {
   final Map<Object?, Object?> m = body is Map
       ? body
       : const <Object?, Object?>{};
-  return SyncInfo(instant(m['last_sync_at']), m['sync_in_progress'] == true);
+  final Object? pct = m['percent'];
+  final String err = '${m['last_error'] ?? ''}'.trim();
+  return SyncInfo(
+    instant(m['last_sync_at']),
+    m['sync_in_progress'] == true,
+    state: m['state'] is String ? m['state']! as String : null,
+    percent: pct is num ? pct.round() : null,
+    error: err.isEmpty ? null : err,
+  );
 }
 
 // -------------------------------------------------------------- ledgers
@@ -381,6 +389,13 @@ Act actFrom(Map<String, Object?> m, DateTime now) {
     }
   }
   String party = str(p['party_name']);
+  // Contra: "From → To" (it has no party).
+  final Object? transfer = p['transfer'];
+  if (party.isEmpty &&
+      transfer is Map &&
+      str(transfer['from_account']).isNotEmpty) {
+    party = '${str(transfer['from_account'])} → ${str(transfer['to_account'])}';
+  }
   if (party.isEmpty && p['ledger_entries'] is List) {
     final List<Object?> le = p['ledger_entries']! as List<Object?>;
     if (le.isNotEmpty && le.first is Map) {
@@ -416,7 +431,8 @@ Act actFrom(Map<String, Object?> m, DateTime now) {
                 '${toNum(e['gst_rate'] ?? e['gst']) != null ? ' · GST ${str(e['gst_rate'] ?? e['gst'])}%' : ''}',
             toNum(e['amount']) ?? 0,
           ),
-    if (p['ledger_entries'] is List && type.toLowerCase() == 'journal')
+    if (p['ledger_entries'] is List &&
+        (type.toLowerCase() == 'journal' || type.toLowerCase() == 'contra'))
       for (final Object? e in p['ledger_entries']! as List)
         if (e is Map)
           (

@@ -1,6 +1,7 @@
 // AI financial assistant (`/api/assistant/*`): the chat turns and answers.
-// Answers come from Gemini with data the TallyConnect server read for the
-// signed-in user's active company only.
+// Answers come from the server's AI provider with data the TallyConnect
+// server read for the signed-in user's active company only; each login has
+// a token allowance (AiUsage).
 library;
 
 /// One KPI card value. [format]: `money` | `count` | `text`.
@@ -118,7 +119,7 @@ class AiTurn {
   /// Cards / tables for this answer (model turns).
   final List<AiBlock> blocks;
 
-  /// A failure shown in the chat (never sent back to Gemini as history).
+  /// A failure shown in the chat (never sent back to the AI as history).
   final bool error;
 
   bool get mine => role == 'user';
@@ -129,13 +130,66 @@ class AiTurn {
   };
 }
 
+/// This login's AI plan and token allowance (counted on the server, across
+/// devices). The free plan gives 10,000 tokens in total.
+class AiUsage {
+  const AiUsage({
+    required this.limit,
+    required this.used,
+    this.planCode = 'free',
+    this.planName = 'Free',
+  });
+  final int limit, used;
+  final String planCode, planName;
+
+  int get remaining => used >= limit ? 0 : limit - used;
+  bool get exhausted => used >= limit;
+
+  /// Share of the allowance used (0…1).
+  double get fraction => limit <= 0 ? 1 : (used / limit).clamp(0, 1).toDouble();
+
+  /// A used-up allowance when the server says so without figures.
+  static const AiUsage spent = AiUsage(limit: 0, used: 0);
+
+  static AiUsage? fromJson(Object? o) {
+    if (o is! Map) return null;
+    final Object? l = o['limit'], u = o['used'], p = o['plan'];
+    if (l is! num || u is! num) return null;
+    return AiUsage(
+      limit: l.toInt(),
+      used: u.toInt(),
+      planCode: p is Map ? '${p['code'] ?? 'free'}' : 'free',
+      planName: p is Map ? '${p['name'] ?? 'Free'}' : 'Free',
+    );
+  }
+}
+
+/// GET /api/assistant/status: is the assistant on; this login's usage.
+class AiStatus {
+  const AiStatus({required this.enabled, this.usage});
+  final bool enabled;
+  final AiUsage? usage;
+
+  static AiStatus fromJson(Object? o) {
+    final Map<Object?, Object?> m = o is Map ? o : const <Object?, Object?>{};
+    return AiStatus(
+      enabled: m['enabled'] != false,
+      usage: AiUsage.fromJson(m['usage']),
+    );
+  }
+}
+
 class AssistantReply {
   const AssistantReply({
     required this.answer,
     this.toolsUsed = const <String>[],
     this.blocks = const <AiBlock>[],
+    this.usage,
   });
   final String answer;
+
+  /// This login's token usage after the answer (null: older server).
+  final AiUsage? usage;
 
   /// The data lookups the server made for this answer.
   final List<String> toolsUsed;
@@ -156,6 +210,7 @@ class AssistantReply {
         if (b is List)
           for (final Object? x in b) ?AiBlock.fromJson(x),
       ],
+      usage: AiUsage.fromJson(m['usage']),
     );
   }
 }

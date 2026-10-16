@@ -2078,28 +2078,62 @@ class LMark extends StatelessWidget {
   final double size, radius;
   final IcSize icon;
 
+  /// The TC launcher icon's letter colours and background
+  /// (core/app_icon/app_icon.dart: kBrandT, kBrandC, kIconBgTop, kIconBg).
+  static const Color _t = Color(0xFF1C1C1C), _c = Color(0xFFD12350);
+  static const Color _bgTop = Color(0xFFFFFFFF), _bg = Color(0xFFEAEEF8);
+
+  /// Letter masks hold shading / 1.6 in RGB: colour × shading.
+  static ColorFilter _tint(Color k) => ColorFilter.matrix(<double>[
+    k.r * 1.6, 0, 0, 0, 0, //
+    0, k.g * 1.6, 0, 0, 0, //
+    0, 0, k.b * 1.6, 0, 0, //
+    0, 0, 0, 1, 0,
+  ]);
+
   @override
   Widget build(BuildContext context) {
-    final TcPalette p = Tc.of(context);
     final BorderRadius br = BorderRadius.circular(radius);
-    return CustomPaint(
-      painter: OuterShadow(br, <BoxShadow>[
-        css(0, 18, 30, -12, mix(p.acc3, .7)),
-      ]),
-      child: Container(
+    // The app's own TC icon (same letter masks as the launcher icon).
+    Widget letter(String asset, Color k) => ColorFiltered(
+      colorFilter: _tint(k),
+      child: Image.asset(
+        asset,
         width: size,
         height: size,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          borderRadius: br,
-          gradient: LinearGradient(
-            begin: const Alignment(-.5, -1),
-            end: const Alignment(.5, 1),
-            colors: <Color>[p.acc2, p.acc3],
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.medium,
+        errorBuilder: (_, _, _) => const SizedBox.shrink(),
+      ),
+    );
+    return CustomPaint(
+      painter: OuterShadow(br, <BoxShadow>[
+        css(0, 12, 26, -10, navyA(.32)),
+      ]),
+      child: Semantics(
+        label: 'TallyConnect',
+        image: true,
+        child: Container(
+          width: size,
+          height: size,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            borderRadius: br,
+            gradient: const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: <Color>[_bgTop, _bg],
+            ),
+          ),
+          foregroundDecoration: insetTop(br, whiteA(.35)),
+          child: Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+              letter('assets/images/tc_icon_t.png', _t),
+              letter('assets/images/tc_icon_c.png', _c),
+            ],
           ),
         ),
-        foregroundDecoration: insetTop(br, whiteA(.35)),
-        child: Ic('rupeeC', size: icon, color: Colors.white),
       ),
     );
   }

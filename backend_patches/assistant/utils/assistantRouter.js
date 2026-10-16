@@ -1,48 +1,71 @@
 /* =========================================================
    AI FINANCIAL ASSISTANT — routes (factory; dependencies passed in)
 
-   POST /api/assistant/verify   header X-Gemini-Key → is the key usable?
-   POST /api/assistant/ask      header X-Gemini-Key, {question, history[]}
+   GET  /api/assistant/status   is the assistant on; this user's AI plan
+                                 and token usage {limit, used, remaining}
+   POST /api/assistant/ask      {question, history[]} → answer, cards,
+                                 usage after this question
 
-   The key is the user's own, sent with each request over HTTPS and used
-   only for that request: never stored, logged or returned. Gemini gets
-   only the data the read-only tools return, all limited to the login's
-   account, its active company and (USER logins) its permissions.
-   Gemini errors never answer 401 (that would sign the user out of
-   TallyConnect): bad key → 422, quota → 429, Gemini down → 502 / 504.
+   One AI provider, model and API key for everyone, set on the server
+   (.env: AI_PROVIDER, AI_MODEL, AI_API_KEY). Users enter no key. The key
+   is never sent to the app, logged or returned.
+
+   Each user has a token allowance (free plan: AI_FREE_TOKENS, default
+   10,000), counted from the provider's own token figures for every call,
+   across devices (see aiUsage.js). Used up → 402 `ai_quota_exhausted`
+   and the AI provider is not called.
+
+   The provider gets only what the read-only tools return, all limited to
+   the login's account, its active company and (USER logins) its
+   permissions. Provider errors never answer 401 (that would sign the user
+   out of TallyConnect).
+
+   Older apps still call /providers, /verify and /models with their own
+   key: those answer from the server's configuration (the key they send is
+   ignored, never used), so they keep working.
 ========================================================= */
 import { createHash } from "node:crypto";
 import express from "express";
 import {
   AssistantError,
   MAX_TOOL_ROUNDS,
-  TOOL_DECLARATIONS,
   assistantConfig,
-  geminiFailure,
-  rankModels,
-  readKey,
-  systemPrompt,
   blocksFor,
+  neutralTools,
+  providerFailure,
+  serviceFailure,
+  systemPrompt,
   todayIso,
   validateAsk,
 } from "./assistantCore.js";
+import { createAdapters } from "./aiProviders.js";
+import { createTools } from "./assistantTools.js";
+import { createAiUsage, tokensOf } from "./aiUsage.js";
 
 const MODEL_TTL_MS = 6 * 3600 * 1000;
-import { createTools } from "./assistantTools.js";
 
 /**
  * @param {object} deps
  * @param {{query: Function}} deps.db
  * @param {Function} deps.auth
- * @param {{listModels: Function, generate: Function}} deps.gemini
+ * @param {object} [deps.adapters]   provider id → adapter (tests pass fakes)
  * @param {object} [deps.env]
  * @param {object} [deps.log]
  * @param {() => Date} [deps.now]
  */
-export function createAssistantRouter({ db, auth, gemini, env = process.env, log = console, now = () => new Date() }) {
+export function createAssistantRouter({
+  db,
+  auth,
+  adapters = createAdapters(),
+  env = process.env,
+  log = console,
+  now = () => new Date(),
+}) {
   const router = express.Router();
   const cfg = () => assistantConfig(env);
+  const usage = createAiUsage(db, env, now);
   const hits = new Map(); // userId → request times (last 10 minutes)
+  const inFlight = new Set(); // userIds with a question being answered
 
   function limit(userId) {
     const t = Date.now();
@@ -52,6 +75,23 @@ export function createAssistantRouter({ db, auth, gemini, env = process.env, log
     }
     recent.push(t);
     hits.set(userId, recent);
+  }
+
+  /** The configured provider and key, or null when not set up. */
+  function service() {
+    const c = cfg();
+    const ad = adapters[c.provider];
+    if (!ad || !c.apiKey) return null;
+    return { ad, key: c.apiKey, model: c.model };
+  }
+
+  function requireService() {
+    const s = service();
+    if (!s) {
+      log.error("assistant: AI_PROVIDER / AI_API_KEY not set (or unknown provider) — the assistant is off");
+      throw new AssistantError("ai_not_configured", 503, "The AI Assistant is not available right now.");
+    }
+    return s;
   }
 
   async function scope(req) {
@@ -78,72 +118,74 @@ export function createAssistantRouter({ db, auth, gemini, env = process.env, log
     };
   }
 
-  async function geminiCall(fn, key, what = "call") {
+  /** The login only (usage needs no company). */
+  function who(req) {
+    const u = req.user || {};
+    if (!u.id) throw new AssistantError("unauthorized", 401, "Unauthorized");
+    return { userId: u.id, adminId: u.adminId ?? (u.role === "ADMIN" ? u.id : null) };
+  }
+
+  /** A provider call; failures become user-safe errors (key never logged). */
+  async function call(ad, key, what, fn) {
     try {
       return await fn();
     } catch (err) {
       if (err instanceof AssistantError) throw err;
-      // Status + Google's own message (the key removed) — never the key.
-      const why = String(err?.body?.error?.message || "")
+      const raw = err?.body?.error?.message || err?.body?.message || "";
+      const why = String(typeof raw === "string" ? raw : "")
         .split(key || "\u0000")
         .join("[key]")
         .slice(0, 300);
       log.error(
-        `assistant: Gemini ${what} failed (${err?.status ?? (err?.timeout ? "timeout" : "network")})` +
+        `assistant: ${ad.label} ${what} failed (${err?.status ?? (err?.timeout ? "timeout" : "network")})` +
           (why ? `: ${why}` : "")
       );
-      if (err?.timeout) throw new AssistantError("timeout", 504, "Gemini took too long to answer. Try again.");
-      if (!err?.status) throw new AssistantError("unavailable", 502, "Could not reach Gemini. Try again.");
-      throw geminiFailure(err.status, err.body);
+      if (err?.timeout) throw serviceFailure({ code: "timeout" });
+      if (!err?.status) throw serviceFailure({ code: "unavailable" });
+      throw serviceFailure(providerFailure(ad.id, ad.label, err.status, err.body));
     }
   }
 
-  // ------------------------------------------------- model per key
-  // Google retires models and offers different ones per key / project, so
-  // the model is taken from what the key can use (cached per key hash —
-  // the key itself is never kept) and replaced when Google answers 404.
-  const models = new Map(); // keyHash → {list, at}
-  const keyHash = (key) => createHash("sha256").update(key).digest("hex");
+  // ------------------------------------------ models of the key (cached)
+  const models = new Map(); // provider|keyHash → {list, at}
+  const cacheKey = (ad, key) => `${ad.id}|${createHash("sha256").update(key).digest("hex")}`;
 
-  async function modelsFor(key, fresh = false) {
-    const h = keyHash(key);
-    const c = models.get(h);
-    if (!fresh && c && Date.now() - c.at < MODEL_TTL_MS && c.list.length) return c.list;
-    const r = await geminiCall(() => gemini.listModels(key), key, "model list");
-    let list = rankModels(r?.models);
-    const want = cfg().model;
-    if (want && list.includes(want)) list = [want, ...list.filter((m) => m !== want)];
+  async function modelsFor(ad, key) {
+    const ck = cacheKey(ad, key);
+    const c = models.get(ck);
+    if (c && Date.now() - c.at < MODEL_TTL_MS && c.list.length) return c.list;
+    const list = await call(ad, key, "model list", () => ad.listModels(key));
     if (!list.length) {
-      throw new AssistantError(
-        "model_unavailable",
-        502,
-        "This Gemini key has no model that can answer questions. Check the key's project in Google AI Studio."
-      );
+      log.error(`assistant: the ${ad.label} key has no model that can answer (set AI_MODEL or check the key)`);
+      throw serviceFailure({ code: "model_unavailable" });
     }
-    models.set(h, { list, at: Date.now() });
+    models.set(ck, { list, at: Date.now() });
     return list;
   }
 
-  /** generateContent with the key's best model; a 404 moves to the next. */
-  async function generate(key, body) {
-    let list = await modelsFor(key);
+  /**
+   * One chat turn. With AI_MODEL set, only that model; without, the key's
+   * best model, moving to the next when the provider says it is gone (404).
+   */
+  async function chat(ad, key, chosen, req) {
+    if (chosen) {
+      return { out: await call(ad, key, `chat (${chosen})`, () => ad.chat({ key, model: chosen, ...req })), model: chosen };
+    }
+    let list = await modelsFor(ad, key);
     for (let i = 0; i < 4 && list.length; i++) {
       const model = list[0];
       try {
-        return { out: await gemini.generate(key, model, body), model };
+        return { out: await ad.chat({ key, model, ...req }), model };
       } catch (err) {
-        if (err?.status !== 404) return geminiCall(() => Promise.reject(err), key, `generate (${model})`);
-        log.error(`assistant: Gemini model ${model} not available for this key (404); trying the next`);
+        if (err?.status !== 404) return call(ad, key, `chat (${model})`, () => Promise.reject(err));
+        log.error(`assistant: ${ad.label} model ${model} not available for this key (404); trying the next`);
         list = list.slice(1);
-        models.set(keyHash(key), { list, at: Date.now() });
+        models.set(cacheKey(ad, key), { list, at: Date.now() });
       }
     }
-    models.delete(keyHash(key));
-    throw new AssistantError(
-      "model_unavailable",
-      502,
-      "None of the Gemini models available to this key could answer. Check the key's project in Google AI Studio."
-    );
+    models.delete(cacheKey(ad, key));
+    log.error(`assistant: none of the ${ad.label} models could answer (set AI_MODEL or check the key)`);
+    throw serviceFailure({ code: "model_unavailable" });
   }
 
   const handle = (fn) => async (req, res) => {
@@ -151,28 +193,30 @@ export function createAssistantRouter({ db, auth, gemini, env = process.env, log
       await fn(req, res);
     } catch (err) {
       if (err instanceof AssistantError) {
-        if (err.code === "quota" || err.code === "rate_limited") res.set("Retry-After", "60");
-        return res.status(err.http).json({ success: false, code: err.code, message: err.message });
+        if (err.code === "rate_limited" || err.code === "ai_busy") res.set("Retry-After", "60");
+        return res.status(err.http).json({
+          success: false,
+          code: err.code,
+          message: err.message,
+          ...(err.usage ? { usage: err.usage } : {}),
+        });
       }
       log.error("assistant error:", err?.message || err);
       if (!res.headersSent) res.status(500).json({ success: false, message: "Server error" });
     }
   };
 
-  router.post(
-    "/api/assistant/verify",
+  router.get(
+    "/api/assistant/status",
     auth,
     handle(async (req, res) => {
-      const key = readKey(req.headers);
-      await scope(req);
-      limit(req.user.id);
-      // A real (tiny) generation, so a key that cannot answer fails here and
-      // not on the first question.
-      await modelsFor(key, true);
-      const { model } = await generate(key, {
-        contents: [{ role: "user", parts: [{ text: "Reply with OK." }] }],
+      const s = service();
+      res.json({
+        success: true,
+        enabled: !!s,
+        provider: s ? { id: s.ad.id, label: s.ad.label } : null,
+        usage: await usage.status(who(req)),
       });
-      res.json({ success: true, model });
     })
   );
 
@@ -180,76 +224,98 @@ export function createAssistantRouter({ db, auth, gemini, env = process.env, log
     "/api/assistant/ask",
     auth,
     handle(async (req, res) => {
-      const key = readKey(req.headers);
       const v = validateAsk(req.body);
       if (!v.ok) throw new AssistantError("bad_input", 400, v.message);
       const s = await scope(req);
-      limit(req.user.id);
-      const run = createTools(db, s, now);
-      let model = null;
-
-      const contents = [
-        ...v.value.history.map((h) => ({ role: h.role, parts: [{ text: h.text }] })),
-        { role: "user", parts: [{ text: v.value.question }] },
-      ];
-      const used = [];
-      // Cards / tables for the app, from the lookups' own results (one set
-      // per distinct lookup; the model's text never supplies figures).
-      const blocks = [];
-      const seen = new Set();
-      for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-        // No output-token cap: newer "thinking" models spend tokens before
-        // answering, and a small cap leaves an empty answer.
-        const g = await generate(key, {
-          systemInstruction: {
-            parts: [{ text: systemPrompt({ company: s.companyName, today: todayIso(now()), role: s.role }) }],
-          },
-          contents,
-          tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
-          generationConfig: { temperature: 0.2 },
-        });
-        const out = g.out;
-        model = g.model;
-        const cand = out?.candidates?.[0];
-        const parts = cand?.content?.parts || [];
-        const calls = parts.filter((p) => p.functionCall);
-        if (!calls.length) {
-          const text = parts
-            .filter((p) => typeof p.text === "string" && !p.thought)
-            .map((p) => p.text)
-            .join("")
-            .trim();
-          if (!text) {
-            const blocked = cand?.finishReason === "SAFETY" || out?.promptFeedback?.blockReason;
-            throw new AssistantError(
-              blocked ? "blocked" : "empty",
-              502,
-              blocked ? "Gemini declined to answer this question." : "Gemini returned no answer. Try again."
-            );
-          }
-          return res.json({ success: true, answer: text, blocks: blocks.slice(0, 8), tools_used: used, model });
-        }
-        if (round === MAX_TOOL_ROUNDS) break;
-        // Keep the model's turn as returned (incl. thought signatures), then
-        // answer every function call with the scoped data.
-        contents.push({ role: "model", parts });
-        const responses = [];
-        for (const p of calls) {
-          const name = String(p.functionCall.name || "");
-          used.push(name);
-          const result = await run(name, p.functionCall.args);
-          const sig = `${name}|${JSON.stringify(p.functionCall.args || {})}`;
-          if (!seen.has(sig)) {
-            seen.add(sig);
-            blocks.push(...blocksFor(name, result));
-          }
-          responses.push({ functionResponse: { name, response: { result } } });
-        }
-        contents.push({ role: "user", parts: responses });
+      const { ad, key, model: configured } = requireService();
+      await usage.assertCanAsk(s);
+      if (inFlight.has(s.userId)) {
+        throw new AssistantError("busy", 429, "Wait for the current answer before asking again.");
       }
-      throw new AssistantError("too_complex", 502, "The question needed too many steps. Try asking it more simply.");
+      limit(req.user.id);
+      inFlight.add(s.userId);
+      try {
+        const run = createTools(db, s, now);
+        const tools = neutralTools();
+        const system = systemPrompt({ company: s.companyName, today: todayIso(now()), role: s.role });
+        const messages = [
+          ...v.value.history.map((h) => ({ role: h.role === "model" ? "assistant" : "user", text: h.text })),
+          { role: "user", text: v.value.question },
+        ];
+        const used = [];
+        // Cards / tables for the app, from the lookups' own results (one
+        // set per distinct lookup; the model's text never supplies figures).
+        const blocks = [];
+        const seen = new Set();
+        let model = configured;
+        let tokens = 0;
+        for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+          const g = await chat(ad, key, model, { system, messages, tools });
+          model = g.model;
+          const out = g.out;
+          // Every provider call counts, whatever happens next. A question
+          // that started within the allowance is answered in full.
+          const t = tokensOf(out, { system, messages, tools });
+          tokens += t.total;
+          await usage.record(s, { provider: ad.id, model, ...t });
+          if (!out.calls?.length) {
+            if (!out.text) {
+              throw new AssistantError(
+                out.blocked ? "blocked" : "empty",
+                502,
+                out.blocked ? "The AI Assistant declined to answer this question." : "The AI Assistant returned no answer. Try again."
+              );
+            }
+            return res.json({
+              success: true,
+              answer: out.text,
+              blocks: blocks.slice(0, 8),
+              tools_used: used,
+              tokens_used: tokens,
+              usage: await usage.status(s),
+            });
+          }
+          if (round === MAX_TOOL_ROUNDS) break;
+          messages.push({ role: "assistant", text: out.text, calls: out.calls, raw: out.raw });
+          const results = [];
+          for (const c of out.calls) {
+            used.push(c.name);
+            const result = await run(c.name, c.args);
+            const sig = `${c.name}|${JSON.stringify(c.args || {})}`;
+            if (!seen.has(sig)) {
+              seen.add(sig);
+              blocks.push(...blocksFor(c.name, result));
+            }
+            results.push({ id: c.id, name: c.name, result });
+          }
+          messages.push({ role: "tool", results });
+        }
+        throw new AssistantError("too_complex", 502, "The question needed too many steps. Try asking it more simply.");
+      } finally {
+        inFlight.delete(s.userId);
+      }
     })
   );
+
+  // ------------------------------------------------- older app versions
+  // They ask for a provider list, check "their" key and list models before
+  // asking. Answered from the server's configuration; any key they send is
+  // ignored (never used, logged or stored).
+  router.get(
+    "/api/assistant/providers",
+    auth,
+    handle(async (req, res) => {
+      const s = service();
+      res.json({ success: true, data: s ? [{ id: s.ad.id, label: s.ad.label, key_url: "", key_hint: "" }] : [] });
+    })
+  );
+
+  const legacyVerify = handle(async (req, res) => {
+    const { ad, model } = requireService();
+    res.json({ success: true, provider: ad.id, model: model || "auto", models: model ? [model] : [] });
+  });
+  router.post("/api/assistant/verify", auth, legacyVerify);
+  router.post("/api/assistant/models", auth, legacyVerify);
 
   return router;
 }

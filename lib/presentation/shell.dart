@@ -15,7 +15,11 @@ import 'overlays/assistant_sheet.dart' show AssistantFab;
 import 'overlays/overlays.dart';
 import 'screens/account_screens.dart';
 import 'screens/auth_screens.dart';
+import 'screens/cashflow_screens.dart' show CashflowScreen, CashflowWeekScreen;
+import 'screens/tally_report_screens.dart' show TallyReportScreen;
 import 'screens/dues_screens.dart';
+import 'screens/financial_screens.dart' show FinancialReportScreen;
+import 'screens/sales_screens.dart' show SalesDashScreen;
 import 'screens/flow_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/hub_screens.dart';
@@ -50,6 +54,11 @@ Widget screenFor(String s) => switch (s) {
   'partyDetail' => const PartyDetailScreen(),
   'reports' => const ReportsScreen(),
   'report' => const ReportScreen(),
+  'finReport' => const FinancialReportScreen(),
+  'salesDash' => const SalesDashScreen(),
+  'cashflow' => const CashflowScreen(),
+  'cfWeek' => const CashflowWeekScreen(),
+  'tallyReport' => const TallyReportScreen(),
   'activity' => const ActivityScreen(),
   'actDetail' => const ActDetailScreen(),
   'team' => const TeamScreen(),
@@ -86,6 +95,11 @@ const List<String> kScreens = <String>[
   'partyDetail',
   'reports',
   'report',
+  'finReport',
+  'salesDash',
+  'cashflow',
+  'cfWeek',
+  'tallyReport',
   'activity',
   'actDetail',
   'team',

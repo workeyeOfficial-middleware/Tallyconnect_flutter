@@ -380,7 +380,8 @@ class AppController extends ChangeNotifier {
       for (final String k in kForm.keys) k: '',
       'niQty': '1',
       'niDisc': '0',
-      for (final String p in <String>['s', 'p', 'r', 'y', 'j']) '${p}Date': d,
+      for (final String p in <String>['s', 'p', 'r', 'y', 'j', 'k'])
+        '${p}Date': d,
     };
   }
 
@@ -440,6 +441,7 @@ class AppController extends ChangeNotifier {
   PillTr pillT = PillTr.none;
   String? overlay;
   String company = 'gi';
+
   /// Glass see-through, 20–100 %: higher = clearer glass.
   double glass = kDefaultGlass;
   static const double kDefaultGlass = 80;
@@ -688,6 +690,7 @@ class AppController extends ChangeNotifier {
         }
       });
     }
+    _addSalesCardOnce();
     page = (store.load<Object?>(LocalStorage.kPage, 0) as num?)?.toInt() ?? 0;
     tabOrder = store.loadTabOrder();
     final Object? pn = store.load<Object?>(LocalStorage.kPinned, null);
@@ -1159,29 +1162,691 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  // --------------------------------------------- AI assistant (Gemini key)
-  // Home → chat button. The user connects their own Gemini API key (checked
-  // by the server, then kept in this phone's keystore for this login only).
-  // Questions go to the TallyConnect server, which answers from the active
-  // company's data the user may see — never from demo data.
+  // ------------------------------------------------ financial statements
+  // Reports → Financial statements: P&L, Balance Sheet, Trial Balance and
+  // Expenses from Tally's own figures (synced by the Agent). Admins see
+  // them; team members only when the admin allowed it.
 
-  /// Where the user's Gemini key is kept (platform keystore in the app).
+  /// May this login see them (null: not checked yet).
+  bool? finCanView;
+  String? _finCheckedFor;
+  FinPeriods? finPeriods;
+
+  /// `pl` | `bs` | `tb` | `exp`.
+  String finKind = 'pl';
+
+  /// Period choice: `fy`, `month`, `lastMonth`, `lastFy`, `pick`
+  /// (P&L / Expenses) or `latest`, `lastMonth`, `lastFy`, `pick`
+  /// (Balance Sheet / Trial Balance).
+  String finPreset = 'fy';
+  DateTime? finFrom, finTo;
+  FinReport? finData;
+  bool finBusy = false, finPurchases = false;
+  String? finError;
+
+  /// Expanded groups (by path) in the open statement.
+  final Set<String> finOpen = <String>{};
+
+  static const Map<String, String> kFinTitles = <String, String>{
+    'pl': 'Profit & Loss',
+    'bs': 'Balance Sheet',
+    'tb': 'Trial Balance',
+    'exp': 'Expenses',
+  };
+
+  bool get finAsOn => finKind == 'bs' || finKind == 'tb';
+
+  /// Checks once per login and company whether the reports may be shown.
+  Future<void> checkFinancialAccess({bool force = false}) async {
+    if (demo || !repo.isRemote) {
+      if (finCanView != false) _set(() => finCanView = false);
+      return;
+    }
+    final String key = '${repo.user?.email}|${repo.activeCompanyId}';
+    if (!force && _finCheckedFor == key && finCanView != null) return;
+    _finCheckedFor = key;
+    final bool ok = await repo.financialCanView();
+    _set(() => finCanView = ok);
+    if (ok) unawaited(loadTallyPeriods());
+  }
+
+  // ------------------------------------------- official Tally reports
+  // Trial Balance, P&L, Balance Sheet and Cash Flow exactly as TallyPrime
+  // calculated them (fetched by the Agent one at a time). A statement tile
+  // opens Tally's figures when the Agent has fetched them, else the
+  // calculated report as before.
+
+  /// The tiles' keys → the server's report keys.
+  static const Map<String, String> kTallyKinds = <String, String>{
+    'tb': 'trial_balance',
+    'pl': 'profit_loss',
+    'bs': 'balance_sheet',
+    'cf': 'cash_flow',
+  };
+
+  TallyReportPeriods? trPeriods;
+  String trReport = 'balance_sheet';
+  TallyPeriod? trPeriod;
+  TallyReport? trData;
+  bool trBusy = false;
+  String? trError;
+
+  /// Expanded lines (by name) of the open Tally report.
+  final Set<String> trOpen = <String>{};
+  int _trReq = 0;
+
+  /// What the Agent has fetched (quietly: a server without it shows none).
+  Future<void> loadTallyPeriods() async {
+    if (demo || !repo.isRemote) return;
+    try {
+      final TallyReportPeriods p = await repo.tallyReportPeriods();
+      _set(() => trPeriods = p);
+    } catch (_) {
+      _set(() => trPeriods = null);
+    }
+  }
+
+  /// Does Tally's own version of statement tile [kind] exist?
+  bool hasTallyReport(String kind) =>
+      trPeriods?.has(kTallyKinds[kind] ?? kind) ?? false;
+
+  /// A statement tile: Tally's figures when fetched, else the calculated
+  /// report (Expenses is always calculated).
+  Future<void> openStatement(String kind) async {
+    final String? report = kTallyKinds[kind];
+    // Tapped before the list of Tally reports arrived: wait for it.
+    if (report != null && trPeriods == null && repo.isRemote && !demo) {
+      await loadTallyPeriods();
+    }
+    if (report != null && (kind == 'cf' || hasTallyReport(kind))) {
+      await openTallyReport(report);
+    } else {
+      await openFinancial(kind);
+    }
+  }
+
+  Future<void> openTallyReport(String report) async {
+    _set(() {
+      trReport = report;
+      trPeriod = null;
+      trData = null;
+      trError = null;
+      trOpen.clear();
+    });
+    go('tallyReport');
+    if (trPeriods == null) await loadTallyPeriods();
+    await loadTallyReport();
+  }
+
+  /// Another fetched period of the open report.
+  Future<void> setTallyPeriod(TallyPeriod p) async {
+    _set(() {
+      trPeriod = p;
+      trOpen.clear();
+    });
+    await loadTallyReport();
+  }
+
+  void toggleTrOpen(String name) => _set(() {
+    if (!trOpen.remove(name)) trOpen.add(name);
+  });
+
+  Future<void> loadTallyReport() async {
+    final int req = ++_trReq;
+    _set(() {
+      trBusy = true;
+      trError = null;
+    });
+    try {
+      final TallyPeriod? p = trPeriod;
+      final TallyReport r = await repo.tallyReport(
+        trReport,
+        from: p?.from,
+        to: p?.to,
+      );
+      if (req != _trReq) return;
+      _set(() => trData = r);
+    } on ApiException catch (e) {
+      if (req != _trReq) return;
+      _set(() {
+        trData = null;
+        trError = e.kind == ApiErrorKind.notFound && e.body is! Map
+            ? 'Reports from Tally are not available on the server yet.'
+            : e.userMessage;
+      });
+    } catch (_) {
+      if (req != _trReq) return;
+      _set(() => trError = 'Could not load the report. Try again.');
+    } finally {
+      if (req == _trReq) _set(() => trBusy = false);
+    }
+  }
+
+  /// Opens one statement with its default period.
+  Future<void> openFinancial(String kind) async {
+    _set(() {
+      finKind = kind;
+      finPreset = kind == 'bs' || kind == 'tb' ? 'latest' : 'fy';
+      finData = null;
+      finError = null;
+      finOpen.clear();
+    });
+    go('finReport');
+    await _loadFinPeriods();
+    if (finPeriods?.ready == true) {
+      _applyFinPreset(finPreset);
+      await loadFinancial();
+    }
+  }
+
+  Future<void> _loadFinPeriods() async {
+    _set(() {
+      finBusy = true;
+      finError = null;
+    });
+    try {
+      final FinPeriods p = await repo.financialPeriods();
+      _set(() {
+        finPeriods = p;
+        finBusy = false;
+        if (!p.ready) {
+          finError =
+              p.message ??
+              'Financial figures are not synced yet. Update the TallyConnect '
+                  'Agent on the Tally computer and let it sync once.';
+        }
+      });
+    } on ApiException catch (e) {
+      _set(() {
+        finBusy = false;
+        finError = _finErr(e);
+      });
+    }
+  }
+
+  String _finErr(ApiException e) =>
+      e.kind == ApiErrorKind.notFound && e.body is! Map
+      ? 'Financial reports are not available on the server yet.'
+      : e.userMessage;
+
+  static DateTime _day(DateTime d) => DateTime(d.year, d.month, d.day);
+  static String _mShort(DateTime d) => '${kMonths[d.month - 1]} ${d.year}';
+  static DateTime _monthStart(DateTime d) => DateTime(d.year, d.month);
+  static DateTime _monthEnd(DateTime d) => DateTime(d.year, d.month + 1, 0);
+
+  /// The figures a period needs exist (`to`, and the day before `from`
+  /// unless `from` is the start of that financial year).
+  bool _finValid(DateTime from, DateTime to) {
+    final FinPeriods? p = finPeriods;
+    if (p == null || !p.has(to)) return false;
+    final FinSnapshot s = p.snapshots.firstWhere(
+      (FinSnapshot x) => _day(x.asOn) == _day(to),
+    );
+    if (from.isBefore(s.fyFrom)) return false;
+    if (_day(from) == _day(s.fyFrom)) return true;
+    return p.has(from.subtract(const Duration(days: 1)));
+  }
+
+  /// Period choices that have figures, in display order: (key, label).
+  List<(String, String)> get finPresets {
+    final FinPeriods? p = finPeriods;
+    final FinSnapshot? l = p?.latest;
+    if (p == null || l == null) return const <(String, String)>[];
+    final DateTime prevMonthEnd = _monthStart(
+      l.asOn,
+    ).subtract(const Duration(days: 1));
+    final DateTime lastFyEnd = l.fyFrom.subtract(const Duration(days: 1));
+    final List<(String, String)> out = <(String, String)>[];
+    if (finAsOn) {
+      out.add(('latest', 'As on ${dm(l.asOn)}'));
+      if (p.has(prevMonthEnd)) {
+        out.add(('lastMonth', 'End of ${_mShort(prevMonthEnd)}'));
+      }
+      if (p.has(lastFyEnd)) out.add(('lastFy', 'Last year end'));
+    } else {
+      out.add(('fy', 'This year'));
+      if (_finValid(_monthStart(l.asOn), l.asOn)) {
+        out.add(('month', 'This month'));
+      }
+      if (_finValid(_monthStart(prevMonthEnd), prevMonthEnd)) {
+        out.add(('lastMonth', _mShort(prevMonthEnd)));
+      }
+      final FinSnapshot? lastFy = p.snapshots
+          .where((FinSnapshot s) => _day(s.asOn) == _day(lastFyEnd))
+          .firstOrNull;
+      if (lastFy != null) out.add(('lastFy', 'Last year'));
+    }
+    if (p.snapshots.where((FinSnapshot s) => s.monthEnd).length > 1) {
+      out.add(('pick', 'Pick month'));
+    }
+    return out;
+  }
+
+  void _applyFinPreset(String k) {
+    final FinSnapshot? l = finPeriods?.latest;
+    if (l == null) return;
+    final DateTime prevMonthEnd = _monthStart(
+      l.asOn,
+    ).subtract(const Duration(days: 1));
+    final DateTime lastFyEnd = l.fyFrom.subtract(const Duration(days: 1));
+    final FinSnapshot? lastFy = finPeriods!.snapshots
+        .where((FinSnapshot s) => _day(s.asOn) == _day(lastFyEnd))
+        .firstOrNull;
+    switch (k) {
+      case 'month':
+        finFrom = _monthStart(l.asOn);
+        finTo = l.asOn;
+      case 'lastMonth':
+        finFrom = _monthStart(prevMonthEnd);
+        finTo = prevMonthEnd;
+      case 'lastFy':
+        finFrom = lastFy?.fyFrom ?? l.fyFrom;
+        finTo = lastFy?.asOn ?? l.asOn;
+      case 'pick':
+        break; // set by pickFinMonth
+      default:
+        finFrom = l.fyFrom;
+        finTo = l.asOn;
+    }
+    finPreset = k;
+  }
+
+  /// A period chip.
+  Future<void> setFinPreset(String k) async {
+    if (k == 'pick') {
+      openOverlay('finPick');
+      return;
+    }
+    _applyFinPreset(k);
+    await loadFinancial();
+  }
+
+  /// Month-end dates with figures, newest first (for "Pick month").
+  List<DateTime> get finMonths => <DateTime>[
+    for (final FinSnapshot s in finPeriods?.snapshots ?? const <FinSnapshot>[])
+      if (s.monthEnd) s.asOn,
+  ];
+
+  /// "Pick month": that month (P&L / Expenses) or as on its last day.
+  Future<void> pickFinMonth(DateTime monthEnd) async {
+    final DateTime from = _monthStart(monthEnd);
+    if (!finAsOn && !_finValid(from, monthEnd)) {
+      say('No Tally figures for the month before ${_mShort(monthEnd)}');
+      return;
+    }
+    _set(() {
+      finPreset = 'pick';
+      finFrom = from;
+      finTo = _monthEnd(monthEnd);
+      if (overlay == 'finPick') overlay = null;
+    });
+    await loadFinancial();
+  }
+
+  void toggleFinPurchases() {
+    finPurchases = !finPurchases;
+    unawaited(loadFinancial());
+  }
+
+  /// The open statement's period, for the header.
+  String get finPeriodLabel {
+    final DateTime? t = finTo;
+    if (t == null) return '';
+    if (finAsOn) return 'As on ${dmy(t)}';
+    final DateTime f = finFrom ?? t;
+    if (f.day == 1 && _day(t) == _day(_monthEnd(f)) && f.month == t.month) {
+      return monthYear(f);
+    }
+    return '${dmy(f)} – ${dmy(t)}';
+  }
+
+  Future<void> loadFinancial() async {
+    final DateTime? to = finTo;
+    if (to == null) return;
+    _set(() {
+      finBusy = true;
+      finError = null;
+    });
+    try {
+      final FinReport r = await repo.financialReport(
+        finKind,
+        to: to,
+        from: finFrom,
+        includePurchases: finPurchases,
+      );
+      _set(() {
+        finData = r;
+        finBusy = false;
+      });
+    } on ApiException catch (e) {
+      _set(() {
+        finBusy = false;
+        finError = _finErr(e);
+      });
+    }
+  }
+
+  void toggleFinNode(String path) => _set(() {
+    if (!finOpen.remove(path)) finOpen.add(path);
+  });
+
+  /// Expands or collapses every group of the open statement.
+  void finExpandAll(bool open, List<String> paths) => _set(() {
+    finOpen.clear();
+    if (open) finOpen.addAll(paths);
+  });
+
+  // Team access (Configure User).
+  Set<String>? finAccessIds;
+  bool finAccessBusy = false;
+
+  Future<void> loadFinancialAccess() async {
+    if (!isAdmin || !repo.isRemote) return;
+    try {
+      final Set<String> ids = await repo.financialAccess();
+      _set(() => finAccessIds = ids);
+    } on ApiException {
+      _set(() => finAccessIds = null);
+    }
+  }
+
+  Future<void> setMemberFinancialAccess(Member m, bool on) async {
+    if (finAccessBusy) return;
+    _set(() => finAccessBusy = true);
+    try {
+      await repo.setFinancialAccess(m.id, on);
+      _set(() {
+        finAccessIds = <String>{...?finAccessIds};
+        if (on) {
+          finAccessIds!.add(m.id);
+        } else {
+          finAccessIds!.remove(m.id);
+        }
+      });
+      say(
+        on
+            ? '${m.name} can now see financial reports'
+            : 'Financial reports hidden from ${m.name}',
+      );
+    } on ApiException catch (e) {
+      say(_finErr(e));
+    } finally {
+      _set(() => finAccessBusy = false);
+    }
+  }
+
+  // ---------------------------------------------------- sales analytics
+  // Reports → Sales analytics: one dashboard per period, worked out on the
+  // server from the synced vouchers (team users: only their vouchers).
+
+  static const List<(String, String)> kSalesPresets = <(String, String)>[
+    ('month', 'This month'),
+    ('lastMonth', 'Last month'),
+    ('fy', 'This FY'),
+    ('last12', '12 months'),
+  ];
+
+  /// A preset id from [kSalesPresets] or `custom` ([salesCustom]).
+  String salesPreset = 'month';
+  DateRange? salesCustom;
+  SalesDash? salesData;
+  bool salesBusy = false;
+  String? salesError;
+
+  /// Top items by `amount` or `qty`.
+  String salesItemsBy = 'amount';
+  int _salesReq = 0;
+
+  /// The dates the dashboard shows (both included; FY from 1 April).
+  DateRange get salesRange {
+    final DateTime t = DateTime(today.year, today.month, today.day);
+    return switch (salesPreset) {
+      'lastMonth' => DateRange(
+        DateTime(t.year, t.month - 1),
+        DateTime(t.year, t.month, 0),
+      ),
+      'fy' => DateRange(DateTime(t.month >= 4 ? t.year : t.year - 1, 4), t),
+      'last12' => DateRange(DateTime(t.year, t.month - 11), t),
+      'custom' => salesCustom ?? DateRange(DateTime(t.year, t.month), t),
+      _ => DateRange(DateTime(t.year, t.month), t),
+    };
+  }
+
+  String get salesPeriodLabel {
+    final DateRange r = salesRange;
+    return '${dmy(r.from)} – ${dmy(r.to)}';
+  }
+
+  Future<void> openSalesAnalytics() async {
+    if (demo) {
+      say(kDemoAnalyticsBlocked.message);
+      return;
+    }
+    if (!repo.isRemote) {
+      say('Sales analytics need your TallyConnect account.');
+      return;
+    }
+    go('salesDash');
+    await loadSales();
+  }
+
+  /// A preset, or `custom`: the date-range sheet.
+  Future<void> setSalesPreset(String k) async {
+    if (k == 'custom') {
+      openRange('sales');
+      return;
+    }
+    _set(() => salesPreset = k);
+    await loadSales();
+  }
+
+  void setSalesItemsBy(String k) => _set(() => salesItemsBy = k);
+
+  /// Home shows the Sales analytics card (real company data only).
+  bool get salesHomeAvailable => !demo && repo.isRemote;
+
+  /// Company + period the Home card last asked for.
+  String? _homeSalesKey;
+
+  /// Home's Sales analytics card: loads the dashboard once per company and
+  /// period (the full dashboard shares the same data).
+  void ensureHomeSales() {
+    if (!salesHomeAvailable || salesBusy) return;
+    final String key = '$companyName|$salesPreset|${ymd(today)}';
+    if (_homeSalesKey == key) return;
+    _homeSalesKey = key;
+    unawaited(loadSales());
+  }
+
+  Future<void> loadSales() async {
+    final int req = ++_salesReq;
+    final DateRange r = salesRange;
+    _set(() {
+      salesBusy = true;
+      salesError = null;
+    });
+    try {
+      final SalesDash d = await repo.salesAnalytics(ymd(r.from), ymd(r.to));
+      if (req != _salesReq) return;
+      _set(() => salesData = d);
+    } on ApiException catch (e) {
+      if (req != _salesReq) return;
+      _set(() {
+        salesData = null;
+        salesError = e.kind == ApiErrorKind.notFound && e.body is! Map
+            ? 'Sales analytics are not available on the server yet.'
+            : e.userMessage;
+      });
+    } catch (_) {
+      if (req != _salesReq) return;
+      _set(() => salesError = 'Could not load sales analytics. Try again.');
+    } finally {
+      if (req == _salesReq) _set(() => salesBusy = false);
+    }
+  }
+
+  // ------------------------------------------------- cash flow forecast
+  // Reports → Cash flow forecast: 13 weeks of money in / out from the open
+  // bills (receivables moved by each customer's usual payment delay) and
+  // today's cash + bank balance. Same access as the financial reports.
+
+  CashForecast? cfData;
+  bool cfBusy = false;
+  String? cfError;
+
+  /// `adjusted` (usual payment delays) or `due` (due dates).
+  String cfMode = 'adjusted';
+
+  /// Count bills more than 90 days past due as money coming in.
+  bool cfDoubtful = false;
+
+  CashWeekDetail? cfWeekData;
+  DateTime? cfWeekStart;
+  bool cfWeekBusy = false;
+  String? cfWeekError;
+  int _cfReq = 0, _cfWeekReq = 0;
+
+  Future<void> openCashflow() async {
+    if (demo) {
+      say(kDemoFinancialBlocked.message);
+      return;
+    }
+    if (!repo.isRemote) {
+      say('The cash flow forecast needs your TallyConnect account.');
+      return;
+    }
+    go('cashflow');
+    await loadCashflow();
+  }
+
+  String _cfErr(ApiException e) =>
+      e.kind == ApiErrorKind.notFound && e.body is! Map
+      ? 'The cash flow forecast is not available on the server yet.'
+      : e.userMessage;
+
+  Future<void> loadCashflow({bool refresh = false}) async {
+    final int req = ++_cfReq;
+    _set(() {
+      cfBusy = true;
+      cfError = null;
+    });
+    try {
+      final CashForecast f = await repo.cashflowForecast(
+        mode: cfMode,
+        doubtful: cfDoubtful,
+        refresh: refresh,
+      );
+      if (req != _cfReq) return;
+      _set(() => cfData = f);
+    } on ApiException catch (e) {
+      if (req != _cfReq) return;
+      _set(() {
+        cfData = null;
+        cfError = _cfErr(e);
+      });
+    } catch (_) {
+      if (req != _cfReq) return;
+      _set(() => cfError = 'Could not load the cash flow forecast. Try again.');
+    } finally {
+      if (req == _cfReq) _set(() => cfBusy = false);
+    }
+  }
+
+  Future<void> setCfMode(String m) async {
+    if (m == cfMode) return;
+    _set(() => cfMode = m);
+    await loadCashflow();
+  }
+
+  Future<void> setCfDoubtful(bool on) async {
+    if (on == cfDoubtful) return;
+    _set(() => cfDoubtful = on);
+    await loadCashflow();
+  }
+
+  /// The bills behind one forecast week.
+  Future<void> openCfWeek(CashWeek w) async {
+    final int req = ++_cfWeekReq;
+    _set(() {
+      cfWeekStart = w.start;
+      cfWeekData = null;
+      cfWeekError = null;
+      cfWeekBusy = true;
+    });
+    go('cfWeek');
+    try {
+      final CashWeekDetail d = await repo.cashflowWeek(
+        ymd(w.start),
+        mode: cfMode,
+        doubtful: cfDoubtful,
+      );
+      if (req != _cfWeekReq) return;
+      _set(() => cfWeekData = d);
+    } on ApiException catch (e) {
+      if (req != _cfWeekReq) return;
+      _set(() => cfWeekError = _cfErr(e));
+    } catch (_) {
+      if (req != _cfWeekReq) return;
+      _set(() => cfWeekError = 'Could not load this week. Try again.');
+    } finally {
+      if (req == _cfWeekReq) _set(() => cfWeekBusy = false);
+    }
+  }
+
+  // ------------------------------------------------------- AI assistant
+  // Home → chat button. The TallyConnect server answers with its own AI
+  // provider (no key in the app) from the active company's data the user
+  // may see — never demo data. Each login has a token allowance counted on
+  // the server; when it is used up the server refuses and the app shows
+  // the upgrade popup.
+
+  /// Keys saved by older app versions (users brought their own key): wiped
+  /// from this phone, they are no longer used.
   final AssistantKeyStore aiKeys;
-  String? _aiKey;
+  static const List<String> _kOldAiProviders = <String>[
+    'gemini',
+    'openai',
+    'anthropic',
+    'groq',
+    'openrouter',
+    'mistral',
+    'deepseek',
+  ];
+  final Set<String> _aiKeysWiped = <String>{};
 
-  /// The login [_aiKey] belongs to (loaded once per login).
-  String? _aiKeyFor;
   List<AiTurn> aiTurns = const <AiTurn>[];
-  bool aiBusy = false, aiConnecting = false;
+  bool aiBusy = false;
 
-  /// Why connecting failed (shown under the key field).
+  /// Is the assistant switched on at the server (false: not set up there).
+  bool aiEnabled = true;
+
+  /// Why the assistant cannot be used right now (shown in the sheet).
   String? aiError;
 
-  bool get aiConnected => _aiKey != null;
-  String get _aiAccount =>
-      repo.user?.email.isNotEmpty == true
+  /// This login's AI plan and tokens (null until the server says).
+  AiUsage? aiUsage;
+
+  /// The exact text of the "allowance used up" popup.
+  static const String kAiLimitMessage =
+      'Your free AI access has ended. Upgrade your plan to continue.';
+
+  bool get aiExhausted => aiUsage?.exhausted ?? false;
+
+  String get _aiAccount => repo.user?.email.isNotEmpty == true
       ? repo.user!.email
       : 'user-${repo.user?.id ?? 0}';
+
+  Future<void> _wipeOldAiKeys() async {
+    final String acct = _aiAccount;
+    if (!_aiKeysWiped.add(acct)) return;
+    for (final String p in _kOldAiProviders) {
+      try {
+        await aiKeys.delete(acct, provider: p);
+      } catch (_) {
+        // Nothing saved / keystore unavailable: nothing to remove.
+      }
+    }
+  }
 
   static const List<String> kAiSuggestions = <String>[
     'Who owes me the most?',
@@ -1194,7 +1859,9 @@ class AppController extends ChangeNotifier {
   /// Why the assistant cannot be used here, or null.
   String? get aiBlocked {
     if (demo) return kDemoAssistantBlocked.message;
-    if (!repo.isRemote) return 'The AI assistant needs your TallyConnect account.';
+    if (!repo.isRemote) {
+      return 'The AI assistant needs your TallyConnect account.';
+    }
     return null;
   }
 
@@ -1209,82 +1876,82 @@ class AppController extends ChangeNotifier {
       voiceNote = null;
       overlay = 'assistant';
     });
-    final String acct = _aiAccount;
-    if (_aiKeyFor != acct) {
-      final String? k = await aiKeys.read(acct);
-      _set(() {
-        _aiKey = (k ?? '').isEmpty ? null : k;
-        _aiKeyFor = acct;
-      });
-    }
+    await _wipeOldAiKeys();
+    await loadAiStatus();
+    // Already used up: say so straight away.
+    if (aiExhausted && overlay == 'assistant') _set(() => overlay = 'aiLimit');
   }
 
-  String _aiErr(ApiException e) => e.kind == ApiErrorKind.notFound && e.body is! Map
-      ? 'The AI assistant is not available on the server yet.'
-      : e.userMessage;
-
-  /// Connect: the server checks the key with Gemini; only a working key is
-  /// saved (in the keystore).
-  Future<void> connectAssistant() async {
-    final String key = f('aiKey').trim();
-    if (aiConnecting) return;
-    if (key.isEmpty) {
-      _set(() => aiError = 'Paste your Gemini API key');
-      return;
-    }
-    _set(() {
-      aiConnecting = true;
-      aiError = null;
-    });
+  /// The plan and tokens left (also: is the assistant on at the server).
+  Future<void> loadAiStatus() async {
     try {
-      await repo.verifyAssistantKey(key);
-      await aiKeys.write(_aiAccount, key);
+      final AiStatus s = await repo.assistantStatus();
       _set(() {
-        _aiKey = key;
-        _aiKeyFor = _aiAccount;
-        form['aiKey'] = '';
-        aiConnecting = false;
+        aiEnabled = s.enabled;
+        aiUsage = s.usage ?? aiUsage;
+        aiError = s.enabled ? null : 'The AI Assistant is not available right now.';
       });
-      say('Gemini connected');
     } on ApiException catch (e) {
       _set(() {
-        aiConnecting = false;
-        aiError = _aiErr(e);
+        if (e.kind == ApiErrorKind.notFound && e.body is! Map) {
+          aiEnabled = false;
+          aiError = 'The AI Assistant is not available on the server yet.';
+        }
       });
     } catch (_) {
-      _set(() {
-        aiConnecting = false;
-        aiError = 'Could not check the key. Try again.';
-      });
+      // Offline etc.: the chat still opens; asking shows the reason.
     }
   }
 
-  /// Removes the key from this phone and clears the chat.
-  Future<void> disconnectAssistant() async {
-    await aiKeys.delete(_aiAccount);
+  String _aiErr(ApiException e) =>
+      e.kind == ApiErrorKind.notFound && e.body is! Map
+      ? 'The AI Assistant is not available on the server yet.'
+      : e.userMessage;
+
+  /// The server refused because the allowance is used up.
+  bool _aiQuotaHit(ApiException e) {
+    final Object? b = e.body;
+    if (b is! Map || b['code'] != 'ai_quota_exhausted') return false;
     _set(() {
-      _aiKey = null;
-      aiTurns = const <AiTurn>[];
-      form['aiKey'] = '';
-      aiError = null;
+      aiUsage = AiUsage.fromJson(b['usage']) ??
+          (aiUsage == null
+              ? AiUsage.spent
+              : AiUsage(
+                  limit: aiUsage!.limit,
+                  used: aiUsage!.limit,
+                  planCode: aiUsage!.planCode,
+                  planName: aiUsage!.planName,
+                ));
     });
-    say('Gemini key removed from this phone');
+    return true;
   }
+
+  /// The upgrade popup → the Plans screen.
+  void viewAiPlans() {
+    closeOv();
+    go('billing');
+  }
+
+  /// "Not now" on the popup: back to the chat (asking stays off).
+  void dismissAiLimit() => _set(() {
+    if (overlay == 'aiLimit') overlay = 'assistant';
+  });
 
   /// Asks [preset] or the typed question.
   Future<void> askAssistant([String? preset]) async {
     final String q = (preset ?? f('aiQ')).trim();
-    final String? key = _aiKey;
-    if (q.isEmpty || aiBusy || key == null) return;
+    if (q.isEmpty || aiBusy) return;
     if (aiBlocked != null) {
       say(aiBlocked!);
       return;
     }
+    if (aiExhausted) {
+      _set(() => overlay = 'aiLimit');
+      return;
+    }
     // Sending ends listening (the words are already in the field).
     if (aiVoiceOn) await stopVoiceSearch();
-    final List<AiTurn> history = aiTurns
-        .where((AiTurn t) => !t.error)
-        .toList();
+    final List<AiTurn> history = aiTurns.where((AiTurn t) => !t.error).toList();
     _set(() {
       aiTurns = <AiTurn>[...aiTurns, AiTurn('user', q)];
       form['aiQ'] = '';
@@ -1292,12 +1959,11 @@ class AppController extends ChangeNotifier {
     });
     try {
       final AssistantReply r = await repo.askAssistant(
-        key,
         q,
         history.length > 10 ? history.sublist(history.length - 10) : history,
       );
-      _set(
-        () => aiTurns = <AiTurn>[
+      _set(() {
+        aiTurns = <AiTurn>[
           ...aiTurns,
           AiTurn(
             'model',
@@ -1306,20 +1972,34 @@ class AppController extends ChangeNotifier {
                 : r.answer,
             blocks: r.blocks,
           ),
-        ],
-      );
+        ];
+        aiUsage = r.usage ?? aiUsage;
+      });
     } on ApiException catch (e) {
-      _set(
-        () => aiTurns = <AiTurn>[
-          ...aiTurns,
-          AiTurn('model', _aiErr(e), error: true),
-        ],
-      );
+      if (_aiQuotaHit(e)) {
+        _set(() {
+          // The question was not answered: give it back for later.
+          aiTurns = aiTurns.sublist(0, aiTurns.length - 1);
+          form['aiQ'] = q;
+          if (overlay == 'assistant') overlay = 'aiLimit';
+        });
+      } else {
+        _set(
+          () => aiTurns = <AiTurn>[
+            ...aiTurns,
+            AiTurn('model', _aiErr(e), error: true),
+          ],
+        );
+      }
     } catch (_) {
       _set(
         () => aiTurns = <AiTurn>[
           ...aiTurns,
-          const AiTurn('model', 'Something went wrong. Try again.', error: true),
+          const AiTurn(
+            'model',
+            'Something went wrong. Try again.',
+            error: true,
+          ),
         ],
       );
     } finally {
@@ -1361,15 +2041,19 @@ class AppController extends ChangeNotifier {
     for (final Bill b in repo.receivables()) {
       if (b.amt <= 0) continue;
       final ({int bills, num total})? x = by[b.party];
-      by[b.party] = (bills: (x?.bills ?? 0) + 1, total: (x?.total ?? 0) + b.amt);
+      by[b.party] = (
+        bills: (x?.bills ?? 0) + 1,
+        total: (x?.total ?? 0) + b.amt,
+      );
     }
     return <({String party, int bills, num total})>[
       for (final MapEntry<String, ({int bills, num total})> e in by.entries)
         (party: e.key, bills: e.value.bills, total: e.value.total),
     ]..sort(
-      (({String party, int bills, num total}) a,
-              ({String party, int bills, num total}) b) =>
-          b.total.compareTo(a.total),
+      (
+        ({String party, int bills, num total}) a,
+        ({String party, int bills, num total}) b,
+      ) => b.total.compareTo(a.total),
     );
   }
 
@@ -1967,6 +2651,7 @@ class AppController extends ChangeNotifier {
       go(kTabs[i].k, extra);
       return;
     }
+    _endSelectLeaving(kTabs[i].k);
     _onEnter(kTabs[i].k);
     final int cur = tab;
     final double a = posOf(cur).toDouble(), b = posOf(i).toDouble();
@@ -2004,6 +2689,7 @@ class AppController extends ChangeNotifier {
 
   void go(String s, [Map<String, Object?>? extra]) {
     if (!canOpen(s)) return;
+    _endSelectLeaving(s);
     final int ti = kTabs.indexWhere(
       (({String k, String t, String ic}) t) => t.k == s,
     );
@@ -2038,12 +2724,15 @@ class AppController extends ChangeNotifier {
         repo.ensure(DataSet.items);
         repo.ensure(DataSet.stock);
         repo.ensure(DataSet.ledgers);
+        unawaited(checkFinancialAccess());
       case 'report':
         if (report == 'stock') repo.ensure(DataSet.items);
         if (report == 'inI') repo.ensure(DataSet.stock);
         if (report == 'inC') repo.ensure(DataSet.ledgers);
     }
     if (s == 'flow') repo.ensure(DataSet.items);
+    // Configure User: who may see financial statements.
+    if (s == 'teamUser') unawaited(loadFinancialAccess());
     if (s == 'teamSelect') {
       if (teamKind == 'ledger') repo.ensure(DataSet.ledgers);
       if (teamKind == 'inventory') repo.ensure(DataSet.items);
@@ -2329,8 +3018,9 @@ class AppController extends ChangeNotifier {
   void openRange(String target) {
     final DateTime t = today;
     rangeFor = target;
-    form['drFrom'] = ymd(range?.from ?? DateTime(t.year, t.month));
-    form['drTo'] = ymd(range?.to ?? t);
+    final DateRange? cur = target == 'sales' ? salesRange : range;
+    form['drFrom'] = ymd(cur?.from ?? DateTime(t.year, t.month));
+    form['drTo'] = ymd(cur?.to ?? t);
     openOverlay('dateRange');
   }
 
@@ -2359,9 +3049,7 @@ class AppController extends ChangeNotifier {
   }
 
   bool _sameRange(DateRange? a, DateRange b) =>
-      a != null &&
-      ymd(a.from) == ymd(b.from) &&
-      ymd(a.to) == ymd(b.to);
+      a != null && ymd(a.from) == ymd(b.from) && ymd(a.to) == ymd(b.to);
 
   /// Selected option of [target]'s period row: a [kPeriodBar] key, or
   /// `range` for a custom date range.
@@ -2374,7 +3062,9 @@ class AppController extends ChangeNotifier {
 
     return switch (target) {
       'rep' =>
-        repPeriod == 'range' ? fromRange(true) : (repPeriod == 'all' ? 'all' : 'month'),
+        repPeriod == 'range'
+            ? fromRange(true)
+            : (repPeriod == 'all' ? 'all' : 'month'),
       'out' => fromRange(outRange),
       _ => vPeriod,
     };
@@ -2430,10 +3120,7 @@ class AppController extends ChangeNotifier {
   void rangePreset(String k) {
     final DateTime t = today;
     final (DateTime, DateTime) r = switch (k) {
-      'last' => (
-        DateTime(t.year, t.month - 1),
-        DateTime(t.year, t.month, 0),
-      ),
+      'last' => (DateTime(t.year, t.month - 1), DateTime(t.year, t.month, 0)),
       '30' => (t.subtract(const Duration(days: 29)), t),
       // Indian financial year: 1 April – 31 March.
       'fy' => (DateTime(t.month >= 4 ? t.year : t.year - 1, 4), t),
@@ -2461,6 +3148,16 @@ class AppController extends ChangeNotifier {
       DateTime.parse(f('drFrom')),
       DateTime.parse(f('drTo')),
     );
+    // Sales analytics keep their own range (other pages are not changed).
+    if (rangeFor == 'sales') {
+      _set(() {
+        salesCustom = r;
+        salesPreset = 'custom';
+        overlay = null;
+      });
+      unawaited(loadSales());
+      return;
+    }
     // A custom range: no quick period is highlighted for this page.
     _quickPeriod.remove(rangeFor);
     _set(() {
@@ -2595,6 +3292,8 @@ class AppController extends ChangeNotifier {
   }
 
   void back() {
+    // Leaving the voucher / party list ends selecting.
+    _endSelectLeaving('');
     if (history.isEmpty) {
       if (screen == 'forgot') {
         _set(() {
@@ -2746,11 +3445,10 @@ class AppController extends ChangeNotifier {
   }
 
   void _endSession(String msg) {
-    // Signed out: the assistant forgets this account's key and chat (the
-    // key stays in the keystore for that account only).
-    _aiKey = null;
-    _aiKeyFor = null;
+    // Signed out: the assistant forgets this account's chat and usage.
     aiTurns = const <AiTurn>[];
+    aiUsage = null;
+    aiEnabled = true;
     _set(() {
       screen = 'login';
       history = <String>[];
@@ -2978,12 +3676,10 @@ class AppController extends ChangeNotifier {
     return _pool!;
   }
 
-  num get drSum => sumRupees(
-    jl.where((JLine j) => j.side == 'Dr').map((JLine j) => j.amt),
-  );
-  num get crSum => sumRupees(
-    jl.where((JLine j) => j.side == 'Cr').map((JLine j) => j.amt),
-  );
+  num get drSum =>
+      sumRupees(jl.where((JLine j) => j.side == 'Dr').map((JLine j) => j.amt));
+  num get crSum =>
+      sumRupees(jl.where((JLine j) => j.side == 'Cr').map((JLine j) => j.amt));
 
   void setStep(int n) => _set(() => flowStep = n);
 
@@ -3034,6 +3730,7 @@ class AppController extends ChangeNotifier {
     final String? b = repo.entryBlocker(d);
     if (b != null) return b;
     if (d.date.isEmpty) return 'Pick the date';
+    if (d.type == 'contra') return contraBlocker(d);
     if (d.type != 'journal' && d.party.isEmpty) return 'Choose the party';
     switch (d.type) {
       case 'sales' || 'purchase':
@@ -3057,6 +3754,27 @@ class AppController extends ChangeNotifier {
         }
         if (drSum != crSum) return 'Both sides must be equal';
     }
+    return null;
+  }
+
+  /// Contra: two different synced cash / bank accounts and an amount.
+  String? contraBlocker(EntryDraft d) {
+    final String from = d.party.trim(), to = d.account.trim();
+    if (from.isEmpty) return 'Choose the account money goes out of';
+    if (to.isEmpty) return 'Choose the account money goes into';
+    if (from.toLowerCase() == to.toLowerCase()) {
+      return 'From and To must be different accounts';
+    }
+    final Set<String> cashBank = repo
+        .accounts()
+        .map((Opt o) => o.t.trim().toLowerCase())
+        .toSet();
+    for (final String a in <String>[from, to]) {
+      if (!cashBank.contains(a.toLowerCase())) {
+        return '$a is not a cash or bank account';
+      }
+    }
+    if (d.amount <= 0) return 'Enter an amount above zero';
     return null;
   }
 
@@ -3606,8 +4324,32 @@ class AppController extends ChangeNotifier {
 
   // ------------------------------------------------------------ home pages
   List<List<String>> defaultPages(Workspace ws) => <List<String>>[
-    <String>['newEntry', ...ws.feats, 'money'],
+    <String>['newEntry', kSalesCard, ...ws.feats, 'money'],
   ];
+
+  /// Home's Sales analytics card (right after New Entry).
+  static const String kSalesCard = 'salesDash';
+
+  /// Cards that take a whole row on Home.
+  static bool isWideCard(String id) =>
+      id == 'newEntry' || id == 'money' || id == kSalesCard;
+
+  /// Layouts saved before the Sales analytics card existed get it once,
+  /// right after New Entry.
+  void _addSalesCardOnce() {
+    if (store.load<Object?>(LocalStorage.kHomeSalesCard, null) == true) return;
+    pagesByWs.forEach((String ws, List<List<String>> pages) {
+      if (pages.any((List<String> p) => p.contains(kSalesCard))) return;
+      final int pi = pages.indexWhere((List<String> p) => p.contains('newEntry'));
+      if (pi >= 0) {
+        pages[pi].insert(pages[pi].indexOf('newEntry') + 1, kSalesCard);
+      } else if (pages.isNotEmpty) {
+        pages.first.insert(0, kSalesCard);
+      }
+    });
+    if (pagesByWs.isNotEmpty) _savePages();
+    store.save(LocalStorage.kHomeSalesCard, true);
+  }
 
   List<List<String>> curPages() => (pagesByWs[curWs.id] ?? defaultPages(curWs))
       .map((List<String> p) => List<String>.of(p))
@@ -3916,6 +4658,11 @@ class AppController extends ChangeNotifier {
     if (id == 'money') {
       return (label: 'Money summary', ic: 'rupeeC', c: 'outstanding');
     }
+    if (id == kSalesCard) {
+      // Real numbers only: not with sample data or without an account.
+      if (!salesHomeAvailable) return null;
+      return (label: 'Sales analytics', ic: 'chart', c: 'sales');
+    }
     final Shortcut? t = kShortcuts[id];
     if (t == null) return null;
     return (label: t.t, ic: t.ic, c: t.c);
@@ -3926,6 +4673,8 @@ class AppController extends ChangeNotifier {
       go('newEntry');
     } else if (id == 'money') {
       go('outHub');
+    } else if (id == kSalesCard) {
+      unawaited(openSalesAnalytics());
     } else {
       openShortcut(kShortcuts[id]!);
     }
@@ -4327,18 +5076,8 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  /// Opens a New Entry card's flow. Contra: the server has no Contra entry
-  /// (its create routes take Sales, Purchase, Receipt, Payment and Journal
-  /// only), so nothing is posted under another voucher type.
-  void openEntryTile(String key) {
-    if (key == 'contra') {
-      say(
-        'Contra entries cannot be sent to Tally yet. The server does not accept Contra entries.',
-      );
-      return;
-    }
-    startFlow(key);
-  }
+  /// Opens a New Entry card's flow.
+  void openEntryTile(String key) => startFlow(key);
 
   /// Shows hidden New Entry card [key] again (null: all of them).
   void restoreEntryTile([String? key]) {
@@ -4643,7 +5382,7 @@ class AppController extends ChangeNotifier {
       if (en.key == id) continue;
       final Rect? b = HitRegistry.rectOf(en.value);
       if (b == null || !b.contains(pt)) continue;
-      final bool wide = en.key == 'newEntry' || en.key == 'money';
+      final bool wide = isWideCard(en.key);
       final bool after = wide
           ? pt.dy > b.top + b.height / 2
           : pt.dx > b.left + b.width / 2;
@@ -5500,6 +6239,285 @@ class AppController extends ChangeNotifier {
 
   Future<void> shareVoucher(Voucher e) async => shareDoc(await voucherDoc(e));
 
+  // ------------------------------- several vouchers → PDF / WhatsApp
+  // Vouchers list → Select → tick rows → one list PDF, one PDF per voucher
+  // (one share sheet), or the party's WhatsApp chat with a ready message.
+  // WhatsApp links cannot attach files: PDFs go through the share sheet,
+  // where the user picks WhatsApp and the contact.
+
+  bool vSelecting = false;
+
+  /// Ticked vouchers by key, in the order ticked.
+  final Map<String, Voucher> vPicked = <String, Voucher>{};
+
+  /// One PDF per voucher: at most this many in one share sheet.
+  static const int kMaxShareEach = 20;
+
+  void startVoucherSelect() => _set(() {
+    vSelecting = true;
+    vPicked.clear();
+  });
+
+  void endVoucherSelect() => _set(() {
+    vSelecting = false;
+    vPicked.clear();
+  });
+
+  void togglePicked(Voucher v) => _set(() {
+    if (vPicked.remove(v.key) == null) vPicked[v.key] = v;
+  });
+
+  /// Ticks every one of [rows] (the list as filtered / loaded).
+  void selectAllPicked(List<Voucher> rows) => _set(() {
+    for (final Voucher v in rows) {
+      vPicked[v.key] = v;
+    }
+  });
+
+  void clearPicked() => _set(vPicked.clear);
+
+  /// Ticks all [rows] (or clears when all of them are ticked).
+  void pickAll(List<Voucher> rows) => _set(() {
+    final bool all = rows.isNotEmpty && rows.every((Voucher v) => vPicked.containsKey(v.key));
+    if (all) {
+      vPicked.clear();
+    } else {
+      for (final Voucher v in rows) {
+        vPicked[v.key] = v;
+      }
+    }
+  });
+
+  num get pickedTotal => sumRupees(vPicked.values.map((Voucher v) => v.amt));
+
+  /// The one party of every ticked voucher, when it has a phone number.
+  Party? get pickedParty {
+    final Set<String> ps = vPicked.values.map((Voucher v) => v.party).toSet();
+    if (ps.length != 1) return null;
+    final Party? x = partyPool().where((Party y) => y.name == ps.first).firstOrNull;
+    return whatsAppNumber(x?.phone) == null ? null : x;
+  }
+
+  /// A phone number as WhatsApp wants it (country code, digits only), or
+  /// null. Ten-digit Indian numbers get +91.
+  static String? whatsAppNumber(String? phone) {
+    final String first = (phone ?? '').split(RegExp(r'[,;/]')).first;
+    String d = first.replaceAll(RegExp(r'\D'), '');
+    if (d.startsWith('00')) d = d.substring(2);
+    if (d.length == 11 && d.startsWith('0')) d = d.substring(1);
+    if (d.length == 10) d = '91$d';
+    return d.length >= 11 && d.length <= 15 ? d : null;
+  }
+
+  List<Voucher> get _pickedList => vPicked.values.toList()
+    ..sort((Voucher a, Voucher b) => (a.date ?? DateTime(0)).compareTo(b.date ?? DateTime(0)));
+
+  /// All ticked vouchers in one list PDF (date, number, party, amount, total).
+  Future<void> sharePickedList() async {
+    if (vPicked.isEmpty) return;
+    final List<Voucher> l = _pickedList;
+    await shareDoc(
+      docVouchers('Selected vouchers', l, companyName, '${l.length} selected', 'Selected'),
+    );
+  }
+
+  /// One PDF per ticked voucher, all in one share sheet.
+  Future<void> sharePickedEach() async {
+    if (vPicked.isEmpty || docBusy) return;
+    if (vPicked.length > kMaxShareEach) {
+      say('Pick at most $kMaxShareEach vouchers to share one PDF each, or share them as one list.');
+      return;
+    }
+    docBusy = true;
+    say('Preparing ${vPicked.length} PDFs…');
+    try {
+      final List<(ShareDoc, Uint8List)> docs = <(ShareDoc, Uint8List)>[];
+      for (final Voucher v in _pickedList) {
+        final ShareDoc d = _label(await voucherDoc(v));
+        docs.add((d, await pdfOf(d)));
+      }
+      await exporter.shareMany(docs, text: _pickedMessage(), subject: '${docs.length} vouchers · $companyName');
+      say('Share sheet opened');
+    } catch (_) {
+      say('Could not open the share sheet');
+    } finally {
+      docBusy = false;
+    }
+  }
+
+  /// Lines listed in one WhatsApp message; the rest are summed up in one
+  /// line (a chat link carries only so much text).
+  static const int kWaMaxLines = 40;
+
+  /// "Dear X, … 3 invoices totalling ₹…" with each number, date and amount
+  /// (and the party, when there are several).
+  String _pickedMessage() {
+    final List<Voucher> l = _pickedList;
+    final Set<String> ps = l.map((Voucher v) => v.party).toSet();
+    final bool one = ps.length == 1;
+    final String hello = one ? 'Dear ${ps.first},' : 'Hello,';
+    final List<Voucher> shown = l.take(kWaMaxLines).toList();
+    final List<Voucher> rest = l.skip(kWaMaxLines).toList();
+    // Several kinds (sales, receipts…): one subtotal per kind.
+    final Map<String, List<Voucher>> byKind = <String, List<Voucher>>{};
+    for (final Voucher v in l) {
+      (byKind[v.kind] ??= <Voucher>[]).add(v);
+    }
+    return <String>[
+      hello,
+      'Please find ${l.length} ${l.length == 1 ? 'entry' : 'entries'} totalling ${inr(pickedTotal)}:',
+      '',
+      for (final Voucher v in shown)
+        '• ${v.no} · ${v.date == null ? '—' : dmy(v.date)}${one ? '' : ' · ${v.party}'} · ${inr(v.amt)}',
+      if (rest.isNotEmpty)
+        '…and ${rest.length} more (${inr(sumRupees(rest.map((Voucher v) => v.amt)))})',
+      if (byKind.length > 1) ...<String>[
+        '',
+        for (final MapEntry<String, List<Voucher>> e in byKind.entries)
+          '${kKinds[e.key]?.t ?? e.key}: ${e.value.length} · ${inr(sumRupees(e.value.map((Voucher v) => v.amt)))}',
+      ],
+      '',
+      '*Total: ${inr(pickedTotal)}*',
+      '— $companyName',
+    ].join('\n');
+  }
+
+  /// WhatsApp with every ticked voucher in one message: the party's chat
+  /// when they are all one party's (phone saved in Tally), otherwise
+  /// WhatsApp asks whom to send it to.
+  Future<void> whatsAppPicked() async {
+    if (vPicked.isEmpty) return;
+    final String? n = whatsAppNumber(pickedParty?.phone);
+    await _openWhatsApp(_pickedMessage(), n);
+  }
+
+  /// `wa.me/<number>?text=` (that chat) or `wa.me/?text=` (pick a chat).
+  Future<void> _openWhatsApp(String text, [String? number]) async {
+    final Uri u = Uri.parse('https://wa.me/${number ?? ''}?text=${Uri.encodeComponent(text)}');
+    if (!await openUri(u)) say('Could not open WhatsApp');
+  }
+
+  // ------------------------------------------- several parties / ledgers
+  // Party list → Select → tick rows → one WhatsApp message with each
+  // party's balance, or one PDF of the ticked parties.
+
+  bool pSelecting = false;
+
+  /// Ticked parties by name, in the order ticked.
+  final Map<String, Party> pPicked = <String, Party>{};
+
+  void startPartySelect() => _set(() {
+    pSelecting = true;
+    pPicked.clear();
+  });
+
+  void endPartySelect() => _set(() {
+    pSelecting = false;
+    pPicked.clear();
+  });
+
+  void togglePartyPicked(Party x) => _set(() {
+    if (pPicked.remove(x.name) == null) pPicked[x.name] = x;
+  });
+
+  void selectAllParties(List<Party> rows) => _set(() {
+    for (final Party x in rows) {
+      pPicked[x.name] = x;
+    }
+  });
+
+  void clearPartyPicked() => _set(pPicked.clear);
+
+  /// Receivable (they owe you) and payable (you owe) of the ticked parties.
+  (num, num) get pickedPartyTotals {
+    num get = 0, give = 0;
+    for (final Party x in pPicked.values) {
+      if (x.bal == 0) continue;
+      if (_owesYou(x)) {
+        get += x.bal.abs();
+      } else {
+        give += x.bal.abs();
+      }
+    }
+    return (get, give);
+  }
+
+  /// Same reading as the party list: customers (and other ledgers with a
+  /// positive balance) owe you.
+  static bool _owesYou(Party x) => x.type == 'c' || (x.type == 'o' && x.bal > 0);
+
+  /// One line per party: name, kind, balance as the list shows it, phone.
+  String partyLine(Party x) {
+    final String bal;
+    if (x.bal == 0 && repo.isRemote) {
+      bal = x.opening == null ? 'Settled' : 'Opening ${inr(x.opening!.abs())}';
+    } else if (x.bal == 0) {
+      bal = 'Settled';
+    } else {
+      bal = '${inr(x.bal.abs())} ${_owesYou(x) ? 'to receive' : 'to pay'}';
+    }
+    final String phone = (x.phone ?? '').split(RegExp(r'[,;/]')).first.trim();
+    return '• ${x.name} (${x.kindLabel}) · $bal${phone.isEmpty ? '' : ' · $phone'}';
+  }
+
+  String _partyMessage() {
+    final List<Party> l = pPicked.values.toList()
+      ..sort((Party a, Party b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final (num get, num give) = pickedPartyTotals;
+    final int more = l.length - kWaMaxLines;
+    return <String>[
+      '*${l.length} ${l.length == 1 ? 'party' : 'parties'} · $companyName*',
+      'As on ${dmy(today)}',
+      '',
+      for (final Party x in l.take(kWaMaxLines)) partyLine(x),
+      if (more > 0) '…and $more more',
+      '',
+      if (get > 0) 'To receive: ${inr(get)}',
+      if (give > 0) 'To pay: ${inr(give)}',
+      '— $companyName',
+    ].join('\n');
+  }
+
+  /// WhatsApp with every ticked party in one message (WhatsApp asks whom
+  /// to send it to).
+  Future<void> whatsAppPickedParties() async {
+    if (pPicked.isEmpty) return;
+    await _openWhatsApp(_partyMessage());
+  }
+
+  /// The ticked parties as one PDF (share sheet).
+  Future<void> sharePickedParties() async {
+    if (pPicked.isEmpty) return;
+    final List<Party> l = pPicked.values.toList()
+      ..sort((Party a, Party b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    await shareDoc(docParties(l, companyName));
+  }
+
+  /// Selecting ends when its list is left.
+  void _endSelectLeaving(String to) {
+    if (vSelecting && to != 'vList') {
+      vSelecting = false;
+      vPicked.clear();
+    }
+    if (pSelecting && to != 'party') {
+      pSelecting = false;
+      pPicked.clear();
+    }
+  }
+
+  /// The party's WhatsApp chat with the message ready (no files: a link
+  /// cannot attach them — share the PDFs from the share sheet).
+  Future<void> whatsAppPickedParty() async {
+    final Party? x = pickedParty;
+    final String? n = whatsAppNumber(x?.phone);
+    if (x == null || n == null) {
+      say('Pick entries of one party with a phone number saved in Tally');
+      return;
+    }
+    final Uri u = Uri.parse('https://wa.me/$n?text=${Uri.encodeComponent(_pickedMessage())}');
+    if (!await openUri(u)) say('Could not open WhatsApp');
+  }
+
   // ------------------------------------------- share / pdf (NEW feature)
   /// Document shown by the generic PDF preview (`overlay == 'doc'`).
   ShareDoc? docShown;
@@ -5568,6 +6586,15 @@ class AppController extends ChangeNotifier {
               repo.isRemote
                   ? 'As on ${dmy(today)}'
                   : 'September 2026 · Sample data',
+            );
+          case kSalesCard:
+            final SalesDash? sd = salesData;
+            return ShareDoc(
+              title: 'Sales analytics',
+              subtitle: sd == null
+                  ? salesPeriodLabel
+                  : '$salesPeriodLabel · ${inr(sd.sales)} · ${sd.invoices} invoices',
+              company: co,
             );
           case 'items':
             return docItems(repo.items(), co);
@@ -5684,6 +6711,8 @@ class AppController extends ChangeNotifier {
   Future<void> pullRefresh() async {
     if (!repo.isRemote && !demoAvailable) return;
     await repo.refreshAll(force: true);
+    // Home's Sales analytics card reloads with the rest.
+    _homeSalesKey = null;
     afterRefresh();
   }
 
@@ -5720,7 +6749,22 @@ class AppController extends ChangeNotifier {
     if (companyId == kDemoCompanyId) return kDemoCompany.sub;
     final SyncInfo? s = repo.syncInfo(companyId);
     if (s == null) return 'Sync status not known';
-    if (s.inProgress) return 'Syncing now';
+    final String last = s.lastSyncAt == null
+        ? ''
+        : ' · last synced ${ago(s.lastSyncAt!, DateTime.now())}';
+    switch (s.state) {
+      case 'not_open':
+        return 'Not open in Tally on the sync computer$last';
+      case 'error':
+        return 'Last sync failed${s.error == null ? '' : ': ${s.error}'}';
+      case 'locked':
+        return 'Being synced by another computer$last';
+      case 'stalled':
+        return 'No news from the sync computer$last';
+    }
+    if (s.inProgress) {
+      return s.percent == null ? 'Syncing now' : 'Syncing now · ${s.percent}%';
+    }
     if (s.lastSyncAt == null) return 'Not synced yet';
     return 'Synced ${ago(s.lastSyncAt!, DateTime.now())}';
   }

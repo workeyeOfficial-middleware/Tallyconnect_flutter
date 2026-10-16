@@ -483,7 +483,16 @@ ScrollPhysics scrollPhysics(AppController c) => c.scrollLock
 /// `.scr` (padding 28 16 36) or `.scr.wt` on tab-bar screens (stops 100 px
 /// above the bottom with an 18 px fade).
 class Scr extends ConsumerStatefulWidget {
-  const Scr({super.key, required this.children, this.onNearEnd});
+  const Scr({
+    super.key,
+    required this.children,
+    this.onNearEnd,
+    this.bottomBar,
+  });
+
+  /// Floats above the bottom of the screen (and the tab bar), e.g. the
+  /// selection actions; the list gets room to scroll clear of it.
+  final Widget? bottomBar;
 
   /// Plain widgets lay out as before; [ScrSliver]s (e.g. [SliverGlassList])
   /// build their rows lazily, only while on screen.
@@ -544,7 +553,8 @@ class _ScrState extends ConsumerState<Scr> {
             (wt
                     ? wtBottom(context) + 20
                     : 36 + MediaQuery.paddingOf(context).bottom) +
-                kb,
+                kb +
+                (widget.bottomBar != null ? 150 : 0),
           ),
           sliver: SliverMainAxisGroup(slivers: toSlivers(widget.children)),
         ),
@@ -582,7 +592,41 @@ class _ScrState extends ConsumerState<Scr> {
     }
     // No bottom cut-off or fade: the wallpaper and the content continue
     // behind the translucent tab bar.
-    return scroll;
+    final Widget? bar = widget.bottomBar;
+    return Stack(
+      children: <Widget>[
+        Positioned.fill(child: scroll),
+        Positioned(
+          left: 12,
+          right: 12,
+          // Above the glass tab bar when it is shown.
+          bottom:
+              (wt
+                  ? wtBottom(context)
+                  : 12 + MediaQuery.paddingOf(context).bottom) +
+              kb,
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 260),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder: (Widget ch, Animation<double> a) =>
+                    SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, .6),
+                        end: Offset.zero,
+                      ).animate(a),
+                      child: FadeTransition(opacity: a, child: ch),
+                    ),
+                child: bar ?? const SizedBox.shrink(),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 

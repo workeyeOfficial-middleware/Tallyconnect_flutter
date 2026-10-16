@@ -7,6 +7,7 @@ import express from "express";
 
 import { OFF_TOPIC_REPLY, geminiFailure, rankModels, readKey, validateAsk } from "../utils/assistantCore.js";
 import { createAssistantRouter } from "../utils/assistantRouter.js";
+import { createAdapters } from "../utils/aiProviders.js";
 import { GeminiHttpError } from "../utils/geminiClient.js";
 
 const KEY = "AIzaSyTESTKEY_abcdefghijklmnop123456";
@@ -136,8 +137,52 @@ class FakeDb {
     return i < 0 ? null : this.allowedVouchers[p[i]] || [];
   }
 
+  // AI plans and per-user token usage (ai_plans / ai_usage / ai_usage_log).
+  aiPlans = { free: { name: "Free", token_limit: "10000", period: "lifetime", is_active: true } };
+  aiUsage = new Map();
+  aiLog = [];
+
+  usageQuery(s, p) {
+    if (s.startsWith("INSERT INTO ai_usage (")) {
+      if (!this.aiUsage.has(p[0])) {
+        this.aiUsage.set(p[0], {
+          user_id: p[0], admin_id: p[1], plan_code: "free", tokens_used: "0", requests: 0,
+          token_limit_override: null, period_start: new Date("2026-10-01T00:00:00Z"),
+        });
+      }
+      return { rows: [] };
+    }
+    if (s.includes("FROM ai_usage u LEFT JOIN ai_plans p ON p.code = u.plan_code AND p.is_active = TRUE")) {
+      const u = this.aiUsage.get(p[0]);
+      if (!u) return { rows: [] };
+      const pl = this.aiPlans[u.plan_code];
+      const on = pl && pl.is_active;
+      return {
+        rows: [{ ...u, plan_name: on ? pl.name : null, plan_limit: on ? pl.token_limit : null, plan_period: on ? pl.period : null }],
+      };
+    }
+    if (s.startsWith("UPDATE ai_usage SET tokens_used = 0")) {
+      Object.assign(this.aiUsage.get(p[0]), { tokens_used: "0", requests: 0, period_start: new Date("2026-10-12T06:00:00Z") });
+      return { rows: [] };
+    }
+    if (s.startsWith("UPDATE ai_usage SET tokens_used = tokens_used + $2")) {
+      const u = this.aiUsage.get(p[0]);
+      u.tokens_used = String(Number(u.tokens_used) + p[1]);
+      u.requests++;
+      return { rows: [] };
+    }
+    if (s.startsWith("INSERT INTO ai_usage_log")) {
+      const [user_id, admin_id, company_guid, provider, model, input, output, total, estimated] = p;
+      this.aiLog.push({ user_id, admin_id, company_guid, provider, model, input, output, total, estimated });
+      return { rows: [] };
+    }
+    return null;
+  }
+
   async query(sql, p = []) {
     const s = sql.replace(/\s+/g, " ").trim();
+    const usage = this.usageQuery(s, p);
+    if (usage) return usage;
     if (s.includes("FROM active_company ac")) {
       const g = this.active[p[0]];
       const c = this.companies.find((x) => x.admin_id === p[0] && x.company_guid === g);
@@ -225,6 +270,23 @@ const USER = { id: 21, adminId: 7, role: "USER", email: "asha@x.in" };
 const OTHER = { id: 8, adminId: 8, role: "ADMIN", email: "z@x.in" };
 
 /* ---------------------------------------------------------- routes */
+// The server's own key (from .env). APP_KEY = a key an older app may still
+// send: it must never be used.
+const APP_KEY = "AIzaSyAPPUSERKEY_must_never_be_used_0001";
+const TOKENS = 120; // what the fake Gemini reports per call
+
+// The real Gemini adapter over a fake HTTP layer that hands each request to
+// the scripted fake Gemini (so the adapter's request building is tested too).
+function geminiHttp(gem) {
+  return async ({ method, url, headers, body }) => {
+    const key = headers["x-goog-api-key"];
+    if (method === "get" && /\/models\?/.test(url)) return gem.listModels(key);
+    const m = /\/models\/([^:]+):generateContent/.exec(url);
+    if (!m) throw new Error(`unexpected Gemini URL ${url}`);
+    return gem.generate(key, decodeURIComponent(m[1]), body);
+  };
+}
+
 describe("routes", () => {
   let db, server, base, gem, logs, env;
 
@@ -236,7 +298,8 @@ describe("routes", () => {
       bodies: [],
       plan: [],
       fail: null,
-      // What the key can list, and models Google answers 404 for.
+      noUsage: false,
+      delay: 0,
       models: [
         { name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] },
         { name: "models/gemini-2.0-flash", supportedGenerationMethods: ["generateContent"] },
@@ -254,20 +317,19 @@ describe("routes", () => {
       async generate(key, model, body) {
         g.keys.push(key);
         g.used.push(model);
+        if (g.delay) await new Promise((r) => setTimeout(r, g.delay));
         if (g.fail) throw g.fail;
         if (g.retired.has(model)) {
           throw new GeminiHttpError(404, { error: { message: `models/${model} is no longer available to new users.` } });
         }
-        if (body.contents.length === 1 && body.contents[0].parts[0].text === "Reply with OK.") {
-          return { candidates: [{ content: { role: "model", parts: [{ text: "OK" }] } }] };
-        }
         g.bodies.push(JSON.parse(JSON.stringify(body)));
+        const usageMetadata = g.noUsage ? undefined : { promptTokenCount: TOKENS - 20, candidatesTokenCount: 20, totalTokenCount: TOKENS };
         const done = body.contents.filter((c) => c.parts.some((p) => p.functionResponse)).length;
         if (done < g.plan.length) {
-          return { candidates: [{ content: { role: "model", parts: [{ functionCall: g.plan[done] }] } }] };
+          return { candidates: [{ content: { role: "model", parts: [{ functionCall: g.plan[done] }] } }], usageMetadata };
         }
         const results = body.contents.flatMap((c) => c.parts.filter((p) => p.functionResponse).map((p) => p.functionResponse.response.result));
-        return { candidates: [{ content: { role: "model", parts: [{ text: `ANSWER ${JSON.stringify(results)}` }] } }] };
+        return { candidates: [{ content: { role: "model", parts: [{ text: `ANSWER ${JSON.stringify(results)}` }] } }], usageMetadata };
       },
     };
     return g;
@@ -277,11 +339,11 @@ describe("routes", () => {
     db = new FakeDb();
     gem = fakeGemini();
     logs = [];
-    env = { ASSISTANT_RATE_LIMIT_PER_10_MIN: "50" };
+    env = { ASSISTANT_RATE_LIMIT_PER_10_MIN: "50", AI_PROVIDER: "gemini", AI_API_KEY: KEY };
     const log = { error: (...a) => logs.push(a.join(" ")), log: (...a) => logs.push(a.join(" ")) };
     const app = express();
     app.use(express.json());
-    app.use(createAssistantRouter({ db, auth: stubAuth, gemini: gem, env, log, now: () => new Date("2026-10-12T06:00:00Z") }));
+    app.use(createAssistantRouter({ db, auth: stubAuth, adapters: createAdapters(geminiHttp(gem)), env, log, now: () => new Date("2026-10-12T06:00:00Z") }));
     await new Promise((r) => {
       server = app.listen(0, r);
     });
@@ -289,7 +351,7 @@ describe("routes", () => {
   });
   afterEach(() => new Promise((r) => server.close(r)));
 
-  const call = async (path, user, body, key = KEY) => {
+  const call = async (path, user, body, key = null) => {
     const r = await fetch(base + path, {
       method: "POST",
       headers: {
@@ -302,30 +364,133 @@ describe("routes", () => {
     const text = await r.text();
     return { status: r.status, text, body: JSON.parse(text) };
   };
+  const get = async (path, user) => {
+    const r = await fetch(base + path, { headers: user ? { "x-test-user": JSON.stringify(user) } : {} });
+    const text = await r.text();
+    return { status: r.status, text, body: JSON.parse(text) };
+  };
   const ask = (user, question, plan = [], extra = {}) => {
     gem.plan = plan;
     return call("/api/assistant/ask", user, { question, ...extra });
   };
 
-  test("needs a login and a key", async () => {
+  test("no key from the app: the server's key answers; login needed", async () => {
     assert.equal((await call("/api/assistant/ask", null, { question: "q" })).status, 401);
-    const r = await call("/api/assistant/ask", ADMIN, { question: "q" }, null);
-    assert.equal(r.status, 400);
-    assert.equal(r.body.code, "no_key");
+    const r = await ask(ADMIN, "Sales?");
+    assert.equal(r.status, 200);
+    assert.ok(gem.keys.length > 0 && gem.keys.every((k) => k === KEY));
+    for (const t of [r.text, ...logs]) assert.ok(!t.includes(KEY));
+  });
+
+  test("not configured (no AI_API_KEY / unknown provider) → 503, nothing called", async () => {
+    delete env.AI_API_KEY;
+    const r = await ask(ADMIN, "Sales?");
+    assert.equal(r.status, 503);
+    assert.equal(r.body.code, "ai_not_configured");
+    const st = await get("/api/assistant/status", ADMIN);
+    assert.equal(st.body.enabled, false);
+    env.AI_API_KEY = KEY;
+    env.AI_PROVIDER = "nope";
+    assert.equal((await ask(ADMIN, "Sales?")).body.code, "ai_not_configured");
     assert.equal(gem.keys.length, 0);
   });
 
-  test("verify: key checked with Gemini; never echoed or logged", async () => {
-    const ok = await call("/api/assistant/verify", ADMIN);
-    assert.equal(ok.status, 200);
-    assert.equal(ok.body.success, true);
-    // Used only for Gemini: model list + one tiny test generation.
-    assert.deepEqual(gem.keys, [KEY, KEY]);
-    gem.fail = new GeminiHttpError(400, { error: { message: "API key not valid.", details: [{ reason: "API_KEY_INVALID" }] } });
-    const bad = await call("/api/assistant/verify", ADMIN);
-    assert.equal(bad.status, 422); // not 401: the TallyConnect session stays
-    assert.equal(bad.body.code, "invalid_key");
-    for (const t of [ok.text, bad.text, ...logs]) assert.ok(!t.includes(KEY));
+  test("older apps: their key is ignored; verify / models / providers answer from the server", async () => {
+    const v = await call("/api/assistant/verify", ADMIN, { provider: "openai", model: "gpt-4o" }, APP_KEY);
+    assert.equal(v.status, 200);
+    assert.equal(v.body.provider, "gemini");
+    assert.equal(gem.keys.length, 0); // no provider call, no tokens used
+    const p = await get("/api/assistant/providers", ADMIN);
+    assert.deepEqual(p.body.data.map((x) => x.id), ["gemini"]);
+    const a = await call("/api/assistant/ask", ADMIN, { question: "Sales?", provider: "openai", model: "gpt-4o" }, APP_KEY);
+    assert.equal(a.status, 200);
+    assert.ok(gem.keys.every((k) => k === KEY)); // never the app's key
+    for (const t of [v.text, a.text, ...logs]) assert.ok(!t.includes(APP_KEY) && !t.includes(KEY));
+  });
+
+  test("usage: the provider's tokens are counted per user, across devices", async () => {
+    const r = await ask(ADMIN, "Who owes me the most?", [{ name: "outstanding_summary", args: { kind: "receivable" } }]);
+    assert.equal(r.status, 200);
+    // Two provider calls (tool call + answer).
+    assert.equal(r.body.tokens_used, 2 * TOKENS);
+    assert.deepEqual(
+      { used: r.body.usage.used, limit: r.body.usage.limit, remaining: r.body.usage.remaining, exhausted: r.body.usage.exhausted },
+      { used: 240, limit: 10000, remaining: 9760, exhausted: false }
+    );
+    assert.equal(r.body.usage.plan.code, "free");
+    assert.equal(db.aiLog.length, 2);
+    assert.deepEqual(
+      [db.aiLog[0].user_id, db.aiLog[0].company_guid, db.aiLog[0].provider, db.aiLog[0].model, db.aiLog[0].total, db.aiLog[0].estimated],
+      [7, "CO-1", "gemini", "gemini-2.5-flash", TOKENS, false]
+    );
+    // Another device / session of the same login sees the same total.
+    const st = await get("/api/assistant/status", ADMIN);
+    assert.equal(st.body.enabled, true);
+    assert.equal(st.body.provider.label, "Google Gemini");
+    assert.equal(st.body.usage.used, 240);
+    // Each login has its own allowance.
+    assert.equal((await get("/api/assistant/status", USER)).body.usage.used, 0);
+    // A status check costs nothing.
+    assert.equal(db.aiLog.length, 2);
+  });
+
+  test("allowance used up → 402 with the exact message; the provider is not called", async () => {
+    await get("/api/assistant/status", ADMIN);
+    db.aiUsage.get(7).tokens_used = "10000";
+    const r = await ask(ADMIN, "Sales?");
+    assert.equal(r.status, 402);
+    assert.equal(r.body.code, "ai_quota_exhausted");
+    assert.equal(r.body.message, "Your free AI access has ended. Upgrade your plan to continue.");
+    assert.equal(r.body.usage.remaining, 0);
+    assert.equal(gem.keys.length, 0);
+    assert.equal((await get("/api/assistant/status", ADMIN)).body.usage.exhausted, true);
+    // Another user is not affected.
+    assert.equal((await ask(USER, "Sales?")).status, 200);
+  });
+
+  test("a question started within the allowance is answered; the next is refused", async () => {
+    await get("/api/assistant/status", ADMIN);
+    db.aiUsage.get(7).tokens_used = "9950";
+    const r = await ask(ADMIN, "Who owes me?", [{ name: "outstanding_summary", args: { kind: "receivable" } }]);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.usage.used, 9950 + 240);
+    assert.equal(r.body.usage.exhausted, true);
+    assert.equal((await ask(ADMIN, "Again?")).status, 402);
+  });
+
+  test("no token count from the provider → estimated, still counted", async () => {
+    gem.noUsage = true;
+    const r = await ask(ADMIN, "Sales?");
+    assert.equal(r.status, 200);
+    assert.equal(db.aiLog[0].estimated, true);
+    assert.ok(db.aiLog[0].total > 100); // system prompt + tools are counted
+    assert.equal(r.body.usage.used, db.aiLog[0].total);
+  });
+
+  test("plans: per-user override, monthly plan restarts, AI_FREE_TOKENS", async () => {
+    await get("/api/assistant/status", ADMIN);
+    const u = db.aiUsage.get(7);
+    u.tokens_used = "12000";
+    u.token_limit_override = "50000";
+    let st = (await get("/api/assistant/status", ADMIN)).body.usage;
+    assert.deepEqual([st.limit, st.remaining, st.exhausted], [50000, 38000, false]);
+    // A paid monthly plan: its month is over → back to 0.
+    db.aiPlans.pro = { name: "Pro", token_limit: "500000", period: "month", is_active: true };
+    Object.assign(u, { plan_code: "pro", token_limit_override: null, tokens_used: "500000", period_start: new Date("2026-09-01T00:00:00Z") });
+    st = (await get("/api/assistant/status", ADMIN)).body.usage;
+    assert.deepEqual([st.plan.name, st.used, st.limit, st.exhausted], ["Pro", 0, 500000, false]);
+    assert.ok(st.resets_at.startsWith("2026-11-12"));
+    // The free allowance comes from the plan row; AI_FREE_TOKENS only when it is missing.
+    env.AI_FREE_TOKENS = "2000";
+    delete db.aiPlans.free;
+    assert.equal((await get("/api/assistant/status", USER)).body.usage.limit, 2000);
+  });
+
+  test("one question at a time per user (no double spending from two devices)", async () => {
+    gem.delay = 150;
+    const [a, b] = await Promise.all([ask(ADMIN, "One?"), new Promise((r) => setTimeout(r, 30)).then(() => ask(ADMIN, "Two?"))]);
+    assert.deepEqual([a.status, b.status].sort(), [200, 429]);
+    assert.equal([a, b].find((x) => x.status === 429).body.code, "busy");
   });
 
   test("answers from company-scoped tools only", async () => {
@@ -334,7 +499,7 @@ describe("routes", () => {
     assert.deepEqual(r.body.tools_used, ["outstanding_summary"]);
     assert.match(r.body.answer, /Mehta Electricals/);
     assert.match(r.body.answer, /"total_pending":19000.5/); // 10000.50 + 5000 + 4000
-    // Other company / other account never reach Gemini.
+    // Other company / other account never reach the AI provider.
     const sent = JSON.stringify(gem.bodies);
     for (const secret of ["Mehta Exports", "77777", "Mehta Secret", "88888"]) assert.ok(!sent.includes(secret), secret);
     // System prompt names the active company and forbids guessing.
@@ -387,7 +552,6 @@ describe("routes", () => {
     assert.equal(tbl.type, "table");
     assert.deepEqual(tbl.rows[0], ["Mehta Electricals", 2, 15000.5, 10000.5]);
     assert.equal(tbl.total_rows, 2);
-    // Party not found / ambiguous → a note; transactions → a table; empty.
     const amb = await ask(ADMIN, "?", [{ name: "party_bills", args: { party: "a" } }]);
     assert.equal(amb.body.blocks[0].type, "note");
     const lt = await ask(ADMIN, "Receipts", [{ name: "list_transactions", args: { voucher_type: "Receipt", from: "2026-10-01", to: "2026-10-31" } }]);
@@ -395,13 +559,11 @@ describe("routes", () => {
     const none = await ask(ADMIN, "Today", [{ name: "list_transactions", args: { from: "2020-01-01", to: "2020-01-02" } }]);
     assert.equal(none.body.blocks[0].rows.length, 0);
     assert.equal(none.body.blocks[0].empty, "No entries found for this period.");
-    // The same lookup twice → one set of cards.
     const twice = await ask(ADMIN, "?", [
       { name: "outstanding_summary", args: { kind: "payable" } },
       { name: "outstanding_summary", args: { kind: "payable" } },
     ]);
     assert.equal(twice.body.blocks.length, 2);
-    // A USER login's cards hold only their permitted data.
     const u = await ask(USER, "Outstanding?", [{ name: "outstanding_summary", args: { kind: "receivable" } }]);
     assert.ok(!JSON.stringify(u.body.blocks).includes("Mehta"));
   });
@@ -424,25 +586,31 @@ describe("routes", () => {
     assert.ok(!r.body.answer.includes("Mehta Electricals"));
   });
 
-  test("no active company → 409, Gemini not called", async () => {
+  test("no active company → 409, provider not called, nothing counted", async () => {
     delete db.active[7];
     const r = await ask(ADMIN, "Sales?");
     assert.equal(r.status, 409);
     assert.equal(r.body.code, "no_company");
     assert.equal(gem.keys.length, 0);
+    assert.equal(db.aiLog.length, 0);
   });
 
-  test("Gemini errors: quota 429, timeout 504, outage 502 — key never leaked", async () => {
+  test("provider errors on the server key: users get service messages, never 401, key never leaked", async () => {
+    gem.fail = new GeminiHttpError(400, { error: { message: `API key not valid: ${KEY}`, details: [{ reason: "API_KEY_INVALID" }] } });
+    const bad = await ask(ADMIN, "Sales?");
+    assert.deepEqual([bad.status, bad.body.code], [503, "ai_unavailable"]);
+    assert.ok(!/key/i.test(bad.body.message)); // nothing about "your key"
     gem.fail = new GeminiHttpError(429, { error: { message: `quota for key ${KEY}` } });
     const q = await ask(ADMIN, "Sales?");
-    assert.equal(q.status, 429);
-    assert.equal(q.body.code, "quota");
+    assert.deepEqual([q.status, q.body.code], [503, "ai_busy"]);
     gem.fail = new GeminiHttpError(null, null, true);
     assert.equal((await ask(ADMIN, "Sales?")).status, 504);
     gem.fail = new GeminiHttpError(503, {});
     const d = await ask(ADMIN, "Sales?");
-    assert.equal(d.status, 502);
-    for (const t of [q.text, d.text, ...logs]) assert.ok(!t.includes(KEY));
+    assert.deepEqual([d.status, d.body.code], [502, "ai_unavailable"]);
+    for (const t of [bad.text, q.text, d.text, ...logs]) assert.ok(!t.includes(KEY));
+    // Failed calls cost nothing.
+    assert.equal(db.aiLog.length, 0);
   });
 
   test("history is passed; too many tool rounds stop", async () => {
@@ -459,37 +627,25 @@ describe("routes", () => {
     assert.equal(r.body.code, "too_complex");
   });
 
-  test("retired model (404) → next model the key offers; verify generates", async () => {
+  test("no AI_MODEL: the key's best model; a retired one (404) → the next", async () => {
     gem.retired.add("gemini-2.5-flash");
-    const v = await call("/api/assistant/verify", ADMIN);
-    assert.equal(v.status, 200);
-    assert.equal(v.body.model, "gemini-2.0-flash");
     const r = await ask(ADMIN, "Last 5 receipts", [{ name: "list_transactions", args: { voucher_type: "Receipt", limit: 5 } }]);
     assert.equal(r.status, 200);
     assert.match(r.body.answer, /Receipt/);
-    assert.equal(r.body.model, "gemini-2.0-flash");
-    assert.ok(!gem.bodies.some((b) => b.generationConfig?.maxOutputTokens)); // no cap
+    assert.equal(gem.used.at(-1), "gemini-2.0-flash");
     assert.ok(logs.some((l) => l.includes("gemini-2.5-flash not available")));
-    for (const t of [v.text, r.text, ...logs]) assert.ok(!t.includes(KEY));
+    gem.retired.add("gemini-2.0-flash");
+    const none = await ask(ADMIN, "Sales?");
+    assert.deepEqual([none.status, none.body.code], [503, "ai_unavailable"]);
   });
 
-  test("no usable model for the key → clear 502, never 401", async () => {
-    gem.retired = new Set(["gemini-2.5-flash", "gemini-2.0-flash"]);
-    const r = await ask(ADMIN, "Sales?");
-    assert.equal(r.status, 502);
-    assert.equal(r.body.code, "model_unavailable");
-    gem.models = [{ name: "models/text-embedding-004", supportedGenerationMethods: ["embedContent"] }];
-    const v = await call("/api/assistant/verify", ADMIN);
-    assert.equal(v.status, 502);
-    assert.equal(v.body.code, "model_unavailable");
-  });
-
-  test("GEMINI_MODEL is preferred when the key offers it; list cached", async () => {
-    env.GEMINI_MODEL = "gemini-2.0-flash";
+  test("AI_MODEL is used as is (no model listing)", async () => {
+    env.AI_MODEL = "gemini-2.0-flash";
     await ask(ADMIN, "a");
     await ask(ADMIN, "b");
     assert.deepEqual(gem.used, ["gemini-2.0-flash", "gemini-2.0-flash"]);
-    assert.equal(gem.lists, 1); // listed once, then cached (by key hash)
+    assert.equal(gem.lists, 0);
+    assert.equal(db.aiLog[0].model, "gemini-2.0-flash");
   });
 
   test("rate limit per user", async () => {
@@ -500,5 +656,182 @@ describe("routes", () => {
     assert.equal(r.status, 429);
     assert.equal(r.body.code, "rate_limited");
     assert.equal((await ask(USER, "d")).status, 200); // another user
+  });
+});
+
+/* ------------------------------------------- other AI providers */
+const OKEY = "sk-proj-TESTKEY_openai_0123456789abcdef";
+const AKEY = "sk-ant-api03-TESTKEY_anthropic_0123456789";
+
+/**
+ * Fake OpenAI- and Anthropic-style servers behind one http function. Each
+ * checks the request shape its real API expects and records it.
+ */
+function providerHttp() {
+  const seen = [];
+  const st = { plan: [], fail: null };
+  const http = async ({ method, url, headers, body }) => {
+    seen.push({ method, url, headers, body: body && JSON.parse(JSON.stringify(body)) });
+    if (st.fail) throw st.fail;
+    // ---------------- OpenAI chat API
+    if (url.startsWith("https://api.openai.com/v1")) {
+      assert.equal(headers.Authorization, `Bearer ${OKEY}`);
+      if (method === "get") {
+        return {
+          data: ["whisper-1", "gpt-4o", "text-embedding-3-small", "gpt-4o-mini", "gpt-4o-realtime-preview"].map((id) => ({ id })),
+        };
+      }
+      const results = body.messages.filter((m) => m.role === "tool");
+      for (const t of body.tools || []) {
+        assert.equal(t.type, "function");
+        assert.equal(t.function.parameters.type, "object"); // JSON Schema, lower case
+      }
+      const usage = { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 };
+      if (!results.length && st.plan.length) {
+        return {
+          usage,
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {
+                role: "assistant",
+                content: null,
+                tool_calls: st.plan.map((c, i) => ({
+                  id: `call_${i}`,
+                  type: "function",
+                  function: { name: c.name, arguments: JSON.stringify(c.args) },
+                })),
+              },
+            },
+          ],
+        };
+      }
+      const asked = body.messages.flatMap((m) => (m.tool_calls || []).map((c) => c.id));
+      for (const r of results) assert.ok(asked.includes(r.tool_call_id));
+      return {
+        usage,
+        choices: [
+          { finish_reason: "stop", message: { role: "assistant", content: `OPENAI ${results.map((r) => r.content).join(" ")}` } },
+        ],
+      };
+    }
+    // ---------------- Anthropic Messages API
+    if (url.startsWith("https://api.anthropic.com/v1")) {
+      assert.equal(headers["x-api-key"], AKEY);
+      assert.equal(headers["anthropic-version"], "2023-06-01");
+      assert.equal(headers.Authorization, undefined);
+      if (method === "get") {
+        return { data: ["claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-1"].map((id) => ({ id })) };
+      }
+      assert.ok(body.max_tokens > 0);
+      assert.ok(!body.messages.some((m) => m.role === "system"));
+      for (const t of body.tools || []) assert.equal(t.input_schema.type, "object");
+      const results = body.messages.flatMap((m) =>
+        (Array.isArray(m.content) ? m.content : []).filter((b) => b.type === "tool_result")
+      );
+      const usage = { input_tokens: 70, output_tokens: 15 };
+      if (!results.length && st.plan.length) {
+        return {
+          usage,
+          stop_reason: "tool_use",
+          content: [
+            { type: "text", text: "Looking it up." },
+            ...st.plan.map((c, i) => ({ type: "tool_use", id: `toolu_${i}`, name: c.name, input: c.args })),
+          ],
+        };
+      }
+      return { usage, stop_reason: "end_turn", content: [{ type: "text", text: `CLAUDE ${results.map((r) => r.content).join(" ")}` }] };
+    }
+    throw new Error(`unexpected URL ${url}`);
+  };
+  return { http, seen, st };
+}
+
+describe("other providers (set on the server)", () => {
+  let db, server, base, fake, logs, env;
+  beforeEach(async () => {
+    db = new FakeDb();
+    fake = providerHttp();
+    logs = [];
+    env = { AI_PROVIDER: "openai", AI_API_KEY: OKEY };
+    const log = { error: (...a) => logs.push(a.join(" ")), log: () => {} };
+    const app = express();
+    app.use(express.json());
+    app.use(
+      createAssistantRouter({
+        db,
+        auth: stubAuth,
+        adapters: createAdapters(fake.http),
+        env,
+        log,
+        now: () => new Date("2026-10-12T06:00:00Z"),
+      })
+    );
+    await new Promise((r) => {
+      server = app.listen(0, r);
+    });
+    base = `http://127.0.0.1:${server.address().port}`;
+  });
+  afterEach(() => new Promise((r) => server.close(r)));
+
+  const post = async (path, body, headers = {}, user = ADMIN) => {
+    const r = await fetch(base + path, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-user": JSON.stringify(user), ...headers },
+      body: JSON.stringify(body),
+    });
+    const text = await r.text();
+    return { status: r.status, text, body: JSON.parse(text) };
+  };
+
+  test("OpenAI: best chat model, scoped tools, its token counts", async () => {
+    fake.st.plan = [{ name: "outstanding_summary", args: { kind: "receivable" } }];
+    const a = await post("/api/assistant/ask", { question: "Who owes me most?" });
+    assert.equal(a.status, 200);
+    assert.match(a.body.answer, /^OPENAI .*"total_pending":19000.5/);
+    assert.ok(!a.body.answer.includes("Mehta Exports")); // other company never sent
+    assert.equal(a.body.blocks[0].type, "kpis");
+    assert.equal(fake.seen.at(-1).body.model, "gpt-4o-mini"); // no whisper / embeddings / realtime
+    assert.equal(a.body.usage.used, 120); // 2 calls × 60
+    assert.deepEqual([db.aiLog[0].input, db.aiLog[0].output, db.aiLog[0].provider], [50, 10, "openai"]);
+    env.AI_MODEL = "gpt-4o";
+    await post("/api/assistant/ask", { question: "Hi", model: "gpt-9-from-old-app" });
+    assert.equal(fake.seen.at(-1).body.model, "gpt-4o"); // the server's model, never the app's
+  });
+
+  test("Anthropic: Claude's own format and token counts", async () => {
+    Object.assign(env, { AI_PROVIDER: "anthropic", AI_API_KEY: AKEY });
+    fake.st.plan = [{ name: "party_bills", args: { party: "Mehta Electricals" } }];
+    const a = await post("/api/assistant/ask", { question: "Mehta bills?" });
+    assert.equal(a.status, 200);
+    assert.match(a.body.answer, /^CLAUDE .*"pending_total":15000.5/);
+    assert.equal(fake.seen.at(-1).body.model, "claude-sonnet-4-5"); // Sonnet first
+    const last = fake.seen.at(-1).body;
+    assert.ok(last.system.includes("Ravi Traders"));
+    const toolUse = last.messages.find((m) => m.role === "assistant").content.find((b) => b.type === "tool_use");
+    assert.equal(last.messages.at(-1).content[0].tool_use_id, toolUse.id);
+    assert.equal(a.body.usage.used, 170); // 2 × (70 + 15)
+  });
+
+  test("errors: bad server key / no credit / model gone → service messages, key never leaked", async () => {
+    const { ProviderHttpError } = await import("../utils/aiProviders.js");
+    fake.st.fail = new ProviderHttpError(401, { error: { message: `Incorrect API key provided: ${OKEY}` } });
+    const bad = await post("/api/assistant/ask", { question: "x" });
+    assert.deepEqual([bad.status, bad.body.code], [503, "ai_unavailable"]);
+    assert.equal(bad.body.message, "The AI Assistant is temporarily unavailable. Please try again later.");
+    fake.st.fail = new ProviderHttpError(429, { error: { message: "You exceeded your current quota", type: "insufficient_quota" } });
+    assert.equal((await post("/api/assistant/ask", { question: "x" })).body.code, "ai_busy");
+    env.AI_MODEL = "gpt-9";
+    fake.st.fail = new ProviderHttpError(404, { error: { message: "The model `gpt-9` does not exist" } });
+    const gone = await post("/api/assistant/ask", { question: "x" });
+    assert.deepEqual([gone.status, gone.body.code], [503, "ai_unavailable"]);
+    for (const t of [bad.text, gone.text, ...logs]) assert.ok(!t.includes(OKEY));
+    assert.ok(logs.some((l) => l.includes("[key]"))); // the operator sees why, key masked
+  });
+
+  test("an old app's X-Gemini-Key never reaches any provider", async () => {
+    const r = await post("/api/assistant/ask", { question: "hi" }, { "x-gemini-key": KEY });
+    assert.equal(r.status, 200);
+    assert.ok(fake.seen.every((x) => !x.headers["x-goog-api-key"] && !JSON.stringify(x.headers).includes(KEY)));
   });
 });
