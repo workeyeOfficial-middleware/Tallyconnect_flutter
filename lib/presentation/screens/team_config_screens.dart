@@ -9,7 +9,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/app_state.dart';
 import '../../app/providers.dart';
-import '../../core/design/tc_fields.dart';
 import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
@@ -20,6 +19,7 @@ import '../../data/models/models.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../../data/repositories/team_admin.dart';
 import '../widgets/common.dart';
+import '../widgets/voice_search.dart';
 import 'insight_screens.dart' show kTS;
 
 String _err(Object e) => e is ApiException ? e.userMessage : '$e';
@@ -109,13 +109,16 @@ class TeamUserScreen extends ConsumerWidget {
                   Av(initials(m.name)),
                   const SizedBox(width: 12),
                   Expanded(child: RTx(m.name, m.email, ell: true)),
-                  const SizedBox(width: 10),
                   // Status is shown as it is; configuring never changes it.
-                  Bdg(
-                    kTS[m.st]?.$1 ?? m.st,
-                    kind: kTS[m.st]?.$2 ?? BadgeKind.info,
-                    dot: true,
-                  ),
+                  // Sample data only: the server keeps no account status.
+                  if (!c.repo.isRemote) ...<Widget>[
+                    const SizedBox(width: 10),
+                    Bdg(
+                      kTS[m.st]?.$1 ?? m.st,
+                      kind: kTS[m.st]?.$2 ?? BadgeKind.info,
+                      dot: true,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -571,13 +574,13 @@ class _TeamSelectState extends ConsumerState<TeamSelectScreen> {
                 },
               )
             else ...<Widget>[
-              Inp(
+              VoiceSearchField(
+                field: 'tsQ',
                 value: c.f('tsQ'),
                 onChanged: (String s) => c.setQuery('tsQ', s),
                 placeholder: voucher
                     ? 'Search party, number, type or date'
                     : 'Search',
-                icon: 'search',
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(6, 12, 6, 8),

@@ -1495,6 +1495,185 @@ class ApiTallyRepository extends TallyRepository {
     }
   }
 
+  // --------------------------------------------- sales team attendance
+  static AttSession _session(Object? r) =>
+      AttSession.fromJson(r is Map ? r['session'] : null);
+
+  @override
+  Future<AttMe> attendanceMe() =>
+      _rem(() async => AttMe.fromJson(await _api.attendanceMe()));
+
+  @override
+  Future<AttSession> checkIn({String? note, String? key}) => _rem(
+    () async => _session(
+      await _api.attendanceCheckIn(<String, Object?>{
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+        'idempotency_key': ?key,
+      }),
+    ),
+  );
+
+  @override
+  Future<AttSession> checkOut({String? note}) => _rem(
+    () async => _session(
+      await _api.attendanceCheckOut(<String, Object?>{
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+      }),
+    ),
+  );
+
+  @override
+  Future<bool> attendancePing() => _rem(() async {
+    final Object? r = await _api.attendancePing();
+    return r is Map && r['open'] == true;
+  });
+
+  @override
+  Future<AttHistory> attendanceHistory({
+    required DateTime from,
+    required DateTime to,
+  }) => _rem(
+    () async => AttHistory.fromJson(
+      await _api.attendanceHistory(<String, String>{
+        'from': _ymd(from),
+        'to': _ymd(to),
+      }),
+    ),
+  );
+
+  @override
+  Future<AttTeam> attendanceTeam(DateTime date) => _rem(
+    () async => AttTeam.fromJson(
+      await _api.attendanceTeam(<String, String>{'date': _ymd(date)}),
+    ),
+  );
+
+  @override
+  Future<AttHistory> attendanceMemberHistory(
+    String userId, {
+    required DateTime from,
+    required DateTime to,
+  }) => _rem(
+    () async => AttHistory.fromJson(
+      await _api.attendanceMemberHistory(userId, <String, String>{
+        'from': _ymd(from),
+        'to': _ymd(to),
+      }),
+    ),
+  );
+
+  // ------------------------------------------------- leave management
+  static LeaveRequest _leaveReq(Object? r) =>
+      LeaveRequest.fromJson(r is Map ? r['request'] : null);
+
+  static Map<String, String> _dateQ(DateTime? d) =>
+      d == null ? const <String, String>{} : <String, String>{'date': _ymd(d)};
+
+  @override
+  Future<LeaveMe> leaveMe({DateTime? date}) =>
+      _rem(() async => LeaveMe.fromJson(await _api.leaveMe(_dateQ(date))));
+
+  @override
+  Future<LeaveRequest> applyLeave({
+    required int typeId,
+    required DateTime from,
+    required DateTime to,
+    String? halfDay,
+    String? reason,
+    String? key,
+  }) => _rem(
+    () async => _leaveReq(
+      await _api.leaveApply(<String, Object?>{
+        'type_id': typeId,
+        'from': _ymd(from),
+        'to': _ymd(to),
+        'half_day': ?halfDay,
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+        'idempotency_key': ?key,
+      }),
+    ),
+  );
+
+  @override
+  Future<LeaveRequest> decideLeave(int id, String action, {String? note}) =>
+      _rem(
+        () async => _leaveReq(
+          await _api.leaveDecide(id, action, <String, Object?>{
+            if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+          }),
+        ),
+      );
+
+  @override
+  Future<List<LeaveRequest>> leaveRequests({
+    String status = 'pending',
+    String? userId,
+  }) => _rem(() async {
+    final Object? r = await _api.leaveRequests(<String, String>{
+      'status': status,
+      'user_id': ?userId,
+    });
+    return LeaveRequest.list(r is Map ? r['requests'] : null);
+  });
+
+  @override
+  Future<LeaveMe> leaveMember(String userId, {DateTime? date}) => _rem(
+    () async => LeaveMe.fromJson(await _api.leaveMember(userId, _dateQ(date))),
+  );
+
+  @override
+  Future<LeaveCalendar> leaveCalendar({
+    required DateTime from,
+    required DateTime to,
+  }) => _rem(
+    () async => LeaveCalendar.fromJson(
+      await _api.leaveCalendar(<String, String>{
+        'from': _ymd(from),
+        'to': _ymd(to),
+      }),
+    ),
+  );
+
+  @override
+  Future<LeaveAdmin> leaveSettings({DateTime? date}) => _rem(
+    () async => LeaveAdmin.fromJson(await _api.leaveSettings(_dateQ(date))),
+  );
+
+  @override
+  Future<LeaveSettings> saveLeaveSettings(Map<String, Object?> changes) =>
+      _rem(() async {
+        final Object? r = await _api.leaveSaveSettings(changes);
+        return LeaveSettings.fromJson(r is Map ? r['settings'] : null);
+      });
+
+  @override
+  Future<LeaveType> saveLeaveType(Map<String, Object?> fields, {int? id}) =>
+      _rem(() async {
+        final Object? r = id == null
+            ? await _api.leaveAddType(fields)
+            : await _api.leaveEditType(id, fields);
+        return LeaveType.fromJson(r is Map ? r['type'] : null);
+      });
+
+  @override
+  Future<List<LeaveType>> addDefaultLeaveTypes() => _rem(() async {
+    final Object? r = await _api.leaveDefaultTypes();
+    return LeaveType.list(r is Map ? r['types'] : null);
+  });
+
+  @override
+  Future<void> addHoliday(DateTime date, String name) => _rem(() async {
+    await _api.leaveAddHoliday(<String, Object?>{
+      'date': _ymd(date),
+      'name': name.trim(),
+    });
+  });
+
+  @override
+  Future<void> deleteHoliday(DateTime date) => _rem(() async {
+    await _api.leaveDeleteHoliday(_ymd(date));
+  });
+
   // ------------------------------------------------ financial statements
   static String _ymd(DateTime d) =>
       '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
@@ -1539,11 +1718,13 @@ class ApiTallyRepository extends TallyRepository {
     String mode = 'adjusted',
     bool doubtful = false,
     bool refresh = false,
+    int weeks = 13,
   }) => _rem(
     () async => CashForecast.fromJson(
       await _api.cashflowForecast(<String, String>{
         'mode': mode,
         'doubtful': doubtful ? '1' : '0',
+        if (weeks != 13) 'weeks': '$weeks',
         if (refresh) 'refresh': '1',
       }),
     ),
@@ -1565,9 +1746,8 @@ class ApiTallyRepository extends TallyRepository {
   );
 
   @override
-  Future<SalesDash> salesAnalytics(String from, String to) => _rem(
-    () async => SalesDash.fromJson(await _api.salesAnalytics(from, to)),
-  );
+  Future<SalesDash> salesAnalytics(String from, String to) =>
+      _rem(() async => SalesDash.fromJson(await _api.salesAnalytics(from, to)));
 
   @override
   Future<FinReport> financialReport(
@@ -1589,12 +1769,48 @@ class ApiTallyRepository extends TallyRepository {
           if (includePurchases) 'purchases': '1',
         },
       ),
-      'tb' => ('trial-balance', <String, Object?>{'as_on': _ymd(to)}),
-      _ => ('balance-sheet', <String, Object?>{'as_on': _ymd(to)}),
+      'cf' => (
+        'cash-flow',
+        <String, Object?>{'from': _ymd(from ?? to), 'to': _ymd(to)},
+      ),
+      // As on [to]; [from] = the period's start (as_on kept for older servers).
+      'tb' => (
+        'trial-balance',
+        <String, Object?>{
+          'as_on': _ymd(to),
+          'to': _ymd(to),
+          if (from != null) 'from': _ymd(from),
+        },
+      ),
+      _ => (
+        'balance-sheet',
+        <String, Object?>{
+          'as_on': _ymd(to),
+          'to': _ymd(to),
+          if (from != null) 'from': _ymd(from),
+        },
+      ),
     };
     final Object? r = await _api.financialReport(path, q);
     final Object? d = r is Map ? r['data'] : null;
     return FinReport(kind, d is Map ? d : const <Object?, Object?>{});
+  });
+
+  @override
+  Future<LedgerVouchers> ledgerVouchers({
+    String? guid,
+    String? name,
+    required DateTime from,
+    required DateTime to,
+  }) => _rem(() async {
+    final Object? r = await _api
+        .financialReport('ledger-vouchers', <String, Object?>{
+          if (guid != null && guid.isNotEmpty) 'guid': guid,
+          if (name != null && name.isNotEmpty) 'name': name,
+          'from': _ymd(from),
+          'to': _ymd(to),
+        });
+    return LedgerVouchers.fromJson(r is Map ? r['data'] : null);
   });
 
   @override
@@ -1612,24 +1828,26 @@ class ApiTallyRepository extends TallyRepository {
       _rem(() => _api.setFinancialAccess(userId, enabled));
 
   @override
+  Future<void> setFinancialStock(DateTime asOn, num value) =>
+      _rem(() => _api.setFinancialStock(_ymd(asOn), value));
+
+  @override
   Future<AiStatus> assistantStatus() =>
       _rem(() async => AiStatus.fromJson(await _api.assistantStatus()));
 
   @override
-  Future<AssistantReply> askAssistant(
-    String question,
-    List<AiTurn> history,
-  ) => _rem(
-    () async => AssistantReply.fromJson(
-      await _api.askAssistant(<String, Object?>{
-        'question': question,
-        'history': <Map<String, Object?>>[
-          for (final AiTurn t in history)
-            if (!t.error) t.toJson(),
-        ],
-      }),
-    ),
-  );
+  Future<AssistantReply> askAssistant(String question, List<AiTurn> history) =>
+      _rem(
+        () async => AssistantReply.fromJson(
+          await _api.askAssistant(<String, Object?>{
+            'question': question,
+            'history': <Map<String, Object?>>[
+              for (final AiTurn t in history)
+                if (!t.error) t.toJson(),
+            ],
+          }),
+        ),
+      );
 
   @override
   Future<ReminderTemplates> reminderTemplates() => _rem(

@@ -123,6 +123,21 @@ function createTallyGuard({ ping, clock = () => Date.now(), sleep = (ms) => new 
     return state === "closed";
   }
 
+  /**
+   * Waits (at most [maxMs]) until requests may be sent again: the tiny
+   * checks run as usual, then Tally's rest. True when Tally is ready; false
+   * when it did not recover in time (the caller then leaves it for later).
+   */
+  async function waitUntilReady(maxMs, { tickMs = 5000 } = {}) {
+    const end = clock() + Math.max(0, maxMs || 0);
+    for (;;) {
+      if (await ready()) return true;
+      const left = end - clock();
+      if (left <= 0) return false;
+      await sleep(Math.min(tickMs, left));
+    }
+  }
+
   /** Waits out the gap after the previous request. */
   async function beforeRequest() {
     const wait = lastEndAt + gapMs - clock();
@@ -168,6 +183,7 @@ function createTallyGuard({ ping, clock = () => Date.now(), sleep = (ms) => new 
   return {
     attach,
     ready,
+    waitUntilReady,
     trip,
     beforeRequest,
     afterRequest,

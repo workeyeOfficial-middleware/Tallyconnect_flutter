@@ -362,10 +362,11 @@ void main() {
       for (final String l in <String>['Bank', 'UPI', 'Cheque', 'Other']) {
         expect(quick(l).width, closeTo(m, .5), reason: l);
       }
-      // Reports: two cards per row with equal heights.
+      // Reports (Sales tab): two cards per row with equal heights.
       c.jump('reports');
       await settle(t);
-      final Rect r1 = tile('Top customers'), r2 = tile('Expenses');
+      expect(c.repTab, 'sales');
+      final Rect r1 = tile('Top customers'), r2 = tile('Sales list');
       expect(r1.height, closeTo(r2.height, .5));
       expect(r1.width, closeTo(r2.width, .5));
       await t.pump(const Duration(seconds: 3));

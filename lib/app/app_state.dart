@@ -539,6 +539,39 @@ class AppController extends ChangeNotifier {
       partyTab = 'summary';
   String repCat = 'all', report = 'top';
 
+  /// Reports screen tabs (key, label), right under the summary card: the
+  /// financial statements (when allowed), business analytics (a real
+  /// company), then the report categories.
+  static const List<(String, String)> kRepTabs = <(String, String)>[
+    ('fin', 'Financial Statements'),
+    ('analytics', 'Business Analytics'),
+    ('sales', 'Sales'),
+    ('party', 'Party'),
+    ('stock', 'Inventory'),
+    ('accounts', 'Accounts'),
+  ];
+
+  /// The tabs this login has (each with at least one report).
+  List<(String, String)> get repTabs => <(String, String)>[
+    for (final (String, String) t in kRepTabs)
+      if (switch (t.$1) {
+        'fin' => finCanView == true,
+        'analytics' => repo.isRemote && !demo,
+        _ => repo.reports().any((Report r) => r.cat == t.$1),
+      })
+        t,
+  ];
+
+  /// The open tab: the one picked, else the first there is.
+  String get repTab {
+    final List<(String, String)> t = repTabs;
+    return t.any(((String, String) x) => x.$1 == repCat)
+        ? repCat
+        : (t.isEmpty ? 'sales' : t.first.$1);
+  }
+
+  void setRepTab(String k) => _set(() => repCat = k);
+
   /// Reports period: `month` (this month) or `all` (all time); kept on the
   /// phone.
   String repPeriod = 'month';
@@ -841,6 +874,11 @@ class AppController extends ChangeNotifier {
     'teamUser',
     'teamLayout',
     'teamSelect',
+    'attTeam',
+    'attMember',
+    'leaveReqs',
+    'leaveSettings',
+    'leaveMember',
   };
 
   /// Screen [s] is allowed for the logged-in user (from its server role).
@@ -1192,7 +1230,12 @@ class AppController extends ChangeNotifier {
     'bs': 'Balance Sheet',
     'tb': 'Trial Balance',
     'exp': 'Expenses',
+    'cf': 'Cash Flow',
   };
+
+  /// Reports worked out without a closing stock (any period once the
+  /// vouchers are synced from the books' start).
+  bool get finNoStock => finKind == 'cf' || finKind == 'exp';
 
   bool get finAsOn => finKind == 'bs' || finKind == 'tb';
 
@@ -1250,20 +1293,12 @@ class AppController extends ChangeNotifier {
   bool hasTallyReport(String kind) =>
       trPeriods?.has(kTallyKinds[kind] ?? kind) ?? false;
 
-  /// A statement tile: Tally's figures when fetched, else the calculated
-  /// report (Expenses is always calculated).
-  Future<void> openStatement(String kind) async {
-    final String? report = kTallyKinds[kind];
-    // Tapped before the list of Tally reports arrived: wait for it.
-    if (report != null && trPeriods == null && repo.isRemote && !demo) {
-      await loadTallyPeriods();
-    }
-    if (report != null && (kind == 'cf' || hasTallyReport(kind))) {
-      await openTallyReport(report);
-    } else {
-      await openFinancial(kind);
-    }
-  }
+  /// A statement tile: the report worked out from the synced data, for any
+  /// period. (Cash Flow used to open Tally's stored Cash Flow report, which
+  /// only existed when the Agent had fetched one — empty for most
+  /// companies; it is now the Cash Flow statement from the cash / bank
+  /// vouchers.)
+  Future<void> openStatement(String kind) => openFinancial(kind);
 
   Future<void> openTallyReport(String report) async {
     _set(() {
@@ -1333,11 +1368,16 @@ class AppController extends ChangeNotifier {
     });
     go('finReport');
     await _loadFinPeriods();
-    if (finPeriods?.ready == true) {
+    if (_finReady(finPeriods)) {
       _applyFinPreset(finPreset);
       await loadFinancial();
     }
   }
+
+  /// The open report can be shown: dates with Tally figures, or — Cash Flow
+  /// / Expenses, which need no closing stock — any period.
+  bool _finReady(FinPeriods? p) =>
+      p != null && (p.ready || (finNoStock && p.groupsSynced && p.anyPeriod));
 
   Future<void> _loadFinPeriods() async {
     _set(() {
@@ -1349,7 +1389,7 @@ class AppController extends ChangeNotifier {
       _set(() {
         finPeriods = p;
         finBusy = false;
-        if (!p.ready) {
+        if (!_finReady(p)) {
           finError =
               p.message ??
               'Financial figures are not synced yet. Update the TallyConnect '
@@ -1387,9 +1427,59 @@ class AppController extends ChangeNotifier {
     return p.has(from.subtract(const Duration(days: 1)));
   }
 
+  /// A From–To the server cannot work out (its figures are synced only for
+  /// some dates — the vouchers do not start with the books), or null. On a
+  /// server that takes any period ([FinPeriods.anyPeriod]) every range is
+  /// fine; the ledger drill-down works from vouchers on any server.
+  String? _finRangeError(DateTime from, DateTime to) {
+    final FinPeriods? p = finPeriods;
+    if (p == null || p.anyPeriod || screen == 'finLedger') return null;
+    final List<String> ends = <String>[
+      for (final FinSnapshot s in p.snapshots.take(3)) dmy(s.asOn),
+    ];
+    final String synced = ends.isEmpty
+        ? 'No dates are synced yet.'
+        : 'Synced: ${ends.join(', ')}${p.snapshots.length > 3 ? ' …' : ''}.';
+    if (!p.has(to)) {
+      return 'Tally figures for ${dmy(to)} are not synced. Choose a synced '
+          'date as To. $synced';
+    }
+    if (!finAsOn && !_finValid(from, to)) {
+      return 'From must be the year start or the day after a synced date. '
+          '$synced';
+    }
+    return null;
+  }
+
+  /// Calendar periods (Cash Flow / Expenses: no closing stock needed).
+  (DateTime, DateTime) _calendarPeriod(String k) {
+    final DateTime t = _day(today);
+    final DateTime fy = DateTime(t.month >= 4 ? t.year : t.year - 1, 4);
+    return switch (k) {
+      'month' => (_monthStart(t), t),
+      'lastMonth' => (
+        DateTime(t.year, t.month - 1),
+        DateTime(t.year, t.month, 0),
+      ),
+      'lastFy' => (DateTime(fy.year - 1, 4), DateTime(fy.year, 4, 0)),
+      _ => (fy, t),
+    };
+  }
+
+  bool get _finCalendar => finNoStock && (finPeriods?.anyPeriod ?? false);
+
   /// Period choices that have figures, in display order: (key, label).
   List<(String, String)> get finPresets {
     final FinPeriods? p = finPeriods;
+    if (_finCalendar) {
+      final DateTime t = _day(today);
+      return <(String, String)>[
+        ('fy', 'This year'),
+        ('month', 'This month'),
+        ('lastMonth', _mShort(DateTime(t.year, t.month - 1))),
+        ('lastFy', 'Last year'),
+      ];
+    }
     final FinSnapshot? l = p?.latest;
     if (p == null || l == null) return const <(String, String)>[];
     final DateTime prevMonthEnd = _monthStart(
@@ -1423,6 +1513,17 @@ class AppController extends ChangeNotifier {
   }
 
   void _applyFinPreset(String k) {
+    if (_finCalendar && k != 'range') {
+      final (DateTime, DateTime) r = _calendarPeriod(k);
+      finFrom = r.$1;
+      finTo = r.$2;
+      finPreset = k;
+      return;
+    }
+    if (k == 'range') {
+      finPreset = k; // From / To kept (the date-range sheet)
+      return;
+    }
     final FinSnapshot? l = finPeriods?.latest;
     if (l == null) return;
     final DateTime prevMonthEnd = _monthStart(
@@ -1488,6 +1589,55 @@ class AppController extends ChangeNotifier {
     unawaited(loadFinancial());
   }
 
+  // Closing stock the admin enters (sheet `finStock`): a year end Tally's
+  // value can't be read for without freezing Tally (its stock valuation
+  // for a past date is the request that hung it).
+  DateTime? finStockDate;
+  bool finStockBusy = false;
+  String? finStockError;
+
+  void openFinStock(DateTime d) {
+    _set(() {
+      finStockDate = d;
+      finStockError = null;
+      form['fsValue'] = '';
+    });
+    openOverlay('finStock');
+  }
+
+  Future<void> saveFinStock() async {
+    final DateTime? d = finStockDate;
+    if (d == null || finStockBusy) return;
+    final String raw = f('fsValue').replaceAll(',', '').trim();
+    final num? v = num.tryParse(raw);
+    if (raw.isEmpty || v == null || v < 0) {
+      _set(() => finStockError = 'Enter the closing stock amount (0 or more).');
+      return;
+    }
+    _set(() {
+      finStockBusy = true;
+      finStockError = null;
+    });
+    try {
+      await repo.setFinancialStock(d, v);
+      _set(() {
+        finStockBusy = false;
+        if (overlay == 'finStock') overlay = null;
+      });
+      say('Closing stock saved for ${dmy(d)}');
+      await _loadFinPeriods();
+      if (_finReady(finPeriods)) {
+        _applyFinPreset(finPreset);
+        await loadFinancial();
+      }
+    } on ApiException catch (e) {
+      _set(() {
+        finStockBusy = false;
+        finStockError = e.userMessage;
+      });
+    }
+  }
+
   /// The open statement's period, for the header.
   String get finPeriodLabel {
     final DateTime? t = finTo;
@@ -1500,9 +1650,23 @@ class AppController extends ChangeNotifier {
     return '${dmy(f)} – ${dmy(t)}';
   }
 
+  /// Request / period the shown report belongs to (a slower, older answer
+  /// never replaces a newer one, and figures are never shown under another
+  /// period's heading).
+  int _finReq = 0;
+  String? _finDataKey;
+  String get _finKey =>
+      '$finKind|${finFrom == null ? '' : ymd(finFrom!)}|${finTo == null ? '' : ymd(finTo!)}|$finPurchases';
+
+  /// [finData] is the report of the period now selected.
+  bool get finDataCurrent =>
+      finData != null && finData!.kind == finKind && _finDataKey == _finKey;
+
   Future<void> loadFinancial() async {
     final DateTime? to = finTo;
     if (to == null) return;
+    final int req = ++_finReq;
+    final String key = _finKey;
     _set(() {
       finBusy = true;
       finError = null;
@@ -1514,17 +1678,99 @@ class AppController extends ChangeNotifier {
         from: finFrom,
         includePurchases: finPurchases,
       );
+      if (req != _finReq) return;
       _set(() {
         finData = r;
+        _finDataKey = key;
         finBusy = false;
       });
     } on ApiException catch (e) {
+      if (req != _finReq) return;
       _set(() {
         finBusy = false;
         finError = _finErr(e);
       });
     }
   }
+
+  /// The From / To sheet of the open financial report (also the ledger
+  /// drill-down, which keeps the report's dates).
+  void openFinRange() => openRange('fin');
+
+  /// Cash Flow: one month of the statement (its own From / To).
+  Future<void> pickCashMonth(DateTime month) async {
+    _set(() {
+      finPreset = 'range';
+      finFrom = _monthStart(month);
+      finTo = _monthEnd(month); // the whole month, also one still running
+    });
+    await loadFinancial();
+  }
+
+  // Drill-down: a ledger row of a report → its vouchers in the same period
+  // (Tally's Ledger Vouchers) → a voucher.
+  LedgerVouchers? finLed;
+  bool finLedBusy = false;
+  String? finLedError, finLedGuid, finLedName;
+  int _finLedReq = 0;
+
+  Future<void> openFinLedger(FinNode n) async {
+    if (n.isGroup) return;
+    _set(() {
+      finLedGuid = n.guid;
+      finLedName = n.name;
+      finLed = null;
+      finLedError = null;
+    });
+    go('finLedger');
+    await loadFinLedger();
+  }
+
+  Future<void> loadFinLedger() async {
+    final DateTime? to = finTo;
+    if (to == null || (finLedGuid == null && finLedName == null)) return;
+    final int req = ++_finLedReq;
+    _set(() {
+      finLedBusy = true;
+      finLedError = null;
+    });
+    try {
+      final LedgerVouchers v = await repo.ledgerVouchers(
+        guid: finLedGuid,
+        name: finLedName,
+        from: finFrom ?? to,
+        to: to,
+      );
+      if (req != _finLedReq) return;
+      _set(() => finLed = v);
+    } on ApiException catch (e) {
+      if (req != _finLedReq) return;
+      _set(() {
+        finLed = null;
+        finLedError = _finErr(e);
+      });
+    } catch (_) {
+      if (req != _finLedReq) return;
+      _set(() => finLedError = 'Could not load the vouchers. Try again.');
+    } finally {
+      if (req == _finLedReq) _set(() => finLedBusy = false);
+    }
+  }
+
+  /// A voucher of the ledger drill-down → the voucher itself.
+  void openFinVoucher(LedgerVoucherRow r) =>
+      go('entryDetail', <String, Object?>{
+        'entry': Voucher(
+          voucherKind(r.type),
+          finLed?.name ?? finLedName ?? '—',
+          r.ref,
+          r.date?.day ?? 0,
+          (r.debit + r.credit).abs(),
+          guid: r.guid,
+          date: r.date,
+          type: r.type.isEmpty ? null : r.type,
+        ),
+      });
 
   void toggleFinNode(String path) => _set(() {
     if (!finOpen.remove(path)) finOpen.add(path);
@@ -1572,6 +1818,947 @@ class AppController extends ChangeNotifier {
       say(_finErr(e));
     } finally {
       _set(() => finAccessBusy = false);
+    }
+  }
+
+  // ------------------------------------------- sales team attendance
+  // Check-in / check-out for team members the admin put on the sales team
+  // (server time; India days). The admin sees who is active, idle, checked
+  // out or not checked in, and each person's history.
+
+  /// Today (null until loaded / not available); for whom it was loaded.
+  AttMe? attMe;
+  String? _attFor;
+  bool attBusy = false, attLoading = false;
+  String? attError;
+
+  /// Retry key of the check-in being sent (the same for a retried tap).
+  String? _attKey;
+  DateTime? _attPinged;
+
+  /// The ping keeps a check-in "Active" on the admin's view while the app
+  /// is open (the server marks it idle after 15 minutes without one).
+  static const Duration kAttPingEvery = Duration(minutes: 5);
+
+  /// Longest history the server gives in one request.
+  static const int kAttMaxDays = 92;
+
+  /// Sales team member who may check in (shows the check-in buttons).
+  bool get attEnabled => attMe?.enabled ?? false;
+  bool get attCheckedIn => attMe?.checkedIn ?? false;
+
+  String _attErr(ApiException e) => switch (e.kind) {
+    // The route is not on the server (backend not updated).
+    ApiErrorKind.notFound when e.body is! Map =>
+      'Check-in is not available on the server yet. Ask your admin to '
+          'update the TallyConnect server.',
+    // e.g. the attendance tables were not created on the database.
+    ApiErrorKind.server =>
+      'Check-in is not set up on the server yet (server error). Ask your '
+          'admin to finish the check-in setup.',
+    _ => e.userMessage,
+  };
+
+  /// This login's day; quiet: no loading state (background refresh).
+  Future<void> loadAttendance({bool quiet = false}) async {
+    if (demo || !repo.isRemote || !loggedIn) {
+      if (attMe != null || attError != null) {
+        _set(() {
+          attMe = null;
+          attError = null;
+        });
+      }
+      return;
+    }
+    final String who = '${repo.user?.email}|${repo.activeCompanyId}';
+    if (_attFor != who) {
+      _attFor = who;
+      attMe = null;
+    }
+    if (!quiet) {
+      _set(() {
+        attLoading = true;
+        attError = null;
+      });
+    }
+    try {
+      final AttMe m = await repo.attendanceMe();
+      if (_attFor != who) return;
+      _set(() {
+        attMe = m;
+        attError = null;
+      });
+      _checkInPrompt();
+    } on ApiException catch (e) {
+      if (_attFor != who) return;
+      _set(() => attError = _attErr(e));
+    } finally {
+      if (!quiet) _set(() => attLoading = false);
+    }
+  }
+
+  Future<void> checkIn() async {
+    if (attBusy) return;
+    _attKey ??=
+        'ci-${DateTime.now().microsecondsSinceEpoch}-'
+        '${math.Random().nextInt(1 << 30)}';
+    _set(() => attBusy = true);
+    try {
+      final AttSession s = await repo.checkIn(key: _attKey);
+      _attKey = null;
+      _attPinged = DateTime.now();
+      say('Checked in at ${s.checkIn == null ? '' : clock(s.checkIn!)}');
+      await loadAttendance(quiet: true);
+      if (screen == 'attendance') unawaited(loadAttHistory());
+    } on ApiException catch (e) {
+      // Already checked in (e.g. on another phone): show the real state.
+      if (e.status == 409) _attKey = null;
+      say(_attErr(e));
+      await loadAttendance(quiet: true);
+    } finally {
+      _set(() => attBusy = false);
+    }
+  }
+
+  /// Today is approved leave or a holiday for this login.
+  bool get _dayOff {
+    final LeaveToday? t = leaveMe?.today;
+    return t != null && (t.leave != null || t.kind == 'holiday');
+  }
+
+  /// "Later" on the check-in popup: not shown again to this login today.
+  String get _attPromptDay => '$_who|${ymd(attMe?.date ?? _day(today))}';
+
+  /// The check-in popup: a team member who has not checked in today gets
+  /// it (after login / opening the app) unless they chose "Later" today.
+  /// Checking in — here or anywhere — closes it.
+  void _checkInPrompt() {
+    final AttMe? m = attMe;
+    // Not on a day off (check-in still works from the menu / profile).
+    final bool due =
+        m != null && m.enabled && !m.isAdmin && m.sessions.isEmpty && !_dayOff;
+    if (!due) {
+      if (overlay == 'attPrompt') _set(() => overlay = null);
+      return;
+    }
+    if (!loggedIn || demo || screen == 'login' || screen == 'forgot') return;
+    if (overlay != null) return; // never over another sheet
+    if (store.load<Object?>(LocalStorage.kAttPromptSkip, null) ==
+        _attPromptDay) {
+      return;
+    }
+    _set(() => overlay = 'attPrompt');
+  }
+
+  /// "Later": closes the popup for today (Check-in stays in the menu and
+  /// the profile).
+  void laterCheckIn() {
+    store.save(LocalStorage.kAttPromptSkip, _attPromptDay);
+    _set(() => overlay = null);
+  }
+
+  /// Check-out sheet (with an optional note).
+  void openCheckOut() {
+    form['attNote'] = '';
+    openOverlay('attCheckOut');
+  }
+
+  Future<void> checkOut() async {
+    if (attBusy) return;
+    _set(() => attBusy = true);
+    try {
+      final AttSession s = await repo.checkOut(note: f('attNote'));
+      _set(() => overlay = null);
+      say(
+        'Checked out at ${s.checkOut == null ? '' : clock(s.checkOut!)} · '
+        '${hoursMinutes(s.minutes)}',
+      );
+      await loadAttendance(quiet: true);
+      if (screen == 'attendance') unawaited(loadAttHistory());
+    } on ApiException catch (e) {
+      say(_attErr(e));
+      if (e.status == 409) {
+        _set(() => overlay = null);
+        await loadAttendance(quiet: true);
+      }
+    } finally {
+      _set(() => attBusy = false);
+    }
+  }
+
+  /// From the live check (app on screen): a ping every [kAttPingEvery]
+  /// while checked in; refreshes today when the server closed it.
+  Future<void> _attPingIfDue() async {
+    if (!attCheckedIn || demo || !repo.isRemote) return;
+    final AppLifecycleState? life = WidgetsBinding.instance.lifecycleState;
+    if (life != null && life != AppLifecycleState.resumed) return;
+    final DateTime t = DateTime.now();
+    if (_attPinged != null && t.difference(_attPinged!) < kAttPingEvery) return;
+    _attPinged = t;
+    try {
+      if (!await repo.attendancePing()) await loadAttendance(quiet: true);
+    } on ApiException {
+      // Next tick tries again.
+    }
+  }
+
+  // My history (and the admin's view of one person) — From / To.
+  AttHistory? attHist;
+  bool attHistBusy = false;
+  String? attHistError;
+  DateTime? attFrom, attTo;
+  int _attHistReq = 0;
+
+  /// The admin's view of one team member (`attMember`).
+  String? attMemberId;
+  String attMemberName = '';
+
+  (DateTime, DateTime) get attRange {
+    final DateTime t = _day(today);
+    return (attFrom ?? t.subtract(const Duration(days: 6)), attTo ?? t);
+  }
+
+  Future<void> loadAttHistory() async {
+    if (demo || !repo.isRemote) return;
+    unawaited(_loadAttLeave());
+    final (DateTime from, DateTime to) = attRange;
+    final String? member = screen == 'attMember' ? attMemberId : null;
+    final int req = ++_attHistReq;
+    _set(() {
+      attHistBusy = true;
+      attHistError = null;
+    });
+    try {
+      final AttHistory h = member == null
+          ? await repo.attendanceHistory(from: from, to: to)
+          : await repo.attendanceMemberHistory(member, from: from, to: to);
+      if (req != _attHistReq) return;
+      _set(() => attHist = h);
+    } on ApiException catch (e) {
+      if (req != _attHistReq) return;
+      _set(() {
+        attHist = null;
+        attHistError = _attErr(e);
+      });
+    } finally {
+      if (req == _attHistReq) _set(() => attHistBusy = false);
+    }
+  }
+
+  /// From / To of the history (the date-range sheet).
+  void openAttRange() => openRange('att');
+
+  void openAttendance() {
+    attHist = null;
+    go('attendance');
+  }
+
+  // Admin: the team's day.
+  AttTeam? attTeam;
+  bool attTeamBusy = false;
+  String? attTeamError;
+  DateTime? attTeamDate;
+
+  /// `all`, `active`, `idle`, `checked_out` or `absent`.
+  String attTeamFilter = 'all';
+  int _attTeamReq = 0;
+
+  DateTime get attDay => attTeamDate ?? _day(today);
+
+  void openAttTeam() {
+    attTeamFilter = 'all';
+    go('attTeam');
+  }
+
+  Future<void> loadAttTeam() async {
+    if (!isAdmin || demo || !repo.isRemote) return;
+    final int req = ++_attTeamReq;
+    final DateTime d = attDay;
+    _set(() {
+      attTeamBusy = true;
+      attTeamError = null;
+    });
+    try {
+      final AttTeam t = await repo.attendanceTeam(d);
+      if (req != _attTeamReq) return;
+      _set(() => attTeam = t);
+    } on ApiException catch (e) {
+      if (req != _attTeamReq) return;
+      _set(() {
+        attTeam = null;
+        attTeamError = _attErr(e);
+      });
+    } finally {
+      if (req == _attTeamReq) _set(() => attTeamBusy = false);
+    }
+  }
+
+  /// The day before / after (never after today).
+  void shiftAttDay(int days) {
+    final DateTime t = _day(today);
+    DateTime d = attDay.add(Duration(days: days));
+    if (d.isAfter(t)) d = t;
+    _set(() {
+      attTeamDate = d;
+      attTeam = null;
+    });
+    unawaited(loadAttTeam());
+  }
+
+  void setAttTeamFilter(String k) => _set(() => attTeamFilter = k);
+
+  List<AttMember> get attTeamRows {
+    final List<AttMember> all = attTeam?.members ?? const <AttMember>[];
+    return switch (attTeamFilter) {
+      'active' =>
+        all.where((AttMember m) => m.status == AttStatus.active).toList(),
+      'idle' => all.where((AttMember m) => m.status == AttStatus.idle).toList(),
+      'checked_out' =>
+        all.where((AttMember m) => m.status == AttStatus.checkedOut).toList(),
+      'absent' =>
+        all.where((AttMember m) => m.status == AttStatus.absent).toList(),
+      _ => all,
+    };
+  }
+
+  /// The name shown for a person: the one entered on this phone, else the
+  /// login's username.
+  String attName(String userId, String fallback) =>
+      team.where((Member m) => m.id == userId).firstOrNull?.name ?? fallback;
+
+  void openAttMember(AttMember m) {
+    attMemberId = m.userId;
+    attMemberName = attName(m.userId, m.username);
+    attHist = null;
+    final DateTime d = attDay;
+    attFrom = d.subtract(const Duration(days: 6));
+    attTo = d;
+    go('attMember');
+  }
+
+  /// Team page: today's check-ins of every member (admin).
+  void loadTeamAttendance() {
+    if (!isAdmin || demo || !repo.isRemote) return;
+    attTeamDate = null;
+    unawaited(loadAttTeam());
+  }
+
+  /// One member's check-in today on the Team page (null: not loaded).
+  AttMember? attOf(String userId) =>
+      ymd(attTeam?.date ?? DateTime(0)) == ymd(_day(today))
+      ? attTeam?.members.where((AttMember m) => m.userId == userId).firstOrNull
+      : null;
+
+  /// Home → profile: name, today's check-in, Check in / Check out.
+  void openProfile() {
+    unawaited(loadAttendance(quiet: true));
+    unawaited(loadLeave(quiet: true));
+    openOverlay('profile');
+  }
+
+  // ------------------------------------------------- leave management
+  // Everything is set by the admin (Leave settings: on / off, leave year,
+  // weekly off, half days, back-dated days, leave types and quotas,
+  // holidays). Team members apply; the admin approves or rejects. The
+  // server counts the days and checks balances and overlaps.
+
+  /// This login's leave year (null until loaded / not available).
+  LeaveMe? leaveMe;
+  String? _leaveFor;
+  bool leaveLoading = false, leaveBusy = false;
+  String? leaveError;
+
+  /// A day in the leave year shown (null: this year).
+  DateTime? leaveYearDate;
+
+  String _leaveErr(ApiException e) => switch (e.kind) {
+    // The route is not on the server (backend not updated).
+    ApiErrorKind.notFound when e.body is! Map =>
+      'Leave is not available on the server yet. Ask your admin to update '
+          'the TallyConnect server.',
+    // e.g. the leave tables were not created on the database.
+    ApiErrorKind.server =>
+      'Leave is not set up on the server yet (server error). Ask your admin '
+          'to finish the leave setup.',
+    _ => e.userMessage,
+  };
+
+  /// Leave is on for this team member (shows Leave in the menu / profile).
+  bool get leaveOn => leaveMe?.enabled == true && !(leaveMe?.isAdmin ?? true);
+
+  Future<void> loadLeave({bool quiet = false}) async {
+    if (demo || !repo.isRemote || !loggedIn) {
+      if (leaveMe != null || leaveError != null) {
+        _set(() {
+          leaveMe = null;
+          leaveError = null;
+        });
+      }
+      return;
+    }
+    final String who =
+        '${repo.user?.email}|${leaveYearDate == null ? '' : ymd(leaveYearDate!)}';
+    if (_leaveFor != who) {
+      _leaveFor = who;
+      if (!quiet) leaveMe = null;
+    }
+    if (!quiet) {
+      _set(() {
+        leaveLoading = true;
+        leaveError = null;
+      });
+    }
+    try {
+      final LeaveMe m = await repo.leaveMe(date: leaveYearDate);
+      if (_leaveFor != who) return;
+      _set(() {
+        leaveMe = m;
+        leaveError = null;
+      });
+      // On leave / a holiday today: the check-in popup goes (it is never
+      // opened from here).
+      if (overlay == 'attPrompt' && _dayOff) _set(() => overlay = null);
+    } on ApiException catch (e) {
+      if (_leaveFor != who) return;
+      _set(() => leaveError = _leaveErr(e));
+    } finally {
+      if (!quiet) _set(() => leaveLoading = false);
+    }
+  }
+
+  void openLeave() {
+    leaveYearDate = null;
+    go('leave');
+  }
+
+  /// The leave year before / after the one shown.
+  void shiftLeaveYear(int dir) {
+    final LeaveYear? y = leaveMe?.year;
+    if (y?.from == null || y?.to == null) return;
+    leaveYearDate = dir < 0
+        ? y!.from!.subtract(const Duration(days: 1))
+        : y!.to!.add(const Duration(days: 1));
+    unawaited(loadLeave());
+  }
+
+  // Apply for leave (sheet `leaveApply`).
+  String? _leaveKey;
+
+  /// Leave types a member may choose (the admin's active types).
+  List<LeaveBalance> get leaveTypesToApply =>
+      (leaveMe?.balances ?? const <LeaveBalance>[])
+          .where((LeaveBalance b) => b.active)
+          .toList();
+
+  void openApplyLeave() {
+    final List<LeaveBalance> types = leaveTypesToApply;
+    final LeaveBalance? first = types
+        .where((LeaveBalance b) => b.unlimited || (b.available ?? 0) > 0)
+        .firstOrNull;
+    final DateTime t = _day(today);
+    form['lvType'] = '${(first ?? types.firstOrNull)?.typeId ?? ''}';
+    form['lvFrom'] = ymd(t);
+    form['lvTo'] = ymd(t);
+    form['lvHalf'] = '';
+    form['lvReason'] = '';
+    _leaveKey = null;
+    openOverlay('leaveApply');
+  }
+
+  void setLeaveFrom(String v) => _set(() {
+    form['lvFrom'] = v;
+    // To follows From when it would end up before it (or for a half day).
+    final DateTime? a = DateTime.tryParse(v), b = DateTime.tryParse(f('lvTo'));
+    if (a != null && (b == null || b.isBefore(a) || f('lvHalf').isNotEmpty)) {
+      form['lvTo'] = v;
+    }
+  });
+
+  void setLeaveTo(String v) => _set(() {
+    form['lvTo'] = v;
+    if (v != f('lvFrom')) form['lvHalf'] = '';
+  });
+
+  /// '' (full days), `first` or `second` (one date).
+  void setLeaveHalf(String v) => _set(() {
+    form['lvHalf'] = v;
+    if (v.isNotEmpty) form['lvTo'] = f('lvFrom');
+  });
+
+  /// Working days of the request as the server counts them: weekly off and
+  /// this leave year's holidays left out, a half day 0.5 (the server's
+  /// count is the one saved).
+  num get leaveApplyDays {
+    final DateTime? a = DateTime.tryParse(f('lvFrom'));
+    final DateTime? b = DateTime.tryParse(f('lvTo'));
+    final LeaveMe? m = leaveMe;
+    if (a == null || b == null || b.isBefore(a) || m == null) return 0;
+    final Set<String> hol = <String>{
+      for (final LeaveHoliday h in m.holidays)
+        if (h.date != null) ymd(h.date!),
+    };
+    bool working(DateTime d) =>
+        !m.settings.isWeeklyOff(d) && !hol.contains(ymd(d));
+    if (f('lvHalf').isNotEmpty) return working(a) ? .5 : 0;
+    int n = 0;
+    for (
+      DateTime d = a;
+      !d.isAfter(b);
+      d = DateTime(d.year, d.month, d.day + 1)
+    ) {
+      if (working(d)) n++;
+    }
+    return n;
+  }
+
+  /// Why the request cannot be sent yet (null: send).
+  String? get leaveApplyError {
+    final LeaveSettings? s = leaveMe?.settings;
+    final DateTime? a = DateTime.tryParse(f('lvFrom'));
+    final DateTime? b = DateTime.tryParse(f('lvTo'));
+    if (int.tryParse(f('lvType')) == null) return 'Choose a leave type';
+    if (a == null || b == null) return 'Pick the dates';
+    if (b.isBefore(a)) return 'From must be on or before To';
+    if (s != null && b.difference(a).inDays + 1 > s.maxRequestDays) {
+      return 'One request can cover at most ${s.maxRequestDays} days';
+    }
+    if (s != null &&
+        a.isBefore(_day(today).subtract(Duration(days: s.backdateDays)))) {
+      return s.backdateDays == 0
+          ? 'Leave cannot start before today'
+          : 'Leave can start at most ${s.backdateDays} days back';
+    }
+    if (leaveApplyDays == 0) {
+      return 'These dates are all weekly off or holidays';
+    }
+    final LeaveBalance? bal = leaveTypesToApply
+        .where((LeaveBalance x) => '${x.typeId}' == f('lvType'))
+        .firstOrNull;
+    if (bal != null &&
+        !bal.unlimited &&
+        leaveApplyDays > (bal.available ?? 0)) {
+      return 'Only ${leaveDaysLabel(bal.available ?? 0)} of ${bal.name} left';
+    }
+    return null;
+  }
+
+  Future<void> applyLeave() async {
+    if (leaveBusy || leaveApplyError != null) return;
+    _leaveKey ??=
+        'lv-${DateTime.now().microsecondsSinceEpoch}-'
+        '${math.Random().nextInt(1 << 30)}';
+    _set(() => leaveBusy = true);
+    try {
+      final LeaveRequest r = await repo.applyLeave(
+        typeId: int.parse(f('lvType')),
+        from: DateTime.parse(f('lvFrom')),
+        to: DateTime.parse(f('lvTo')),
+        halfDay: f('lvHalf').isEmpty ? null : f('lvHalf'),
+        reason: f('lvReason'),
+        key: _leaveKey,
+      );
+      _leaveKey = null;
+      if (voiceOn) unawaited(stopVoiceSearch());
+      _set(() => overlay = null);
+      say('Leave request sent · ${leaveDaysLabel(r.days)}');
+      await loadLeave(quiet: true);
+    } on ApiException catch (e) {
+      // Refused (dates, balance, overlap): a new tap is a new request. No
+      // answer (network / timeout): the retry keeps the key.
+      if (e.kind != ApiErrorKind.network && e.kind != ApiErrorKind.timeout) {
+        _leaveKey = null;
+      }
+      say(_leaveErr(e));
+    } finally {
+      _set(() => leaveBusy = false);
+    }
+  }
+
+  // One request (sheet `leaveReq`): details; Cancel (member, pending);
+  // Approve / Reject (admin, pending); Cancel leave (admin, approved).
+  LeaveRequest? leaveSel;
+
+  void openLeaveReq(LeaveRequest r) {
+    leaveSel = r;
+    form['lvNote'] = '';
+    openOverlay('leaveReq');
+  }
+
+  /// [action]: `approve`, `reject` or `cancel`.
+  Future<void> decideLeave(String action) async {
+    final LeaveRequest? r = leaveSel;
+    if (r == null || leaveBusy) return;
+    _set(() => leaveBusy = true);
+    try {
+      final LeaveRequest d = await repo.decideLeave(
+        r.id,
+        action,
+        note: f('lvNote'),
+      );
+      _set(() {
+        overlay = null;
+        leaveSel = d;
+      });
+      say(switch (action) {
+        'approve' => 'Leave approved',
+        'reject' => 'Leave rejected',
+        _ => 'Leave cancelled',
+      });
+    } on ApiException catch (e) {
+      say(_leaveErr(e));
+      if (e.status == 409) _set(() => overlay = null);
+    } finally {
+      _set(() => leaveBusy = false);
+    }
+    // Whatever changed, the lists show the server's state.
+    if (isAdmin) {
+      unawaited(loadLeaveRequests());
+      unawaited(loadTeamLeave());
+      if (screen == 'leaveMember') unawaited(loadLeaveMember());
+    } else {
+      unawaited(loadLeave(quiet: true));
+    }
+  }
+
+  // Admin: requests (`leaveReqs`), the Team page's pending count and who is
+  // on leave today.
+  List<LeaveRequest>? leaveReqs;
+  bool leaveReqsBusy = false;
+  String? leaveReqsError;
+
+  /// `pending`, `approved`, `rejected`, `cancelled` or `all`.
+  String leaveReqStatus = 'pending';
+  int _leaveReqsReq = 0;
+
+  /// Requests waiting for the admin (Team page / Home / menu badge).
+  int leavePending = 0;
+
+  /// Today's approved leave of the team (Team page "On leave").
+  LeaveCalendar? leaveTeamToday;
+
+  void openLeaveRequests() {
+    leaveReqStatus = 'pending';
+    leaveReqs = null;
+    go('leaveReqs');
+  }
+
+  void setLeaveReqStatus(String k) {
+    if (k == leaveReqStatus) return;
+    _set(() {
+      leaveReqStatus = k;
+      leaveReqs = null;
+    });
+    unawaited(loadLeaveRequests());
+  }
+
+  Future<void> loadLeaveRequests() async {
+    if (!isAdmin || demo || !repo.isRemote) return;
+    final int req = ++_leaveReqsReq;
+    final String status = leaveReqStatus;
+    _set(() {
+      leaveReqsBusy = true;
+      leaveReqsError = null;
+    });
+    try {
+      final List<LeaveRequest> l = await repo.leaveRequests(status: status);
+      if (req != _leaveReqsReq) return;
+      _set(() {
+        leaveReqs = l;
+        if (status == 'pending') leavePending = l.length;
+      });
+    } on ApiException catch (e) {
+      if (req != _leaveReqsReq) return;
+      _set(() {
+        leaveReqs = null;
+        leaveReqsError = _leaveErr(e);
+      });
+    } finally {
+      if (req == _leaveReqsReq) _set(() => leaveReqsBusy = false);
+    }
+  }
+
+  /// Team page / Home (admin): pending count and today's leave. Quiet: a
+  /// server without leave shows nothing.
+  Future<void> loadTeamLeave() async {
+    if (!isAdmin || demo || !repo.isRemote) return;
+    final DateTime t = _day(today);
+    try {
+      final List<LeaveRequest> p = await repo.leaveRequests();
+      final LeaveCalendar cal = await repo.leaveCalendar(from: t, to: t);
+      _set(() {
+        leavePending = p.length;
+        leaveTeamToday = cal;
+      });
+    } on ApiException {
+      _set(() {
+        leavePending = 0;
+        leaveTeamToday = null;
+      });
+    }
+  }
+
+  /// [userId]'s approved leave today (Team page / Team attendance).
+  LeaveRequest? leaveTodayOf(String userId) =>
+      leaveTeamToday?.leaveOn(_day(today), userId: userId);
+
+  // Admin: one member's leave year (`leaveMember`).
+  String? leaveMemberId;
+  String leaveMemberName = '';
+  LeaveMe? leaveMemberData;
+  bool leaveMemberBusy = false;
+  String? leaveMemberError;
+
+  void openLeaveMember(String userId, String name) {
+    leaveMemberId = userId;
+    leaveMemberName = name;
+    leaveMemberData = null;
+    go('leaveMember');
+  }
+
+  Future<void> loadLeaveMember() async {
+    final String? id = leaveMemberId;
+    if (id == null || !isAdmin || demo || !repo.isRemote) return;
+    _set(() {
+      leaveMemberBusy = true;
+      leaveMemberError = null;
+    });
+    try {
+      final LeaveMe m = await repo.leaveMember(id);
+      if (leaveMemberId != id) return;
+      _set(() => leaveMemberData = m);
+    } on ApiException catch (e) {
+      if (leaveMemberId != id) return;
+      _set(() => leaveMemberError = _leaveErr(e));
+    } finally {
+      _set(() => leaveMemberBusy = false);
+    }
+  }
+
+  // Admin: Leave settings (`leaveSettings`) — saved as soon as changed.
+  LeaveAdmin? leaveAdmin;
+  bool leaveAdminBusy = false, leaveSaving = false;
+  String? leaveAdminError;
+
+  /// A day in the leave year whose holidays are shown (null: this year).
+  DateTime? leaveAdminDate;
+
+  void openLeaveSettings() {
+    leaveAdminDate = null;
+    go('leaveSettings');
+  }
+
+  Future<void> loadLeaveSettings() async {
+    if (!isAdmin || demo || !repo.isRemote) return;
+    _set(() {
+      leaveAdminBusy = true;
+      leaveAdminError = null;
+    });
+    try {
+      final LeaveAdmin a = await repo.leaveSettings(date: leaveAdminDate);
+      _set(() => leaveAdmin = a);
+    } on ApiException catch (e) {
+      _set(() => leaveAdminError = _leaveErr(e));
+    } finally {
+      _set(() => leaveAdminBusy = false);
+    }
+  }
+
+  /// Holidays of the leave year before / after.
+  void shiftLeaveAdminYear(int dir) {
+    final LeaveYear? y = leaveAdmin?.year;
+    if (y?.from == null || y?.to == null) return;
+    leaveAdminDate = dir < 0
+        ? y!.from!.subtract(const Duration(days: 1))
+        : y!.to!.add(const Duration(days: 1));
+    unawaited(loadLeaveSettings());
+  }
+
+  Future<void> saveLeaveSettings(Map<String, Object?> changes) async {
+    final LeaveAdmin? a = leaveAdmin;
+    if (a == null || leaveSaving) return;
+    _set(() => leaveSaving = true);
+    try {
+      final LeaveSettings s = await repo.saveLeaveSettings(changes);
+      final bool newYear = s.yearStartMonth != a.settings.yearStartMonth;
+      _set(() => leaveAdmin = a.copyWith(settings: s));
+      // A new leave year start: the year's holidays change.
+      if (newYear) unawaited(loadLeaveSettings());
+      if (changes.containsKey('enabled')) {
+        say(s.enabled ? 'Leave management is on' : 'Leave management is off');
+      }
+    } on ApiException catch (e) {
+      say(_leaveErr(e));
+    } finally {
+      _set(() => leaveSaving = false);
+    }
+  }
+
+  void toggleWeeklyOff(int day) {
+    final List<int> w = <int>[...?leaveAdmin?.settings.weeklyOff];
+    w.contains(day) ? w.remove(day) : w.add(day);
+    if (w.length > 6) {
+      say('At least one day of the week must be a working day');
+      return;
+    }
+    unawaited(saveLeaveSettings(<String, Object?>{'weekly_off': w..sort()}));
+  }
+
+  /// −1 / +1 on a number setting, kept inside its range.
+  void stepLeaveSetting(String key, int delta) {
+    final LeaveSettings? s = leaveAdmin?.settings;
+    if (s == null) return;
+    final (int cur, int lo, int hi) = switch (key) {
+      'year_start_month' => (s.yearStartMonth, 1, 12),
+      'backdate_days' => (s.backdateDays, 0, 365),
+      _ => (s.maxRequestDays, 1, 366),
+    };
+    int v = cur + delta;
+    // Months go round: December → January.
+    if (key == 'year_start_month') v = (v - 1) % 12 + 1;
+    if (v < lo || v > hi) return;
+    unawaited(saveLeaveSettings(<String, Object?>{key: v}));
+  }
+
+  // Leave type sheet (`leaveType`): add, or change one.
+  LeaveType? leaveTypeEdit;
+
+  void openLeaveType([LeaveType? t]) {
+    leaveTypeEdit = t;
+    form['ltName'] = t?.name ?? '';
+    form['ltQuota'] = t == null
+        ? '12'
+        : (t.yearlyQuota == null ? '' : leaveDays(t.yearlyQuota!));
+    form['ltPaid'] = (t?.paid ?? true) ? '1' : '';
+    form['ltCarry'] = (t?.carryForward ?? false) ? '1' : '';
+    form['ltMaxCarry'] = t?.maxCarry == null ? '' : leaveDays(t!.maxCarry!);
+    form['ltActive'] = (t?.active ?? true) ? '1' : '';
+    openOverlay('leaveType');
+  }
+
+  void toggleLeaveTypeFlag(String k) =>
+      _set(() => form[k] = f(k).isEmpty ? '1' : '');
+
+  /// A number of days in half days (0–366), or null when not one.
+  static num? _halfDays(String v) {
+    final num? n = num.tryParse(v.trim());
+    if (n == null || n < 0 || n > 366 || (n * 2).round() != n * 2) return null;
+    return n;
+  }
+
+  String? get leaveTypeError {
+    final String name = f('ltName').trim();
+    if (name.isEmpty) return 'Give the leave type a name';
+    if (name.length > 40) return 'The name can be at most 40 characters';
+    if (f('ltQuota').trim().isNotEmpty && _halfDays(f('ltQuota')) == null) {
+      return 'Days a year: 0–366, in half days (or empty for no limit)';
+    }
+    if (f('ltCarry').isNotEmpty &&
+        f('ltMaxCarry').trim().isNotEmpty &&
+        _halfDays(f('ltMaxCarry')) == null) {
+      return 'Carry at most: 0–366 days (or empty for no cap)';
+    }
+    return null;
+  }
+
+  Future<void> saveLeaveType() async {
+    if (leaveTypeError != null || leaveSaving) return;
+    final LeaveType? t = leaveTypeEdit;
+    final bool carry = f('ltCarry').isNotEmpty;
+    _set(() => leaveSaving = true);
+    try {
+      await repo.saveLeaveType(<String, Object?>{
+        'name': f('ltName').trim(),
+        'yearly_quota': f('ltQuota').trim().isEmpty
+            ? null
+            : _halfDays(f('ltQuota')),
+        'paid': f('ltPaid').isNotEmpty,
+        'carry_forward': carry,
+        'max_carry': !carry || f('ltMaxCarry').trim().isEmpty
+            ? null
+            : _halfDays(f('ltMaxCarry')),
+        if (t != null) 'active': f('ltActive').isNotEmpty,
+      }, id: t?.id);
+      _set(() => overlay = null);
+      say(t == null ? 'Leave type added' : 'Leave type saved');
+      await loadLeaveSettings();
+    } on ApiException catch (e) {
+      say(_leaveErr(e));
+    } finally {
+      _set(() => leaveSaving = false);
+    }
+  }
+
+  Future<void> addDefaultLeaveTypes() async {
+    if (leaveSaving) return;
+    _set(() => leaveSaving = true);
+    try {
+      final List<LeaveType> l = await repo.addDefaultLeaveTypes();
+      final LeaveAdmin? a = leaveAdmin;
+      if (a != null) _set(() => leaveAdmin = a.copyWith(types: l));
+      say('Casual, Sick and Unpaid leave added');
+    } on ApiException catch (e) {
+      say(_leaveErr(e));
+    } finally {
+      _set(() => leaveSaving = false);
+    }
+  }
+
+  // Holiday sheet (`leaveHoliday`).
+  void openAddHoliday() {
+    form['hdDate'] = ymd(_day(today));
+    form['hdName'] = '';
+    openOverlay('leaveHoliday');
+  }
+
+  String? get holidayError {
+    if (DateTime.tryParse(f('hdDate')) == null) return 'Pick the date';
+    final String n = f('hdName').trim();
+    if (n.isEmpty) return 'Give the holiday a name';
+    if (n.length > 60) return 'The name can be at most 60 characters';
+    return null;
+  }
+
+  Future<void> saveHoliday() async {
+    if (holidayError != null || leaveSaving) return;
+    _set(() => leaveSaving = true);
+    try {
+      await repo.addHoliday(DateTime.parse(f('hdDate')), f('hdName'));
+      _set(() => overlay = null);
+      say('Holiday added');
+      await loadLeaveSettings();
+    } on ApiException catch (e) {
+      say(_leaveErr(e));
+    } finally {
+      _set(() => leaveSaving = false);
+    }
+  }
+
+  Future<void> deleteHoliday(LeaveHoliday h) async {
+    if (h.date == null || leaveSaving) return;
+    _set(() => leaveSaving = true);
+    try {
+      await repo.deleteHoliday(h.date!);
+      say('${h.name} removed');
+      await loadLeaveSettings();
+    } on ApiException catch (e) {
+      say(_leaveErr(e));
+    } finally {
+      _set(() => leaveSaving = false);
+    }
+  }
+
+  // Attendance history: leave and holidays on the days shown.
+  LeaveCalendar? attLeaveCal;
+
+  Future<void> _loadAttLeave() async {
+    if (demo || !repo.isRemote) return;
+    // The admin's calendar is the team's; a member's is their own.
+    final (DateTime from, DateTime to) = attRange;
+    try {
+      final LeaveCalendar cal = await repo.leaveCalendar(from: from, to: to);
+      _set(() => attLeaveCal = cal);
+    } on ApiException {
+      _set(() => attLeaveCal = null); // no leave on this server
     }
   }
 
@@ -1700,6 +2887,20 @@ class AppController extends ChangeNotifier {
   /// Count bills more than 90 days past due as money coming in.
   bool cfDoubtful = false;
 
+  /// Weeks shown (1–26; the server's limit), chosen with the From / To
+  /// sheet: the forecast always starts with this week (Monday).
+  int cfWeeks = 13;
+  static const int kCfMaxWeeks = 26;
+  DateTime get cfStart {
+    final DateTime t = DateTime(today.year, today.month, today.day);
+    return t.subtract(Duration(days: t.weekday - 1));
+  }
+
+  DateTime get cfEnd => cfStart.add(Duration(days: cfWeeks * 7 - 1));
+
+  /// The forecast's From / To sheet.
+  void openCfRange() => openRange('fcast');
+
   CashWeekDetail? cfWeekData;
   DateTime? cfWeekStart;
   bool cfWeekBusy = false;
@@ -1735,6 +2936,7 @@ class AppController extends ChangeNotifier {
         mode: cfMode,
         doubtful: cfDoubtful,
         refresh: refresh,
+        weeks: cfWeeks,
       );
       if (req != _cfReq) return;
       _set(() => cfData = f);
@@ -1889,7 +3091,9 @@ class AppController extends ChangeNotifier {
       _set(() {
         aiEnabled = s.enabled;
         aiUsage = s.usage ?? aiUsage;
-        aiError = s.enabled ? null : 'The AI Assistant is not available right now.';
+        aiError = s.enabled
+            ? null
+            : 'The AI Assistant is not available right now.';
       });
     } on ApiException catch (e) {
       _set(() {
@@ -1913,7 +3117,8 @@ class AppController extends ChangeNotifier {
     final Object? b = e.body;
     if (b is! Map || b['code'] != 'ai_quota_exhausted') return false;
     _set(() {
-      aiUsage = AiUsage.fromJson(b['usage']) ??
+      aiUsage =
+          AiUsage.fromJson(b['usage']) ??
           (aiUsage == null
               ? AiUsage.spent
               : AiUsage(
@@ -2479,10 +3684,38 @@ class AppController extends ChangeNotifier {
 
   bool get aiVoiceOn => voiceOn && _voiceField == 'aiQ';
 
+  /// Mic of any search field (`itemQ`, `partyQ`, `outQuery`, `teamQ`, …):
+  /// speech goes through that field's own search, as typing does.
+  Future<void> toggleVoiceFor(String field) => _toggleVoice(field);
+
+  /// [field] is the one listening.
+  bool voiceOnFor(String field) => voiceOn && _voiceField == field;
+
+  /// Fields in sheets (closing the sheet ends their listening).
+  static const Set<String> _kSheetVoice = <String>{
+    'q',
+    'aiQ',
+    'pq',
+    'pickQ',
+    'lvReason',
+  };
+
+  /// Leaving a screen ends its search field's listening and note.
+  void _endScreenVoice() {
+    if (_kSheetVoice.contains(_voiceField)) return;
+    if (voiceOn) unawaited(stopVoiceSearch());
+    voiceNote = null;
+  }
+
+  /// The listening / error note of [field] (null: another field's or none).
+  String? voiceNoteFor(String field) => _voiceField == field ? voiceNote : null;
+
   Future<void> _toggleVoice(String field) async {
     if (voiceOn) {
+      final bool same = _voiceField == field;
       await stopVoiceSearch();
-      return;
+      // Another field's mic: stop that one, listen for this one.
+      if (same) return;
     }
     _voiceField = field;
     _set(() => voiceNote = null);
@@ -2526,12 +3759,23 @@ class AppController extends ChangeNotifier {
     if (_disposed) return;
     final String w = words.trim();
     if (w.isEmpty) return;
-    if (_voiceField == 'q') {
-      // Same field, debounce and results as typing; shown at once.
-      setQuery('q', w);
-      _set();
-    } else {
-      _set(() => form[_voiceField] = w);
+    switch (_voiceField) {
+      // The assistant's question: filled in, sent only by the user.
+      case 'aiQ':
+        _set(() => form['aiQ'] = w);
+      // Outstanding bills: their own filter.
+      case 'outQuery':
+        setOutQuery(w);
+      // Team page: filters as typed.
+      case 'teamQ':
+        setF('teamQ', w);
+      // Leave reason: filled in, sent only with Apply.
+      case 'lvReason':
+        setF('lvReason', w);
+      // Search fields: same field, debounce and results as typing.
+      default:
+        setQuery(_voiceField, w);
+        _set();
     }
     if (isFinal) _onVoiceDone();
   }
@@ -2712,6 +3956,7 @@ class AppController extends ChangeNotifier {
   /// Loads only the data the screen being opened needs (big sets such as
   /// ledgers, items, stock and team are not loaded at startup).
   void _onEnter(String s) {
+    _endScreenVoice();
     if (!repo.isRemote) return;
     switch (s) {
       case 'party' || 'partyDetail' || 'flow':
@@ -2720,6 +3965,7 @@ class AppController extends ChangeNotifier {
         repo.ensure(DataSet.items);
       case 'team':
         repo.ensure(DataSet.team);
+        loadTeamAttendance(); // today's check-ins next to each member
       case 'reports':
         repo.ensure(DataSet.items);
         repo.ensure(DataSet.stock);
@@ -2731,8 +3977,26 @@ class AppController extends ChangeNotifier {
         if (report == 'inC') repo.ensure(DataSet.ledgers);
     }
     if (s == 'flow') repo.ensure(DataSet.items);
-    // Configure User: who may see financial statements.
+    // Configure User: who may see financial statements / check in.
     if (s == 'teamUser') unawaited(loadFinancialAccess());
+    // Sales team attendance.
+    if (s == 'home' || s == 'team') unawaited(loadAttendance(quiet: true));
+    if (s == 'attendance') {
+      unawaited(loadAttendance());
+      unawaited(loadAttHistory());
+    }
+    if (s == 'attTeam') unawaited(loadAttTeam());
+    if (s == 'attMember') unawaited(loadAttHistory());
+    // Leave: the member's year; the admin's requests, settings, a member's
+    // year; the Team page's pending count and who is on leave today.
+    if (s == 'home') {
+      unawaited(isAdmin ? loadTeamLeave() : loadLeave(quiet: true));
+    }
+    if (s == 'team' || s == 'attTeam') unawaited(loadTeamLeave());
+    if (s == 'leave') unawaited(loadLeave());
+    if (s == 'leaveReqs') unawaited(loadLeaveRequests());
+    if (s == 'leaveSettings') unawaited(loadLeaveSettings());
+    if (s == 'leaveMember') unawaited(loadLeaveMember());
     if (s == 'teamSelect') {
       if (teamKind == 'ledger') repo.ensure(DataSet.ledgers);
       if (teamKind == 'inventory') repo.ensure(DataSet.items);
@@ -3018,7 +4282,13 @@ class AppController extends ChangeNotifier {
   void openRange(String target) {
     final DateTime t = today;
     rangeFor = target;
-    final DateRange? cur = target == 'sales' ? salesRange : range;
+    final DateRange? cur = switch (target) {
+      'sales' => salesRange,
+      'fin' => finTo == null ? null : DateRange(finFrom ?? finTo!, finTo!),
+      'fcast' => DateRange(cfStart, cfEnd),
+      'att' => DateRange(attRange.$1, attRange.$2),
+      _ => range,
+    };
     form['drFrom'] = ymd(cur?.from ?? DateTime(t.year, t.month));
     form['drTo'] = ymd(cur?.to ?? t);
     openOverlay('dateRange');
@@ -3117,9 +4387,26 @@ class AppController extends ChangeNotifier {
     ('fy', 'This financial year'),
   ];
 
+  /// Forecast choices: weeks from this week.
+  static const List<(String, String)> kForecastPresets = <(String, String)>[
+    ('w4', '4 weeks'),
+    ('w8', '8 weeks'),
+    ('w13', '13 weeks'),
+    ('w26', '26 weeks'),
+  ];
+
+  /// Quick choices of the open range sheet.
+  List<(String, String)> get rangePresets =>
+      rangeFor == 'fcast' ? kForecastPresets : kRangePresets;
+
   void rangePreset(String k) {
     final DateTime t = today;
+    final int? weeks = k.startsWith('w') ? int.tryParse(k.substring(1)) : null;
     final (DateTime, DateTime) r = switch (k) {
+      _ when weeks != null => (
+        cfStart,
+        cfStart.add(Duration(days: weeks * 7 - 1)),
+      ),
       'last' => (DateTime(t.year, t.month - 1), DateTime(t.year, t.month, 0)),
       '30' => (t.subtract(const Duration(days: 29)), t),
       // Indian financial year: 1 April – 31 March.
@@ -3138,8 +4425,27 @@ class AppController extends ChangeNotifier {
     final DateTime? b = DateTime.tryParse(f('drTo'));
     if (a == null || b == null) return 'Pick both a From and a To date';
     if (b.isBefore(a)) return 'The From date must be on or before the To date';
+    // Any From–To, also ending after today (a future date shows the books
+    // as they stand: nothing has moved after today).
+    switch (rangeFor) {
+      case 'fin':
+        return _finRangeError(a, b);
+      case 'att':
+        if (b.difference(a).inDays >= kAttMaxDays) {
+          return 'Choose at most $kAttMaxDays days';
+        }
+      case 'fcast':
+        if (_ymdOf(a) != _ymdOf(cfStart)) {
+          return 'The forecast starts with this week (${dmy(cfStart)})';
+        }
+        if (b.isAfter(cfStart.add(const Duration(days: kCfMaxWeeks * 7 - 1)))) {
+          return 'The forecast covers at most $kCfMaxWeeks weeks';
+        }
+    }
     return null;
   }
+
+  static String _ymdOf(DateTime d) => ymd(DateTime(d.year, d.month, d.day));
 
   /// Applies the sheet's range to its page.
   void applyRange() {
@@ -3148,6 +4454,37 @@ class AppController extends ChangeNotifier {
       DateTime.parse(f('drFrom')),
       DateTime.parse(f('drTo')),
     );
+    // A financial report (and its ledger drill-down) keeps its own period.
+    if (rangeFor == 'fin') {
+      _set(() {
+        finPreset = 'range';
+        finFrom = r.from;
+        finTo = r.to;
+        overlay = null;
+      });
+      unawaited(screen == 'finLedger' ? loadFinLedger() : loadFinancial());
+      return;
+    }
+    // Attendance history (own, or the admin's view of one person).
+    if (rangeFor == 'att') {
+      _set(() {
+        attFrom = r.from;
+        attTo = r.to;
+        overlay = null;
+      });
+      unawaited(loadAttHistory());
+      return;
+    }
+    // Cash flow forecast: this week to the To date's week.
+    if (rangeFor == 'fcast') {
+      final int days = r.to.difference(cfStart).inDays + 1;
+      _set(() {
+        cfWeeks = ((days + 6) ~/ 7).clamp(1, kCfMaxWeeks);
+        overlay = null;
+      });
+      unawaited(loadCashflow());
+      return;
+    }
     // Sales analytics keep their own range (other pages are not changed).
     if (rangeFor == 'sales') {
       _set(() {
@@ -3294,6 +4631,7 @@ class AppController extends ChangeNotifier {
   void back() {
     // Leaving the voucher / party list ends selecting.
     _endSelectLeaving('');
+    _endScreenVoice();
     if (history.isEmpty) {
       if (screen == 'forgot') {
         _set(() {
@@ -3370,6 +4708,11 @@ class AppController extends ChangeNotifier {
   }
 
   void closeOv() {
+    // The check-in popup closed (outside tap / Back) counts as "Later".
+    if (overlay == 'attPrompt') {
+      laterCheckIn();
+      return;
+    }
     // Closing the search / assistant sheet ends listening.
     if (voiceOn) unawaited(stopVoiceSearch());
     _set(() {
@@ -4340,7 +5683,9 @@ class AppController extends ChangeNotifier {
     if (store.load<Object?>(LocalStorage.kHomeSalesCard, null) == true) return;
     pagesByWs.forEach((String ws, List<List<String>> pages) {
       if (pages.any((List<String> p) => p.contains(kSalesCard))) return;
-      final int pi = pages.indexWhere((List<String> p) => p.contains('newEntry'));
+      final int pi = pages.indexWhere(
+        (List<String> p) => p.contains('newEntry'),
+      );
       if (pi >= 0) {
         pages[pi].insert(pages[pi].indexOf('newEntry') + 1, kSalesCard);
       } else if (pages.isNotEmpty) {
@@ -6278,7 +7623,9 @@ class AppController extends ChangeNotifier {
 
   /// Ticks all [rows] (or clears when all of them are ticked).
   void pickAll(List<Voucher> rows) => _set(() {
-    final bool all = rows.isNotEmpty && rows.every((Voucher v) => vPicked.containsKey(v.key));
+    final bool all =
+        rows.isNotEmpty &&
+        rows.every((Voucher v) => vPicked.containsKey(v.key));
     if (all) {
       vPicked.clear();
     } else {
@@ -6294,7 +7641,9 @@ class AppController extends ChangeNotifier {
   Party? get pickedParty {
     final Set<String> ps = vPicked.values.map((Voucher v) => v.party).toSet();
     if (ps.length != 1) return null;
-    final Party? x = partyPool().where((Party y) => y.name == ps.first).firstOrNull;
+    final Party? x = partyPool()
+        .where((Party y) => y.name == ps.first)
+        .firstOrNull;
     return whatsAppNumber(x?.phone) == null ? null : x;
   }
 
@@ -6310,14 +7659,23 @@ class AppController extends ChangeNotifier {
   }
 
   List<Voucher> get _pickedList => vPicked.values.toList()
-    ..sort((Voucher a, Voucher b) => (a.date ?? DateTime(0)).compareTo(b.date ?? DateTime(0)));
+    ..sort(
+      (Voucher a, Voucher b) =>
+          (a.date ?? DateTime(0)).compareTo(b.date ?? DateTime(0)),
+    );
 
   /// All ticked vouchers in one list PDF (date, number, party, amount, total).
   Future<void> sharePickedList() async {
     if (vPicked.isEmpty) return;
     final List<Voucher> l = _pickedList;
     await shareDoc(
-      docVouchers('Selected vouchers', l, companyName, '${l.length} selected', 'Selected'),
+      docVouchers(
+        'Selected vouchers',
+        l,
+        companyName,
+        '${l.length} selected',
+        'Selected',
+      ),
     );
   }
 
@@ -6325,7 +7683,9 @@ class AppController extends ChangeNotifier {
   Future<void> sharePickedEach() async {
     if (vPicked.isEmpty || docBusy) return;
     if (vPicked.length > kMaxShareEach) {
-      say('Pick at most $kMaxShareEach vouchers to share one PDF each, or share them as one list.');
+      say(
+        'Pick at most $kMaxShareEach vouchers to share one PDF each, or share them as one list.',
+      );
       return;
     }
     docBusy = true;
@@ -6336,7 +7696,11 @@ class AppController extends ChangeNotifier {
         final ShareDoc d = _label(await voucherDoc(v));
         docs.add((d, await pdfOf(d)));
       }
-      await exporter.shareMany(docs, text: _pickedMessage(), subject: '${docs.length} vouchers · $companyName');
+      await exporter.shareMany(
+        docs,
+        text: _pickedMessage(),
+        subject: '${docs.length} vouchers · $companyName',
+      );
       say('Share sheet opened');
     } catch (_) {
       say('Could not open the share sheet');
@@ -6393,7 +7757,9 @@ class AppController extends ChangeNotifier {
 
   /// `wa.me/<number>?text=` (that chat) or `wa.me/?text=` (pick a chat).
   Future<void> _openWhatsApp(String text, [String? number]) async {
-    final Uri u = Uri.parse('https://wa.me/${number ?? ''}?text=${Uri.encodeComponent(text)}');
+    final Uri u = Uri.parse(
+      'https://wa.me/${number ?? ''}?text=${Uri.encodeComponent(text)}',
+    );
     if (!await openUri(u)) say('Could not open WhatsApp');
   }
 
@@ -6444,7 +7810,8 @@ class AppController extends ChangeNotifier {
 
   /// Same reading as the party list: customers (and other ledgers with a
   /// positive balance) owe you.
-  static bool _owesYou(Party x) => x.type == 'c' || (x.type == 'o' && x.bal > 0);
+  static bool _owesYou(Party x) =>
+      x.type == 'c' || (x.type == 'o' && x.bal > 0);
 
   /// One line per party: name, kind, balance as the list shows it, phone.
   String partyLine(Party x) {
@@ -6462,7 +7829,10 @@ class AppController extends ChangeNotifier {
 
   String _partyMessage() {
     final List<Party> l = pPicked.values.toList()
-      ..sort((Party a, Party b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      ..sort(
+        (Party a, Party b) =>
+            a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
     final (num get, num give) = pickedPartyTotals;
     final int more = l.length - kWaMaxLines;
     return <String>[
@@ -6489,7 +7859,10 @@ class AppController extends ChangeNotifier {
   Future<void> sharePickedParties() async {
     if (pPicked.isEmpty) return;
     final List<Party> l = pPicked.values.toList()
-      ..sort((Party a, Party b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      ..sort(
+        (Party a, Party b) =>
+            a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
     await shareDoc(docParties(l, companyName));
   }
 
@@ -6514,7 +7887,9 @@ class AppController extends ChangeNotifier {
       say('Pick entries of one party with a phone number saved in Tally');
       return;
     }
-    final Uri u = Uri.parse('https://wa.me/$n?text=${Uri.encodeComponent(_pickedMessage())}');
+    final Uri u = Uri.parse(
+      'https://wa.me/$n?text=${Uri.encodeComponent(_pickedMessage())}',
+    );
     if (!await openUri(u)) say('Could not open WhatsApp');
   }
 
@@ -6669,7 +8044,7 @@ class AppController extends ChangeNotifier {
         return a == null ? null : docAct(a, co);
       case 'team':
         final Member? m = team.where((Member x) => x.email == key).firstOrNull;
-        return m == null ? null : docMember(m, co);
+        return m == null ? null : docMember(m, co, status: !repo.isRemote);
     }
     return null;
   }
@@ -6722,6 +8097,9 @@ class AppController extends ChangeNotifier {
     if (_disposed || !loggedIn) return;
     // Demo or real data: decided again with what was just loaded.
     _evalDemo();
+    // Check-in (sales team): known right after sign-in / app start, so the
+    // Home button and the menu row show without opening another screen.
+    unawaited(loadAttendance(quiet: true));
     final String? err = repo.lastError();
     if (err != null) {
       say('$err · showing the last saved data');
@@ -7152,6 +8530,7 @@ class AppController extends ChangeNotifier {
       return;
     }
     if (!repo.isRemote) return;
+    unawaited(_attPingIfDue());
     _liveBusy = true;
     try {
       if (await repo.checkNewSync()) {

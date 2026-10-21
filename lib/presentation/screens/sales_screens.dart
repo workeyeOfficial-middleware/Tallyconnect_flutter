@@ -19,9 +19,13 @@ import '../../core/utils/format.dart';
 import '../../core/share/report_data.dart' show ChartPoint;
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
+import '../widgets/report_card.dart';
 import '../widgets/report_chart.dart';
 
-/// Reports screen: the Sales analytics tile (real company only).
+/// Reports screen: the Business analytics cards (real company only) —
+/// Sales Analytics, Top customers and Top products, the same square card as
+/// the financial statements. Each opens the sales dashboard, which holds
+/// them (worked out on the server from the synced vouchers).
 class SalesTile extends ConsumerWidget {
   const SalesTile({super.key});
 
@@ -29,36 +33,31 @@ class SalesTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     if (!c.repo.isRemote || c.demo) return const SizedBox.shrink();
-    final TcPalette p = Tc.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Tap(
-        key: const ValueKey<String>('salesTile'),
-        onTap: c.openSalesAnalytics,
-        child: Glass(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            children: <Widget>[
-              Ico('chart', size: IcoSize.sm, color: p.acc),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text('Sales analytics', style: rtStyle(context)),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Trend, top customers and items, growth',
-                      style: rsStyle(context),
-                    ),
-                  ],
-                ),
-              ),
-              chevR(),
-            ],
-          ),
+    return Grid(
+      cols: 2,
+      children: <Widget>[
+        ReportCard(
+          key: const ValueKey<String>('salesTile'),
+          icon: 'chart',
+          title: 'Sales Analytics',
+          subtitle: 'Trend, growth, new and repeat customers',
+          onTap: c.openSalesAnalytics,
         ),
-      ),
+        ReportCard(
+          key: const ValueKey<String>('topCustomersTile'),
+          icon: 'team',
+          title: 'Top Customers',
+          subtitle: 'Who buys the most',
+          onTap: c.openSalesAnalytics,
+        ),
+        ReportCard(
+          key: const ValueKey<String>('topProductsTile'),
+          icon: 'box',
+          title: 'Top Products',
+          subtitle: 'Best sellers by amount or quantity',
+          onTap: c.openSalesAnalytics,
+        ),
+      ],
     );
   }
 }

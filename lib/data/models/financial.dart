@@ -66,7 +66,28 @@ class FinPeriods {
     required this.groupsSynced,
     required this.company,
     this.message,
+    this.stockNeeded = const <DateTime>[],
+    this.canEnterStock = false,
+    this.anyPeriod = false,
+    this.booksFrom,
+    this.stockDates = const <DateTime>[],
   });
+
+  /// Any From–To period can be worked out (vouchers synced from the books'
+  /// start); otherwise only the dates in [snapshots].
+  final bool anyPeriod;
+
+  /// The books' first day (the earliest From), when known.
+  final DateTime? booksFrom;
+
+  /// Dates with a closing stock value (P&L / Balance Sheet need one on the
+  /// day before From and on To), oldest first.
+  final List<DateTime> stockDates;
+
+  /// A closing stock value exists for [d].
+  bool hasStock(DateTime d) => stockDates.any(
+    (DateTime x) => x.year == d.year && x.month == d.month && x.day == d.day,
+  );
 
   /// Newest first.
   final List<FinSnapshot> snapshots;
@@ -75,6 +96,13 @@ class FinPeriods {
 
   /// Why there is no report date yet, in the server's words (or null).
   final String? message;
+
+  /// Year ends whose closing stock is missing (newest first): that year's
+  /// P&L / Balance Sheet need it. The admin can enter it.
+  final List<DateTime> stockNeeded;
+
+  /// This login may enter a closing stock (the account admin).
+  final bool canEnterStock;
 
   bool get ready => groupsSynced && snapshots.isNotEmpty;
   FinSnapshot? get latest => snapshots.isEmpty ? null : snapshots.first;
@@ -88,11 +116,26 @@ class FinPeriods {
   static FinPeriods fromJson(Object? o) {
     final Map<Object?, Object?> m = o is Map ? o : const <Object?, Object?>{};
     final Object? ss = m['snapshots'];
+    final Object? need = m['stock_needed'];
+    final Object? sd = m['stock_dates'];
     DateTime? d(Object? v) => DateTime.tryParse(_s(v));
     return FinPeriods(
+      anyPeriod: m['any_period'] == true,
+      booksFrom: d(m['books_from']),
+      stockDates: <DateTime>[
+        if (sd is List)
+          for (final Object? x in sd)
+            if (d(x) != null) d(x)!,
+      ],
       company: _s(m['company']),
       groupsSynced: m['groups_synced'] == true,
       message: _s(m['message']).isEmpty ? null : _s(m['message']),
+      canEnterStock: m['can_enter_stock'] == true,
+      stockNeeded: <DateTime>[
+        if (need is List)
+          for (final Object? x in need)
+            if (d(x) != null) d(x)!,
+      ],
       snapshots: <FinSnapshot>[
         if (ss is List)
           for (final Object? x in ss)
@@ -137,5 +180,121 @@ class FinReport {
           if (e is Map && DateTime.tryParse(_s(e['as_on'])) != null)
             (DateTime.parse(_s(e['as_on'])), _n(e['amount'])),
     ];
+  }
+
+  /// Cash Flow: month rows `(first day, money in, money out)`.
+  List<(DateTime, num, num)> get cashMonths {
+    final Object? x = m['months'];
+    return <(DateTime, num, num)>[
+      if (x is List)
+        for (final Object? e in x)
+          if (e is Map && DateTime.tryParse('${_s(e['month'])}-01') != null)
+            (
+              DateTime.parse('${_s(e['month'])}-01'),
+              _n(e['inflow']),
+              _n(e['outflow']),
+            ),
+    ];
+  }
+
+  /// Cash Flow: `(name, amount)` rows of [k] (`inflow_groups` …).
+  List<(String, num)> pairs(String k) {
+    final Object? x = m[k];
+    return <(String, num)>[
+      if (x is List)
+        for (final Object? e in x)
+          if (e is Map) (_s(e['name']), _n(e['amount'])),
+    ];
+  }
+
+  /// Cash Flow: cash / bank accounts `(name, opening, closing)`.
+  List<(String, num, num)> get cashAccounts {
+    final Object? x = m['accounts'];
+    return <(String, num, num)>[
+      if (x is List)
+        for (final Object? e in x)
+          if (e is Map) (_s(e['name']), _n(e['opening']), _n(e['closing'])),
+    ];
+  }
+}
+
+/// One voucher line of a ledger (Ledger Vouchers, Tally's drill-down).
+class LedgerVoucherRow {
+  const LedgerVoucherRow({
+    required this.guid,
+    required this.date,
+    required this.type,
+    required this.ref,
+    required this.particulars,
+    required this.debit,
+    required this.credit,
+    required this.balance,
+  });
+  final String guid, type, ref, particulars;
+  final DateTime? date;
+  final num debit, credit;
+
+  /// Running balance, Tally sign: Cr +, Dr −.
+  final num balance;
+}
+
+/// `/api/financial/ledger-vouchers`: one ledger's vouchers in a period.
+class LedgerVouchers {
+  const LedgerVouchers({
+    required this.name,
+    required this.group,
+    required this.from,
+    required this.to,
+    required this.opening,
+    required this.closing,
+    required this.totalDebit,
+    required this.totalCredit,
+    required this.rows,
+    required this.truncated,
+    this.guid,
+  });
+  final String name, group;
+  final String? guid;
+  final DateTime? from, to;
+
+  /// Tally sign: Cr +, Dr −.
+  final num opening, closing;
+  final num totalDebit, totalCredit;
+  final List<LedgerVoucherRow> rows;
+  final bool truncated;
+
+  static LedgerVouchers fromJson(Object? o) {
+    final Map<Object?, Object?> m = o is Map ? o : const <Object?, Object?>{};
+    final Object? l = m['ledger'];
+    final Map<Object?, Object?> led = l is Map ? l : const <Object?, Object?>{};
+    final Object? rs = m['rows'];
+    DateTime? d(Object? v) => DateTime.tryParse(_s(v));
+    return LedgerVouchers(
+      name: _s(led['name']),
+      guid: led['guid'] == null ? null : _s(led['guid']),
+      group: _s(led['group']),
+      from: d(m['from']),
+      to: d(m['to']),
+      opening: _n(m['opening']),
+      closing: _n(m['closing']),
+      totalDebit: _n(m['total_debit']),
+      totalCredit: _n(m['total_credit']),
+      truncated: m['truncated'] == true,
+      rows: <LedgerVoucherRow>[
+        if (rs is List)
+          for (final Object? x in rs)
+            if (x is Map)
+              LedgerVoucherRow(
+                guid: _s(x['guid']),
+                date: d(x['date']),
+                type: _s(x['type']),
+                ref: _s(x['ref']),
+                particulars: _s(x['particulars']),
+                debit: _n(x['debit']),
+                credit: _n(x['credit']),
+                balance: _n(x['balance']),
+              ),
+      ],
+    );
   }
 }

@@ -217,6 +217,8 @@ void main() {
         300,
         scrollable: find.byType(Scrollable).first,
       );
+      await t.ensureVisible(find.byKey(const ValueKey<String>('cfWeek-1')));
+      await t.pump();
       await t.tap(find.byKey(const ValueKey<String>('cfWeek-1')));
       await settle(t);
       expect(c.screen, 'cfWeek');

@@ -6,9 +6,11 @@ library;
 import '../../core/utils/format.dart' show parseDmy;
 
 export 'assistant.dart';
+export 'attendance.dart';
 export 'cashflow.dart';
 export 'email_reminder.dart';
 export 'financial.dart';
+export 'leave.dart';
 export 'sales_analytics.dart';
 export 'tally_report.dart';
 

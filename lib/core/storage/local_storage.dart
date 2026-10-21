@@ -52,6 +52,10 @@ class LocalStorage {
   /// server's create-user endpoint stores only email + password).
   static const String kMemberInfo = 'tc-team-member-info';
 
+  /// Check-in popup closed with "Later": `email|yyyy-mm-dd` (not shown
+  /// again to that login that day).
+  static const String kAttPromptSkip = 'tc-att-prompt-skip';
+
   /// Bottom-bar tabs the user hid (tab keys), the whole bar hidden, and the
   /// glass level (Settings → Look → Glass).
   static const String kHiddenTabs = 'tc-hidden-tabs';

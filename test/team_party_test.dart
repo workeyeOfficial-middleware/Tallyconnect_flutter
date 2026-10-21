@@ -224,7 +224,8 @@ void main() {
       expect(find.text('5 of 6 fields shown'), findsOneWidget);
       expect(find.text('Ledger Selection'), findsOneWidget);
       expect(find.text('2 selected'), findsOneWidget); // ledgers
-      expect(find.text('Active'), findsWidgets); // status kept
+      // The server keeps no account status: no made-up "Active" badge.
+      expect(find.text('Active'), findsNothing);
 
       // Layout: switch "Type" off and save for this user.
       await t.tap(find.text('Ledgers Layout'));

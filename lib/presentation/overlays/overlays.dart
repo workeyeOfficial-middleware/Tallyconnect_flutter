@@ -20,11 +20,16 @@ import '../../core/utils/phone.dart' show phoneLabel;
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../screens/account_screens.dart' show CompanyRow;
-import '../screens/financial_screens.dart' show FinPickSheet;
+import '../screens/financial_screens.dart' show FinPickSheet, FinStockSheet;
 import '../screens/insight_screens.dart' show kTS;
 import '../screens/voucher_screens.dart' show kVF;
 import '../widgets/common.dart';
 import '../widgets/demo_banner.dart' show ConnectTallySheet;
+import '../screens/attendance_screens.dart'
+    show CheckInPromptSheet, CheckOutSheet, ProfileSheet;
+import '../screens/leave_screens.dart'
+    show LeaveApplySheet, LeaveHolidaySheet, LeaveReqSheet, LeaveTypeSheet;
+import '../widgets/voice_search.dart';
 import 'assistant_sheet.dart';
 import 'doc_viewer.dart';
 import 'email_reminder_sheets.dart';
@@ -60,6 +65,14 @@ class OverlayLayer extends ConsumerWidget {
       'assistant' => const AssistantSheet(),
       'aiLimit' => const AiLimitSheet(),
       'finPick' => const FinPickSheet(),
+      'finStock' => const FinStockSheet(),
+      'attCheckOut' => const CheckOutSheet(),
+      'profile' => const ProfileSheet(),
+      'attPrompt' => const CheckInPromptSheet(),
+      'leaveApply' => const LeaveApplySheet(),
+      'leaveReq' => const LeaveReqSheet(),
+      'leaveType' => const LeaveTypeSheet(),
+      'leaveHoliday' => const LeaveHolidaySheet(),
       'emailRem' => const EmailReminderSheet(),
       'remTemplates' => const ReminderTemplatesSheet(),
       'remTemplateEdit' => const ReminderTemplateEditSheet(),
@@ -159,6 +172,16 @@ class SideMenu extends ConsumerWidget {
         <(String, String, String, String, int)>[
           ('Companies', 'building', 'navy', 'companies', 0),
           if (c.canOpen('team')) ('Sales Team', 'team', 'team', 'team', 0),
+          // Every team login (the screen says when it is not set up yet:
+          // not on the sales team, server not updated, …).
+          if (!c.isAdmin && c.repo.isRemote && !c.demo)
+            ('Check-in', 'clock', 'acc', 'attendance', 0),
+          if (!c.isAdmin && c.repo.isRemote && !c.demo)
+            ('Leave', 'calendar', 'acc', 'leave', 0),
+          if (c.isAdmin && c.repo.isRemote && !c.demo)
+            ('Team attendance', 'clock', 'acc', 'attTeam', 0),
+          if (c.isAdmin && c.repo.isRemote && !c.demo)
+            ('Leave requests', 'calendar', 'acc', 'leaveReqs', c.leavePending),
           ('Reports', 'chart', 'reports', 'reports', 0),
           ('Settings', 'gear', 'settings', 'settings', 0),
           ('Alerts', 'bell', 'acc', 'notifs', unread),
@@ -386,47 +409,13 @@ class SearchSheet extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           const SheetHead('Search'),
-          Inp(
+          // Voice search: tap the mic to listen, tap again to stop.
+          VoiceSearchField(
+            field: 'q',
             value: c.f('q'),
             onChanged: (String v) => c.setQuery('q', v),
-            placeholder: c.voiceOn
-                ? 'Listening…'
-                : 'Search items, parties, entries, screens…',
-            icon: 'search',
-            // Voice search: tap to listen, tap again to stop.
-            trailing: Semantics(
-              button: true,
-              label: c.voiceOn ? 'Stop voice search' : 'Voice search',
-              child: GestureDetector(
-                key: const ValueKey<String>('voiceSearchBtn'),
-                behavior: HitTestBehavior.opaque,
-                onTap: c.toggleVoiceSearch,
-                child: SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: Center(
-                    child: Ic(
-                      c.voiceOn ? 'micStop' : 'mic',
-                      color: c.voiceOn ? p.acc : p.ink3,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+            placeholder: 'Search items, parties, entries, screens…',
           ),
-          if (c.voiceNote != null)
-            Padding(
-              key: const ValueKey<String>('voiceNote'),
-              padding: const EdgeInsets.fromLTRB(6, 8, 6, 0),
-              child: Text(
-                c.voiceNote!,
-                style: ts(
-                  13,
-                  w: w600,
-                  c: c.voiceOn ? p.acc : p.ink2,
-                ),
-              ),
-            ),
           GlassList(
             margin: const EdgeInsets.only(top: 12),
             children: <Widget>[
@@ -544,11 +533,11 @@ class PickSheetView extends ConsumerWidget {
         if (o.t == cur) Ic('check', color: p.cat('receipt')),
       ],
     );
-    final Widget search = Inp(
+    final Widget search = VoiceSearchField(
+      field: 'pq',
       value: c.f('pq'),
       onChanged: (String v) => c.setQuery('pq', v),
       placeholder: 'Search',
-      icon: 'search',
     );
     if (opts.length > 40) {
       // Long lists (thousands of ledgers): full-height sheet whose rows are
@@ -803,11 +792,11 @@ class ItemPickerSheet extends ConsumerWidget {
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Inp(
+            child: VoiceSearchField(
+              field: 'pickQ',
               value: c.f('pickQ'),
               onChanged: (String v) => c.setQuery('pickQ', v),
               placeholder: 'Search item name',
-              icon: 'search',
             ),
           ),
           Padding(
@@ -1281,7 +1270,12 @@ class CallPickSheet extends ConsumerWidget {
                   key: ValueKey<String>('callNumber-$n'),
                   onTap: () => c.dial(n),
                   children: <Widget>[
-                    Ico('phone', size: IcoSize.xs, color: p.navy, icon: IcSize.s),
+                    Ico(
+                      'phone',
+                      size: IcoSize.xs,
+                      color: p.navy,
+                      icon: IcSize.s,
+                    ),
                     Expanded(child: RTx(phoneLabel(n), 'Opens the dialer')),
                     chevR(),
                   ],
@@ -1317,7 +1311,12 @@ class MailPickSheet extends ConsumerWidget {
                   key: ValueKey<String>('mailAddress-$a'),
                   onTap: () => c.composeEmail(a),
                   children: <Widget>[
-                    Ico('mail', size: IcoSize.xs, color: p.navy, icon: IcSize.s),
+                    Ico(
+                      'mail',
+                      size: IcoSize.xs,
+                      color: p.navy,
+                      icon: IcSize.s,
+                    ),
                     Expanded(child: RTx(a, 'Opens your email app', ell: true)),
                     chevR(),
                   ],
@@ -1454,10 +1453,13 @@ class DateRangeSheet extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final String? err = c.rangeError;
     final String target = c.rangeFor;
-    final bool on = c.range != null &&
+    final bool on =
+        c.range != null &&
         switch (target) {
           'rep' => c.repPeriod == 'range',
           'out' => c.outRange,
+          // A report's period / the forecast always has dates: no Remove.
+          'fin' || 'fcast' || 'att' => false,
           _ => c.vPeriod == 'range',
         };
     return Sheet(
@@ -1466,17 +1468,28 @@ class DateRangeSheet extends ConsumerWidget {
         children: <Widget>[
           SheetHead(
             'Date range',
-            sub: target == 'out'
-                ? 'Show bills dated from – to (both days included).'
-                : 'Show entries from – to (both days included).',
+            sub: switch (target) {
+              'out' => 'Show bills dated from – to (both days included).',
+              'att' =>
+                'Check-ins from – to (both days included, at most '
+                    '${AppController.kAttMaxDays} days).',
+              'fin' =>
+                'The report\'s period, like Tally\'s F2 (both days '
+                    'included).',
+              'fcast' =>
+                'The forecast starts this week; pick how far ahead '
+                    '(up to ${AppController.kCfMaxWeeks} weeks).',
+              _ => 'Show entries from – to (both days included).',
+            },
           ),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: <Widget>[
-              for (final (String, String) e in AppController.kRangePresets)
+              for (final (String, String) e in c.rangePresets)
                 ChipBtn(
                   e.$2,
+                  key: ValueKey<String>('rangePreset-${e.$1}'),
                   height: 36,
                   fontSize: 13.5,
                   onTap: () => c.rangePreset(e.$1),
@@ -1730,8 +1743,11 @@ class MemberSheet extends ConsumerWidget {
                 Av(initials(m.name), size: Av.lg),
                 const SizedBox(width: 12),
                 Expanded(child: RTx(m.name, m.email, titleSize: 20)),
-                const SizedBox(width: 12),
-                Bdg(kTS[m.st]!.$1, kind: kTS[m.st]!.$2, dot: true),
+                // Account status: sample data only (the server keeps none).
+                if (!c.repo.isRemote) ...<Widget>[
+                  const SizedBox(width: 12),
+                  Bdg(kTS[m.st]!.$1, kind: kTS[m.st]!.$2, dot: true),
+                ],
               ],
             ),
           ),

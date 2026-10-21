@@ -133,6 +133,94 @@ class FakeBackend {
   /// GET /api/financial/periods `message` (why no date yet), or none.
   String? finReason;
 
+  /// Year ends whose closing stock is missing (`stock_needed`), whether
+  /// this login may enter one, and what PUT /api/financial/stock-values got.
+  final List<String> finStockNeeded = <String>[];
+  bool finCanEnterStock = true;
+  final List<Map<String, Object?>> finStockSaved = <Map<String, Object?>>[];
+
+  /// Vouchers synced from the books' start: any From / To (`any_period`).
+  bool finAnyPeriod = false;
+
+  /// Trial Balance with crore amounts (as on a real company's phone).
+  bool finBigTb = false;
+
+  /// Cash Flow: cash / bank moved by vouchers Tally's Cash Flow leaves out.
+  num finCashNotInFlow = 0;
+
+  // ---------------------------------------- /api/attendance/* (fake)
+  /// The last login's type (`ADMIN` / `USER`).
+  String loginType = 'ADMIN';
+
+  /// The server lets this (team) login check in; server without the routes.
+  bool attOnTeam = true;
+  bool attMissing = false;
+
+  /// Every call (path, method, body); the logins' sessions.
+  final List<Map<String, Object?>> attRequests = <Map<String, Object?>>[];
+  final List<Map<String, Object?>> attSessions = <Map<String, Object?>>[];
+
+  /// The server's clock (the same fixed "today" as the repository's).
+  DateTime Function() attNow = () => DateTime(2026, 10, 3, 11);
+
+  // --------------------------------------------- /api/leave/* (fake)
+  /// Server without the routes; every call (path, method, query + body).
+  bool leaveMissing = false;
+  final List<Map<String, Object?>> leaveCalls = <Map<String, Object?>>[];
+
+  /// The admin's settings (as stored), leave types, holidays, requests. The
+  /// member login is user 7; team members 9 "asha" and 10.
+  Map<String, Object?> leaveSettings = <String, Object?>{
+    'enabled': false,
+    'year_start_month': 4,
+    'weekly_off': <int>[0],
+    'half_day': true,
+    'backdate_days': 7,
+    'max_request_days': 30,
+  };
+  final List<Map<String, Object?>> leaveTypes = <Map<String, Object?>>[];
+  final List<Map<String, Object?>> leaveHolidays = <Map<String, Object?>>[];
+  final List<Map<String, Object?>> leaveReqs = <Map<String, Object?>>[];
+
+  /// Leave on, Casual 12 / Sick 6 / Unpaid (no limit), a holiday on
+  /// 6 Oct 2026.
+  void leaveSetUp() {
+    leaveSettings['enabled'] = true;
+    leaveTypes.addAll(<Map<String, Object?>>[
+      <String, Object?>{
+        'id': 1,
+        'name': 'Casual Leave',
+        'yearly_quota': 12,
+        'paid': true,
+        'carry_forward': false,
+        'max_carry': null,
+        'active': true,
+      },
+      <String, Object?>{
+        'id': 2,
+        'name': 'Sick Leave',
+        'yearly_quota': 6,
+        'paid': true,
+        'carry_forward': false,
+        'max_carry': null,
+        'active': true,
+      },
+      <String, Object?>{
+        'id': 3,
+        'name': 'Unpaid Leave',
+        'yearly_quota': null,
+        'paid': false,
+        'carry_forward': false,
+        'max_carry': null,
+        'active': true,
+      },
+    ]);
+    leaveHolidays.add(<String, Object?>{
+      'date': '2026-10-06',
+      'name': 'Dussehra',
+    });
+  }
+
   // ----------------------------------------- /api/analytics/sales (fake)
   /// Query of every call; server deployed without the route; no sales.
   final List<Map<String, String>> salesQueries = <Map<String, String>>[];
@@ -235,6 +323,8 @@ class FakeBackend {
     if (p.startsWith('/api/reminders')) return _reminders(r, p);
     if (p.startsWith('/api/assistant')) return _assistant(r, p);
     if (p.startsWith('/api/financial')) return _financial(r, p);
+    if (p.startsWith('/api/attendance')) return _attendance(r, p);
+    if (p.startsWith('/api/leave')) return _leave(r, p);
     if (p == '/api/analytics/sales') return _sales(r);
     if (p.startsWith('/api/cashflow/')) return _cashflow(r, p);
     if (p.startsWith('/api/tally-reports/')) return _tallyReports(r, p);
@@ -295,6 +385,7 @@ class FakeBackend {
         if (b['password'] != 'secret') {
           return http.Response('{"message":"Invalid credentials"}', 401);
         }
+        loginType = '${b['loginType']}';
         body = <String, Object?>{
           'token': kToken,
           'user': <String, Object?>{
@@ -1207,6 +1298,637 @@ class FakeBackend {
     });
   }
 
+  /// The leave API as the backend implements it (one account; the login is
+  /// user 7; team members 9 "asha" and 10; days skip weekly off and
+  /// holidays; balances = quota − approved − pending, no carry forward).
+  http.Response _leave(http.Request r, String p) {
+    final Map<String, Object?> body = r.body.isEmpty
+        ? <String, Object?>{}
+        : jsonDecode(r.body) as Map<String, Object?>;
+    final Map<String, String> q = r.url.queryParameters;
+    leaveCalls.add(<String, Object?>{
+      'path': p,
+      'method': r.method,
+      ...q,
+      ...body,
+    });
+    if (leaveMissing) return http.Response('Cannot GET $p', 404);
+    http.Response err(int status, String code, String message) => _json(
+      status,
+      <String, Object?>{'success': false, 'code': code, 'message': message},
+    );
+    String day(DateTime d) =>
+        '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    DateTime dt(String s) => DateTime.parse(s);
+    final String today = day(attNow());
+    final bool admin = loginType == 'ADMIN';
+    final int sm = leaveSettings['year_start_month']! as int;
+    final List<int> off = (leaveSettings['weekly_off']! as List<Object?>)
+        .cast<int>();
+    (String, String, String) yearOf(String d) {
+      final DateTime x = dt(d);
+      final int y = x.month >= sm ? x.year : x.year - 1;
+      return (
+        day(DateTime(y, sm)),
+        day(DateTime(y + 1, sm, 0)),
+        sm == 1 ? '$y' : '$y-${(y + 1) % 100}',
+      );
+    }
+
+    bool holiday(String d) =>
+        leaveHolidays.any((Map<String, Object?> h) => h['date'] == d);
+    bool working(String d) => !off.contains(dt(d).weekday % 7) && !holiday(d);
+    Map<String, Object?> reqOut(Map<String, Object?> x) => <String, Object?>{
+      ...x,
+      'type_name': leaveTypes.firstWhere(
+        (Map<String, Object?> t) => t['id'] == x['type_id'],
+      )['name'],
+      'username': switch (x['user_id']) {
+        9 => 'asha',
+        10 => 'vik',
+        _ => 'ravi',
+      },
+    };
+    Map<String, Object?>? reqById(int id) =>
+        leaveReqs.where((Map<String, Object?> x) => x['id'] == id).firstOrNull;
+    List<Object?> holidaysIn(String a, String b) => <Object?>[
+      for (final Map<String, Object?> h in leaveHolidays)
+        if ('${h['date']}'.compareTo(a) >= 0 &&
+            '${h['date']}'.compareTo(b) <= 0)
+          h,
+    ];
+    Map<String, Object?> yearData(int user, String date) {
+      final (String a, String b, String label) = yearOf(date);
+      final List<Map<String, Object?>> mine = <Map<String, Object?>>[
+        for (final Map<String, Object?> x in leaveReqs)
+          if (x['user_id'] == user &&
+              '${x['to']}'.compareTo(a) >= 0 &&
+              '${x['from']}'.compareTo(b) <= 0)
+            x,
+      ];
+      num sum(int type, String status) => mine
+          .where(
+            (Map<String, Object?> x) =>
+                x['type_id'] == type && x['status'] == status,
+          )
+          .fold<num>(
+            0,
+            (num s, Map<String, Object?> x) => s + (x['days']! as num),
+          );
+      return <String, Object?>{
+        'year': <String, Object?>{'from': a, 'to': b, 'label': label},
+        'balances': <Object?>[
+          for (final Map<String, Object?> t in leaveTypes)
+            if (t['active'] == true)
+              <String, Object?>{
+                'type_id': t['id'],
+                'name': t['name'],
+                'paid': t['paid'],
+                'active': true,
+                'quota': t['yearly_quota'],
+                'carried': 0,
+                'entitled': t['yearly_quota'],
+                'used': sum(t['id']! as int, 'approved'),
+                'pending': sum(t['id']! as int, 'pending'),
+                'available': t['yearly_quota'] == null
+                    ? null
+                    : (t['yearly_quota']! as num) -
+                          sum(t['id']! as int, 'approved') -
+                          sum(t['id']! as int, 'pending'),
+              },
+        ],
+        'requests': mine.reversed.map(reqOut).toList(),
+        'holidays': holidaysIn(a, b),
+      };
+    }
+
+    final RegExpMatch? decide = RegExp(
+      r'^/api/leave/requests/(\d+)/(approve|reject|cancel)$',
+    ).firstMatch(p);
+    final RegExpMatch? member = RegExp(
+      r'^/api/leave/team/(\d+)$',
+    ).firstMatch(p);
+    final RegExpMatch? type = RegExp(r'^/api/leave/types/(\d+)$').firstMatch(p);
+    final RegExpMatch? hol = RegExp(
+      r'^/api/leave/holidays/([\d-]+)$',
+    ).firstMatch(p);
+
+    if (p == '/api/leave/me') {
+      final bool on = leaveSettings['enabled'] == true;
+      final Map<String, Object?> base = <String, Object?>{
+        'success': true,
+        'enabled': on,
+        'is_admin': admin,
+        'settings': leaveSettings,
+      };
+      if (!on || admin) return _json(200, base);
+      final Map<String, Object?>? todayLeave = leaveReqs
+          .where(
+            (Map<String, Object?> x) =>
+                x['user_id'] == 7 &&
+                x['status'] == 'approved' &&
+                '${x['from']}'.compareTo(today) <= 0 &&
+                '${x['to']}'.compareTo(today) >= 0,
+          )
+          .firstOrNull;
+      return _json(200, <String, Object?>{
+        ...base,
+        ...yearData(7, q['date'] ?? today),
+        'today': <String, Object?>{
+          'date': today,
+          'kind': holiday(today)
+              ? 'holiday'
+              : (off.contains(dt(today).weekday % 7)
+                    ? 'weekly_off'
+                    : 'working'),
+          'leave': todayLeave == null ? null : reqOut(todayLeave),
+        },
+      });
+    }
+    if (p == '/api/leave/requests' && r.method == 'POST') {
+      if (admin) {
+        return err(
+          403,
+          'not_on_team',
+          'Leave is applied by team members; the admin approves it.',
+        );
+      }
+      if (leaveSettings['enabled'] != true) {
+        return err(
+          403,
+          'leave_off',
+          'Leave management is off for this account.',
+        );
+      }
+      final String? key = body['idempotency_key'] as String?;
+      final Map<String, Object?>? again = key == null
+          ? null
+          : leaveReqs
+                .where((Map<String, Object?> x) => x['key'] == key)
+                .firstOrNull;
+      if (again != null) {
+        return _json(200, <String, Object?>{
+          'success': true,
+          'replayed': true,
+          'request': reqOut(again),
+        });
+      }
+      final String a = '${body['from']}', b = '${body['to'] ?? body['from']}';
+      final String? half = body['half_day'] as String?;
+      num days = 0;
+      if (half != null) {
+        days = working(a) ? .5 : 0;
+      } else {
+        for (
+          DateTime d = dt(a);
+          !d.isAfter(dt(b));
+          d = DateTime(d.year, d.month, d.day + 1)
+        ) {
+          if (working(day(d))) days += 1;
+        }
+      }
+      if (days == 0) {
+        return err(
+          400,
+          'no_working_days',
+          'These dates are all weekly off or holidays',
+        );
+      }
+      final Map<String, Object?>? clash = leaveReqs
+          .where(
+            (Map<String, Object?> x) =>
+                x['user_id'] == 7 &&
+                (x['status'] == 'pending' || x['status'] == 'approved') &&
+                '${x['from']}'.compareTo(b) <= 0 &&
+                a.compareTo('${x['to']}') <= 0 &&
+                !(half != null &&
+                    x['half_day'] != null &&
+                    x['half_day'] != half),
+          )
+          .firstOrNull;
+      if (clash != null) {
+        return err(
+          409,
+          'overlap',
+          'You already have ${clash['status']} leave from ${clash['from']} to ${clash['to']}',
+        );
+      }
+      final Map<String, Object?> bal =
+          (yearData(7, a)['balances']! as List<Object?>)
+              .cast<Map<String, Object?>>()
+              .firstWhere(
+                (Map<String, Object?> x) => x['type_id'] == body['type_id'],
+              );
+      if (bal['available'] != null && days > (bal['available']! as num)) {
+        return err(
+          409,
+          'insufficient_balance',
+          'Only ${bal['available']} day(s) of ${bal['name']} left in ${yearOf(a).$3}',
+        );
+      }
+      final Map<String, Object?> x = <String, Object?>{
+        'id': leaveReqs.length + 1,
+        'user_id': 7,
+        'type_id': body['type_id'],
+        'from': a,
+        'to': b,
+        'half_day': half,
+        'days': days,
+        'reason': body['reason'],
+        'status': 'pending',
+        'decision_note': null,
+        'created_at': attNow().toUtc().toIso8601String(),
+        'key': key,
+      };
+      leaveReqs.add(x);
+      return _json(201, <String, Object?>{
+        'success': true,
+        'request': reqOut(x),
+      });
+    }
+    if (decide != null) {
+      final Map<String, Object?>? x = reqById(int.parse(decide.group(1)!));
+      final String action = decide.group(2)!;
+      if (action != 'cancel' && !admin) {
+        return err(403, 'forbidden', 'Admin access required');
+      }
+      if (x == null || (!admin && x['user_id'] != 7)) {
+        return err(404, 'not_found', 'Leave request not found');
+      }
+      final List<String> allowed = action == 'cancel'
+          ? (admin ? <String>['pending', 'approved'] : <String>['pending'])
+          : <String>['pending'];
+      if (!allowed.contains(x['status'])) {
+        return err(
+          409,
+          'not_pending',
+          'This request is already ${x['status']}',
+        );
+      }
+      x['status'] = switch (action) {
+        'approve' => 'approved',
+        'reject' => 'rejected',
+        _ => 'cancelled',
+      };
+      x['decision_note'] = body['note'] ?? x['decision_note'];
+      return _json(200, <String, Object?>{
+        'success': true,
+        'request': reqOut(x),
+      });
+    }
+    if (p == '/api/leave/requests') {
+      if (!admin) return err(403, 'forbidden', 'Admin access required');
+      final String status = q['status'] ?? 'pending';
+      return _json(200, <String, Object?>{
+        'success': true,
+        'status': status,
+        'requests': <Object?>[
+          for (final Map<String, Object?> x in leaveReqs)
+            if (status == 'all' || x['status'] == status) reqOut(x),
+        ],
+      });
+    }
+    if (member != null) {
+      if (!admin) return err(403, 'forbidden', 'Admin access required');
+      final int id = int.parse(member.group(1)!);
+      if (id != 9 && id != 10) {
+        return err(404, 'not_found', 'Team member not found');
+      }
+      return _json(200, <String, Object?>{
+        'success': true,
+        'member': <String, Object?>{
+          'user_id': id,
+          'username': id == 9 ? 'asha' : 'vik',
+        },
+        'settings': leaveSettings,
+        ...yearData(id, q['date'] ?? today),
+      });
+    }
+    if (p == '/api/leave/calendar') {
+      final String a = q['from'] ?? today, b = q['to'] ?? today;
+      return _json(200, <String, Object?>{
+        'success': true,
+        'from': a,
+        'to': b,
+        'weekly_off': off,
+        'holidays': holidaysIn(a, b),
+        'leaves': <Object?>[
+          for (final Map<String, Object?> x in leaveReqs)
+            if (x['status'] == 'approved' &&
+                (admin || x['user_id'] == 7) &&
+                '${x['to']}'.compareTo(a) >= 0 &&
+                '${x['from']}'.compareTo(b) <= 0)
+              reqOut(x),
+        ],
+      });
+    }
+    // Leave settings: the admin's.
+    if (!admin) return err(403, 'forbidden', 'Admin access required');
+    if (p == '/api/leave/settings' && r.method == 'GET') {
+      final (String a, String b, String label) = yearOf(q['date'] ?? today);
+      return _json(200, <String, Object?>{
+        'success': true,
+        'settings': leaveSettings,
+        'year': <String, Object?>{'from': a, 'to': b, 'label': label},
+        'types': leaveTypes,
+        'holidays': holidaysIn(a, b),
+      });
+    }
+    if (p == '/api/leave/settings' && r.method == 'PUT') {
+      final List<Object?>? w = body['weekly_off'] as List<Object?>?;
+      if (w != null && w.length > 6) {
+        return err(
+          400,
+          'bad',
+          'At least one day of the week must be a working day',
+        );
+      }
+      leaveSettings = <String, Object?>{...leaveSettings, ...body};
+      return _json(200, <String, Object?>{
+        'success': true,
+        'settings': leaveSettings,
+      });
+    }
+    if (p == '/api/leave/types/defaults') {
+      if (leaveTypes.isNotEmpty) {
+        return err(409, 'types_exist', 'Leave types are already set up');
+      }
+      final bool was = leaveSettings['enabled'] == true;
+      leaveSetUp();
+      leaveHolidays.removeLast();
+      leaveSettings['enabled'] = was;
+      return _json(201, <String, Object?>{
+        'success': true,
+        'types': leaveTypes,
+      });
+    }
+    if (p == '/api/leave/types' || type != null) {
+      final String name = '${body['name'] ?? ''}'.trim();
+      final int? id = type == null ? null : int.parse(type.group(1)!);
+      if (leaveTypes.any(
+        (Map<String, Object?> t) =>
+            t['id'] != id && '${t['name']}'.toLowerCase() == name.toLowerCase(),
+      )) {
+        return err(409, 'name_taken', 'A leave type with this name exists');
+      }
+      if (id == null) {
+        final Map<String, Object?> t = <String, Object?>{
+          'id': leaveTypes.length + 1,
+          'active': true,
+          ...body,
+        };
+        leaveTypes.add(t);
+        return _json(201, <String, Object?>{'success': true, 'type': t});
+      }
+      final Map<String, Object?> t = leaveTypes.firstWhere(
+        (Map<String, Object?> x) => x['id'] == id,
+      );
+      t.addAll(body);
+      return _json(200, <String, Object?>{'success': true, 'type': t});
+    }
+    if (p == '/api/leave/holidays' && r.method == 'POST') {
+      leaveHolidays
+        ..removeWhere((Map<String, Object?> h) => h['date'] == body['date'])
+        ..add(<String, Object?>{'date': body['date'], 'name': body['name']})
+        ..sort(
+          (Map<String, Object?> a, Map<String, Object?> b) =>
+              '${a['date']}'.compareTo('${b['date']}'),
+        );
+      return _json(201, <String, Object?>{'success': true});
+    }
+    if (hol != null && r.method == 'DELETE') {
+      final int before = leaveHolidays.length;
+      leaveHolidays.removeWhere(
+        (Map<String, Object?> h) => h['date'] == hol.group(1),
+      );
+      if (leaveHolidays.length == before) {
+        return err(404, 'not_found', 'Holiday not found');
+      }
+      return _json(200, <String, Object?>{'success': true});
+    }
+    return err(404, 'not_found', 'Not found');
+  }
+
+  /// The attendance API as the backend implements it (one account; the
+  /// login is user 7; team member 9 "asha" has a session for the admin view).
+  http.Response _attendance(http.Request r, String p) {
+    final Map<String, Object?> body = r.body.isEmpty
+        ? <String, Object?>{}
+        : jsonDecode(r.body) as Map<String, Object?>;
+    attRequests.add(<String, Object?>{
+      'path': p,
+      'method': r.method,
+      ...r.url.queryParameters,
+      ...body,
+    });
+    if (attMissing) {
+      return http.Response('Cannot GET $p', 404);
+    }
+    final DateTime now = attNow();
+    String day(DateTime d) =>
+        '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    final String today = day(now);
+    final bool admin = loginType == 'ADMIN';
+    Map<String, Object?> out(Map<String, Object?> s) {
+      final DateTime a = s['check_in_at']! as DateTime;
+      final DateTime? b = s['check_out_at'] as DateTime?;
+      return <String, Object?>{
+        'id': s['id'],
+        'work_date': s['work_date'],
+        'check_in_at': a.toUtc().toIso8601String(),
+        'check_out_at': b?.toUtc().toIso8601String(),
+        'last_seen_at': (s['last_seen_at']! as DateTime)
+            .toUtc()
+            .toIso8601String(),
+        'in_note': s['in_note'],
+        'out_note': s['out_note'],
+        'closed_by': s['closed_by'],
+        'open': b == null,
+        'minutes': (b ?? now).difference(a).inMinutes,
+      };
+    }
+
+    List<Map<String, Object?>> of(
+      String user, {
+      String? date,
+    }) => <Map<String, Object?>>[
+      for (final Map<String, Object?> s in attSessions)
+        if (s['user_id'] == user && (date == null || s['work_date'] == date)) s,
+    ];
+    Map<String, Object?>? openOf(String user) => of(
+      user,
+    ).where((Map<String, Object?> s) => s['check_out_at'] == null).firstOrNull;
+    Map<String, Object?> dayOf(List<Map<String, Object?>> ss) {
+      final Map<String, Object?>? o = ss
+          .where((Map<String, Object?> s) => s['check_out_at'] == null)
+          .firstOrNull;
+      final String status = o != null
+          ? (now.difference(o['last_seen_at']! as DateTime).inMinutes <= 15
+                ? 'active'
+                : 'idle')
+          : (ss.isEmpty ? 'absent' : 'checked_out');
+      return <String, Object?>{
+        'status': status,
+        'first_in': ss.isEmpty
+            ? null
+            : (ss.first['check_in_at']! as DateTime).toUtc().toIso8601String(),
+        'last_out': o != null || ss.isEmpty
+            ? null
+            : (ss.last['check_out_at']! as DateTime).toUtc().toIso8601String(),
+        'last_seen_at': o == null
+            ? null
+            : (o['last_seen_at']! as DateTime).toUtc().toIso8601String(),
+        'total_minutes': ss.fold<int>(
+          0,
+          (int a, Map<String, Object?> s) => a + (out(s)['minutes']! as int),
+        ),
+        'auto_closed': ss.any(
+          (Map<String, Object?> s) => s['closed_by'] == 'auto',
+        ),
+        'sessions': ss.map(out).toList(),
+      };
+    }
+
+    List<Object?> days(List<Map<String, Object?>> ss) {
+      final List<String> ds = <String>{
+        for (final Map<String, Object?> s in ss) '${s['work_date']}',
+      }.toList()..sort((String a, String b) => b.compareTo(a));
+      return <Object?>[
+        for (final String d in ds)
+          <String, Object?>{
+            'date': d,
+            ...dayOf(
+              ss
+                  .where((Map<String, Object?> s) => s['work_date'] == d)
+                  .toList(),
+            ),
+          },
+      ];
+    }
+
+    http.Response err(int status, String code, String message) => _json(
+      status,
+      <String, Object?>{'success': false, 'code': code, 'message': message},
+    );
+    if (p == '/api/attendance/me') {
+      return _json(200, <String, Object?>{
+        'success': true,
+        'enabled': !admin && attOnTeam,
+        'is_admin': admin,
+        'server_time': now.toUtc().toIso8601String(),
+        'date': today,
+        ...dayOf(of('7', date: today)),
+      });
+    }
+    if (p == '/api/attendance/check-in') {
+      if (admin || !attOnTeam) {
+        return err(
+          403,
+          'not_on_team',
+          'Check-in is for team members; the admin sees the team.',
+        );
+      }
+      final Object? key = body['idempotency_key'];
+      final Map<String, Object?>? again = key == null
+          ? null
+          : attSessions
+                .where((Map<String, Object?> s) => s['key'] == key)
+                .firstOrNull;
+      if (again != null) {
+        return _json(200, <String, Object?>{
+          'success': true,
+          'replayed': true,
+          'session': out(again),
+        });
+      }
+      if (openOf('7') != null) {
+        return err(409, 'already_checked_in', 'You are already checked in.');
+      }
+      final Map<String, Object?> s = <String, Object?>{
+        'id': attSessions.length + 1,
+        'user_id': '7',
+        'work_date': today,
+        'check_in_at': now,
+        'last_seen_at': now,
+        'check_out_at': null,
+        'in_note': body['note'],
+        'out_note': null,
+        'closed_by': null,
+        'key': key,
+      };
+      attSessions.add(s);
+      return _json(201, <String, Object?>{'success': true, 'session': out(s)});
+    }
+    if (p == '/api/attendance/check-out') {
+      final Map<String, Object?>? o = openOf('7');
+      if (o == null) {
+        return err(409, 'not_checked_in', 'You are not checked in.');
+      }
+      o['check_out_at'] = now;
+      o['last_seen_at'] = now;
+      o['out_note'] = body['note'];
+      o['closed_by'] = 'user';
+      return _json(200, <String, Object?>{'success': true, 'session': out(o)});
+    }
+    if (p == '/api/attendance/ping') {
+      final Map<String, Object?>? o = openOf('7');
+      if (o != null) o['last_seen_at'] = now;
+      return _json(200, <String, Object?>{'success': true, 'open': o != null});
+    }
+    final Map<String, String> q = r.url.queryParameters;
+    if (p == '/api/attendance/me/history') {
+      return _json(200, <String, Object?>{
+        'success': true,
+        'from': q['from'],
+        'to': q['to'],
+        'days': days(of('7')),
+      });
+    }
+    if (!admin) return err(403, 'forbidden', 'Admin access required');
+    if (p == '/api/attendance/team') {
+      final String date = q['date'] ?? today;
+      final List<Map<String, Object?>> members = <Map<String, Object?>>[
+        // Every team member of the account.
+        for (final (String, String) m in <(String, String)>[
+          ('9', 'asha'),
+          ('10', 'vik'),
+        ])
+          <String, Object?>{
+            'user_id': int.parse(m.$1),
+            'username': m.$2,
+            'email': '${m.$2}@x.in',
+            ...dayOf(of(m.$1, date: date)),
+          },
+      ];
+      return _json(200, <String, Object?>{
+        'success': true,
+        'date': date,
+        'company': 'Gupta Industries',
+        'members': members,
+      });
+    }
+    final RegExpMatch? h = RegExp(
+      r'^/api/attendance/team/(\d+)/history$',
+    ).firstMatch(p);
+    if (h != null) {
+      final String id = h.group(1)!;
+      if (id != '9' && id != '10') {
+        return err(404, 'not_found', 'Team member not found');
+      }
+      return _json(200, <String, Object?>{
+        'success': true,
+        'member': <String, Object?>{
+          'user_id': int.parse(id),
+          'username': id == '9' ? 'asha' : 'vik',
+        },
+        'from': q['from'],
+        'to': q['to'],
+        'days': days(of(id)),
+      });
+    }
+    return err(404, 'not_found', 'Not found');
+  }
+
   http.Response _financial(http.Request r, String p) {
     finRequests.add(<String, Object?>{
       'path': p,
@@ -1239,12 +1961,25 @@ class FakeBackend {
         'message': 'Ask your admin for access to financial reports.',
       });
     }
+    if (p == '/api/financial/stock-values' && r.method == 'PUT') {
+      final Map<String, Object?> b = jsonDecode(r.body) as Map<String, Object?>;
+      finStockSaved.add(b);
+      finStockNeeded.remove(b['as_on']);
+      return _json(200, <String, Object?>{'success': true, ...b});
+    }
     if (p == '/api/financial/periods') {
       return _json(200, <String, Object?>{
         'success': true,
         'company': 'Gupta Industries',
         'groups_synced': !finNotSynced,
         'message': ?finReason,
+        'stock_needed': <Object?>[...finStockNeeded],
+        'can_enter_stock': finCanEnterStock,
+        if (finAnyPeriod) ...<String, Object?>{
+          'any_period': true,
+          'books_from': '2023-04-01',
+          'stock_dates': <Object?>['2026-03-31', '2026-10-03'],
+        },
         'snapshots': finNotSynced
             ? <Object?>[]
             : <Object?>[
@@ -1342,6 +2077,31 @@ class FakeBackend {
         'total_assets': 217000,
         'difference': 0,
       },
+      '/api/financial/trial-balance' when finBigTb => <String, Object?>{
+        'as_on': r.url.queryParameters['as_on'],
+        'company': 'GI Apr 25-26',
+        'sections': <Object?>[
+          <String, Object?>{
+            ...g('Current Assets', 314552508.38, <Object?>[
+              l('Real Glory Pvt Ltd', 316471156.96),
+              l('Advance to Suppliers', -1918648.58),
+            ]),
+            'nature': 'asset',
+          },
+          <String, Object?>{
+            ...g('Current Liabilities', -296193059.12, <Object?>[
+              l('GST Payable', 6138666.06),
+              l('Polycab Wires Pvt Ltd', -302331725.18),
+            ]),
+            'nature': 'liability',
+          },
+        ],
+        'opening_stock': 0,
+        'total_debit': 322609823.02,
+        'total_credit': 304250373.76,
+        'difference': 18359449.26,
+        'ungrouped': <Object?>[],
+      },
       '/api/financial/trial-balance' => <String, Object?>{
         'as_on': r.url.queryParameters['as_on'],
         'company': 'Gupta Industries',
@@ -1387,6 +2147,90 @@ class FakeBackend {
             'amount': 6000,
           },
         ],
+      },
+      '/api/financial/cash-flow' => <String, Object?>{
+        'from': r.url.queryParameters['from'],
+        'to': r.url.queryParameters['to'],
+        'company': 'Gupta Industries',
+        'opening': 45000,
+        'inflow': 52000,
+        'outflow': 30000,
+        'net': 22000,
+        'closing': 67000 + finCashNotInFlow,
+        'not_in_flow': finCashNotInFlow,
+        'months': <Object?>[
+          <String, Object?>{
+            'month': '2026-08',
+            'inflow': 40000,
+            'outflow': 18000,
+            'net': 22000,
+          },
+          <String, Object?>{
+            'month': '2026-09',
+            'inflow': 12000,
+            'outflow': 12000,
+            'net': 0,
+          },
+        ],
+        'inflow_groups': <Object?>[
+          <String, Object?>{'name': 'Sundry Debtors', 'amount': 52000},
+        ],
+        'outflow_groups': <Object?>[
+          <String, Object?>{'name': 'Indirect Expenses', 'amount': 18000},
+          <String, Object?>{'name': 'Sundry Creditors', 'amount': 12000},
+        ],
+        'accounts': <Object?>[
+          <String, Object?>{
+            'name': 'HDFC Bank',
+            'group': 'Bank Accounts',
+            'opening': 40000,
+            'closing': 60000,
+          },
+          <String, Object?>{
+            'name': 'Cash',
+            'group': 'Cash-in-Hand',
+            'opening': 5000,
+            'closing': 7000,
+          },
+        ],
+        'cash_ledgers': 2,
+      },
+      '/api/financial/ledger-vouchers' => <String, Object?>{
+        'ledger': <String, Object?>{
+          'name': r.url.queryParameters['name'] ?? 'Salary',
+          'guid': r.url.queryParameters['guid'],
+          'group': 'Indirect Expenses',
+          'nature': 'expense',
+        },
+        'from': r.url.queryParameters['from'],
+        'to': r.url.queryParameters['to'],
+        'opening': 0,
+        'closing': -18000,
+        'total_debit': 18000,
+        'total_credit': 0,
+        'rows': <Object?>[
+          <String, Object?>{
+            'guid': 'v-1',
+            'date': '2026-08-31',
+            'type': 'Payment',
+            'ref': '12',
+            'particulars': 'HDFC Bank',
+            'debit': 10000,
+            'credit': 0,
+            'balance': -10000,
+          },
+          <String, Object?>{
+            'guid': 'v-2',
+            'date': '2026-09-30',
+            'type': 'Payment',
+            'ref': '19',
+            'particulars': 'Cash',
+            'debit': 8000,
+            'credit': 0,
+            'balance': -18000,
+          },
+        ],
+        'truncated': false,
       },
       _ => null,
     };

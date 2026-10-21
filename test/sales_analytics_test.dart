@@ -149,6 +149,30 @@ void main() {
       final AppController c = await open(t, f);
       c.go('reports');
       await settle(t);
+      // The Business Analytics tab (right under the summary card).
+      await t.ensureVisible(
+        find.byKey(const ValueKey<String>('repTab-analytics')),
+      );
+      await t.pump();
+      await t.tap(find.byKey(const ValueKey<String>('repTab-analytics')));
+      await settle(t);
+      expect(c.repTab, 'analytics');
+      expect(find.byKey(const ValueKey<String>('fin-bs')), findsNothing);
+      await t.scrollUntilVisible(
+        find.byKey(const ValueKey<String>('salesTile')),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await t.ensureVisible(find.byKey(const ValueKey<String>('salesTile')));
+      await t.pump();
+      expect(
+        find.byKey(const ValueKey<String>('topCustomersTile')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('topProductsTile')),
+        findsOneWidget,
+      );
       await t.tap(find.byKey(const ValueKey<String>('salesTile')));
       await settle(t);
       expect(c.screen, 'salesDash');

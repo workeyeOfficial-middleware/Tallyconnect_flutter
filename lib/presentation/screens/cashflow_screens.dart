@@ -11,12 +11,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/app_state.dart';
 import '../../app/providers.dart';
+import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
 import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
+import '../widgets/report_card.dart';
 import '../widgets/report_chart.dart' show compactInr;
 import 'stock_party_screens.dart' show StatBox;
 
@@ -35,35 +37,71 @@ class CashflowTile extends ConsumerWidget {
     if (c.finCanView != true || !c.repo.isRemote || c.demo) {
       return const SizedBox.shrink();
     }
+    return ReportCard(
+      key: const ValueKey<String>('cashflowTile'),
+      icon: 'calendar',
+      title: 'Cash Flow Forecast',
+      subtitle: 'Coming weeks: money in, money out, balance',
+      onTap: c.openCashflow,
+    );
+  }
+}
+
+/// The From / To of a report, in its header: tap to change (the date-range
+/// sheet). [fromLabel] / [toLabel] name the two dates ("As at" for a
+/// Balance Sheet's To).
+class FromToBar extends StatelessWidget {
+  const FromToBar({
+    super.key,
+    required this.from,
+    required this.to,
+    required this.onTap,
+    this.fromLabel = 'From',
+    this.toLabel = 'To',
+  });
+  final DateTime from, to;
+  final VoidCallback? onTap;
+  final String fromLabel, toLabel;
+
+  @override
+  Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+    Widget box(String k, String label, DateTime d) => Expanded(
       child: Tap(
-        key: const ValueKey<String>('cashflowTile'),
-        onTap: c.openCashflow,
+        key: ValueKey<String>(k),
+        onTap: onTap,
         child: Glass(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.fromLTRB(12, 8, 10, 9),
           child: Row(
             children: <Widget>[
-              Ico('cash', size: IcoSize.sm, color: p.acc),
-              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Text('Cash flow forecast', style: rtStyle(context)),
+                    Text(label, style: ts(11.5, w: w600, c: p.ink3)),
                     const SizedBox(height: 2),
-                    Text(
-                      'Next 13 weeks: money in, money out, balance',
-                      style: rsStyle(context),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(dmy(d), style: ts(15, w: w700, c: p.ink)),
                     ),
                   ],
                 ),
               ),
-              chevR(),
+              Ic('calendar', size: IcSize.xs, color: p.ink3),
             ],
           ),
         ),
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: <Widget>[
+          box('periodFrom', fromLabel, from),
+          const SizedBox(width: 10),
+          box('periodTo', toLabel, to),
+        ],
       ),
     );
   }
@@ -99,8 +137,14 @@ class CashflowScreen extends ConsumerWidget {
         Sub(
           <String>[
             if ((f?.company ?? '').isNotEmpty) f!.company else c.companyName,
-            'Next 13 weeks',
+            'Next ${c.cfWeeks} weeks',
           ].join(' · '),
+        ),
+        // From (this week) / To: how many weeks ahead.
+        FromToBar(
+          from: c.cfStart,
+          to: c.cfEnd,
+          onTap: c.cfBusy ? null : c.openCfRange,
         ),
         Seg(
           key: const ValueKey<String>('cfMode'),
@@ -169,7 +213,7 @@ class CashflowScreen extends ConsumerWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(8, 10, 8, 0),
                 child: Text(
-                  'After these 13 weeks: ${inr(f.laterIn)} to come in, '
+                  'After these ${f.weeks.length} weeks: ${inr(f.laterIn)} to come in, '
                   '${inr(f.laterOut)} to pay.',
                   style: rsStyle(context),
                 ),
@@ -326,8 +370,8 @@ class _Headline extends StatelessWidget {
                 width: box.maxWidth,
                 child: tile(
                   end == null
-                      ? 'Net change over 13 weeks'
-                      : 'Balance after 13 weeks',
+                      ? 'Net change over ${f.weeks.length} weeks'
+                      : 'Balance after ${f.weeks.length} weeks',
                   inr(end ?? (f.totalIn - f.totalOut)),
                   color: (end ?? (f.totalIn - f.totalOut)) < 0 ? p.neg : p.ink,
                   key: const ValueKey<String>('cfEnd'),
@@ -799,14 +843,14 @@ class _LineRow extends StatelessWidget {
 ShareDoc cashflowDoc(AppController c, CashForecast f) => ShareDoc(
   title: 'Cash flow forecast',
   subtitle:
-      '13 weeks from ${f.weeks.isEmpty ? dmy(f.asOn) : dmy(f.weeks.first.start)} · '
+      '${f.weeks.length} weeks from ${f.weeks.isEmpty ? dmy(f.asOn) : dmy(f.weeks.first.start)} · '
       '${f.adjusted ? 'with customers\' usual payment delays' : 'by due dates'}',
   company: f.company.isEmpty ? c.companyName : f.company,
   fileStem: 'Cash_flow_forecast',
   facts: <(String, String)>[
     ('Cash + bank today', f.opening == null ? 'Not available' : inr(f.opening)),
-    ('Money in (13 weeks)', inr(f.totalIn)),
-    ('Money out (13 weeks)', inr(f.totalOut)),
+    ('Money in (${f.weeks.length} weeks)', inr(f.totalIn)),
+    ('Money out (${f.weeks.length} weeks)', inr(f.totalOut)),
     if (f.doubtfulBills > 0 && !c.cfDoubtful)
       ('Over ${f.doubtfulDays} days late (not counted)', inr(f.doubtfulAmount)),
     if (f.shortfallWeek != null)
@@ -829,6 +873,6 @@ ShareDoc cashflowDoc(AppController c, CashForecast f) => ShareDoc(
   totals: <(String, String)>[
     ('Total in', inr(f.totalIn)),
     ('Total out', inr(f.totalOut)),
-    if (f.endBalance != null) ('Balance after 13 weeks', inr(f.endBalance)),
+    if (f.endBalance != null) ('Balance after ${f.weeks.length} weeks', inr(f.endBalance)),
   ],
 );

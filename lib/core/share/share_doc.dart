@@ -587,7 +587,8 @@ ShareDoc docNotif(Notif n, String company) => ShareDoc(
   facts: <(String, String)>[('Alert', n.b)],
 );
 
-ShareDoc docMember(Member m, String company) => ShareDoc(
+/// [status]: the account status (sample data only; the server keeps none).
+ShareDoc docMember(Member m, String company, {bool status = true}) => ShareDoc(
   title: m.name,
   subtitle: 'Sales Team',
   company: company,
@@ -595,12 +596,13 @@ ShareDoc docMember(Member m, String company) => ShareDoc(
   facts: <(String, String)>[
     ('Email / mobile', m.email),
     ('Role', m.role),
-    (
-      'Status',
-      m.st == 'active'
-          ? 'Active'
-          : (m.st == 'pending' ? 'Invite sent' : 'Turned off'),
-    ),
+    if (status)
+      (
+        'Status',
+        m.st == 'active'
+            ? 'Active'
+            : (m.st == 'pending' ? 'Invite sent' : 'Turned off'),
+      ),
   ],
 );
 

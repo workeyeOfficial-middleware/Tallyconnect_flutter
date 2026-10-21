@@ -142,6 +142,93 @@ class DemoAwareRepository extends TallyRepository {
   Future<ReminderOutcome> retryReminder(int id) =>
       _rem(() => live.retryReminder(id));
 
+  // ------------------- sales team attendance: real company only
+  Future<T> _att<T>(Future<T> Function() f) =>
+      _demoOn ? Future<T>.error(kDemoAttendanceBlocked) : f();
+  @override
+  Future<AttMe> attendanceMe() => _att(live.attendanceMe);
+  @override
+  Future<AttSession> checkIn({String? note, String? key}) =>
+      _att(() => live.checkIn(note: note, key: key));
+  @override
+  Future<AttSession> checkOut({String? note}) =>
+      _att(() => live.checkOut(note: note));
+  @override
+  Future<bool> attendancePing() => _att(live.attendancePing);
+  @override
+  Future<AttHistory> attendanceHistory({
+    required DateTime from,
+    required DateTime to,
+  }) => _att(() => live.attendanceHistory(from: from, to: to));
+  @override
+  Future<AttTeam> attendanceTeam(DateTime date) =>
+      _att(() => live.attendanceTeam(date));
+  @override
+  Future<AttHistory> attendanceMemberHistory(
+    String userId, {
+    required DateTime from,
+    required DateTime to,
+  }) => _att(() => live.attendanceMemberHistory(userId, from: from, to: to));
+
+  // --------------------------- leave management: real company only
+  Future<T> _leave<T>(Future<T> Function() f) =>
+      _demoOn ? Future<T>.error(kDemoLeaveBlocked) : f();
+  @override
+  Future<LeaveMe> leaveMe({DateTime? date}) =>
+      _leave(() => live.leaveMe(date: date));
+  @override
+  Future<LeaveRequest> applyLeave({
+    required int typeId,
+    required DateTime from,
+    required DateTime to,
+    String? halfDay,
+    String? reason,
+    String? key,
+  }) => _leave(
+    () => live.applyLeave(
+      typeId: typeId,
+      from: from,
+      to: to,
+      halfDay: halfDay,
+      reason: reason,
+      key: key,
+    ),
+  );
+  @override
+  Future<LeaveRequest> decideLeave(int id, String action, {String? note}) =>
+      _leave(() => live.decideLeave(id, action, note: note));
+  @override
+  Future<List<LeaveRequest>> leaveRequests({
+    String status = 'pending',
+    String? userId,
+  }) => _leave(() => live.leaveRequests(status: status, userId: userId));
+  @override
+  Future<LeaveMe> leaveMember(String userId, {DateTime? date}) =>
+      _leave(() => live.leaveMember(userId, date: date));
+  @override
+  Future<LeaveCalendar> leaveCalendar({
+    required DateTime from,
+    required DateTime to,
+  }) => _leave(() => live.leaveCalendar(from: from, to: to));
+  @override
+  Future<LeaveAdmin> leaveSettings({DateTime? date}) =>
+      _leave(() => live.leaveSettings(date: date));
+  @override
+  Future<LeaveSettings> saveLeaveSettings(Map<String, Object?> changes) =>
+      _leave(() => live.saveLeaveSettings(changes));
+  @override
+  Future<LeaveType> saveLeaveType(Map<String, Object?> fields, {int? id}) =>
+      _leave(() => live.saveLeaveType(fields, id: id));
+  @override
+  Future<List<LeaveType>> addDefaultLeaveTypes() =>
+      _leave(live.addDefaultLeaveTypes);
+  @override
+  Future<void> addHoliday(DateTime date, String name) =>
+      _leave(() => live.addHoliday(date, name));
+  @override
+  Future<void> deleteHoliday(DateTime date) =>
+      _leave(() => live.deleteHoliday(date));
+
   // ------------------- financial statements: real company data only
   @override
   Future<bool> financialCanView() async =>
@@ -167,9 +254,15 @@ class DemoAwareRepository extends TallyRepository {
     String mode = 'adjusted',
     bool doubtful = false,
     bool refresh = false,
+    int weeks = 13,
   }) => _demoOn
       ? Future<CashForecast>.error(kDemoFinancialBlocked)
-      : live.cashflowForecast(mode: mode, doubtful: doubtful, refresh: refresh);
+      : live.cashflowForecast(
+          mode: mode,
+          doubtful: doubtful,
+          refresh: refresh,
+          weeks: weeks,
+        );
   @override
   Future<CashWeekDetail> cashflowWeek(
     String start, {
@@ -197,10 +290,23 @@ class DemoAwareRepository extends TallyRepository {
           includePurchases: includePurchases,
         );
   @override
+  Future<LedgerVouchers> ledgerVouchers({
+    String? guid,
+    String? name,
+    required DateTime from,
+    required DateTime to,
+  }) => _demoOn
+      ? Future<LedgerVouchers>.error(kDemoFinancialBlocked)
+      : live.ledgerVouchers(guid: guid, name: name, from: from, to: to);
+  @override
   Future<Set<String>> financialAccess() => live.financialAccess();
   @override
   Future<void> setFinancialAccess(String userId, bool enabled) =>
       live.setFinancialAccess(userId, enabled);
+  @override
+  Future<void> setFinancialStock(DateTime asOn, num value) => _demoOn
+      ? Future<void>.error(kDemoFinancialBlocked)
+      : live.setFinancialStock(asOn, value);
 
   // ---------------------- AI assistant: real company data only (no demo)
   @override
@@ -208,10 +314,8 @@ class DemoAwareRepository extends TallyRepository {
       ? Future<AiStatus>.error(kDemoAssistantBlocked)
       : live.assistantStatus();
   @override
-  Future<AssistantReply> askAssistant(
-    String question,
-    List<AiTurn> history,
-  ) => _demoOn
+  Future<AssistantReply> askAssistant(String question, List<AiTurn> history) =>
+      _demoOn
       ? Future<AssistantReply>.error(kDemoAssistantBlocked)
       : live.askAssistant(question, history);
 
@@ -385,6 +489,18 @@ const ApiException kDemoReminderBlocked = ApiException(
 );
 
 /// Financial statements come from the real company's Tally figures.
+const ApiException kDemoAttendanceBlocked = ApiException(
+  ApiErrorKind.forbidden,
+  'Check-in works with your Tally company, not Demo Company. Switch to '
+  'your company to use it.',
+);
+
+/// Leave belongs to the real company's team.
+const ApiException kDemoLeaveBlocked = ApiException(
+  ApiErrorKind.forbidden,
+  'Leave works with your Tally company, not Demo Company. Switch to your '
+  'company to use it.',
+);
 const ApiException kDemoFinancialBlocked = ApiException(
   ApiErrorKind.forbidden,
   'Financial reports show your Tally company, not Demo Company. Switch to '

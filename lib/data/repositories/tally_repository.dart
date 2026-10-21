@@ -274,6 +274,95 @@ abstract class TallyRepository extends ChangeNotifier {
   /// Sends a failed reminder again (bills and recipient read again).
   Future<ReminderOutcome> retryReminder(int id) async => throw noReminders;
 
+  // --------------------------------------------- sales team attendance
+  static const ApiException noAttendance = ApiException(
+    ApiErrorKind.forbidden,
+    'Check-in needs your TallyConnect account and a Tally company.',
+  );
+
+  /// This login's attendance today (and whether it may check in).
+  Future<AttMe> attendanceMe() async => throw noAttendance;
+
+  /// Checks in now ([key]: the same for a retried tap). Returns the session.
+  Future<AttSession> checkIn({String? note, String? key}) async =>
+      throw noAttendance;
+  Future<AttSession> checkOut({String? note}) async => throw noAttendance;
+
+  /// The app is open (keeps an "Active" check-in active). True when open.
+  Future<bool> attendancePing() async => throw noAttendance;
+  Future<AttHistory> attendanceHistory({
+    required DateTime from,
+    required DateTime to,
+  }) async => throw noAttendance;
+
+  /// Admin: the sales team's status on [date] (active company).
+  Future<AttTeam> attendanceTeam(DateTime date) async => throw noAttendance;
+  Future<AttHistory> attendanceMemberHistory(
+    String userId, {
+    required DateTime from,
+    required DateTime to,
+  }) async => throw noAttendance;
+
+  // ------------------------------------------------- leave management
+  static const ApiException noLeave = ApiException(
+    ApiErrorKind.forbidden,
+    'Leave needs your TallyConnect account and a Tally company.',
+  );
+
+  /// This login's leave year holding [date] (today when null): on? balances,
+  /// requests, holidays, today.
+  Future<LeaveMe> leaveMe({DateTime? date}) async => throw noLeave;
+
+  /// A leave request ([key]: the same for a retried tap).
+  Future<LeaveRequest> applyLeave({
+    required int typeId,
+    required DateTime from,
+    required DateTime to,
+    String? halfDay,
+    String? reason,
+    String? key,
+  }) async => throw noLeave;
+
+  /// [action]: `approve` / `reject` (admin) or `cancel`.
+  Future<LeaveRequest> decideLeave(
+    int id,
+    String action, {
+    String? note,
+  }) async => throw noLeave;
+
+  /// Admin: requests ([status]: pending / approved / rejected / cancelled /
+  /// all).
+  Future<List<LeaveRequest>> leaveRequests({
+    String status = 'pending',
+    String? userId,
+  }) async => throw noLeave;
+
+  /// Admin: one member's leave year.
+  Future<LeaveMe> leaveMember(String userId, {DateTime? date}) async =>
+      throw noLeave;
+
+  /// Approved leave, holidays and weekly off from [from] to [to].
+  Future<LeaveCalendar> leaveCalendar({
+    required DateTime from,
+    required DateTime to,
+  }) async => throw noLeave;
+
+  /// Admin: Leave settings (with types and the leave year's holidays).
+  Future<LeaveAdmin> leaveSettings({DateTime? date}) async => throw noLeave;
+
+  /// Admin: changes some settings; returns them all.
+  Future<LeaveSettings> saveLeaveSettings(Map<String, Object?> changes) async =>
+      throw noLeave;
+
+  /// Admin: a new leave type, or ([id] given) changes to one.
+  Future<LeaveType> saveLeaveType(
+    Map<String, Object?> fields, {
+    int? id,
+  }) async => throw noLeave;
+  Future<List<LeaveType>> addDefaultLeaveTypes() async => throw noLeave;
+  Future<void> addHoliday(DateTime date, String name) async => throw noLeave;
+  Future<void> deleteHoliday(DateTime date) async => throw noLeave;
+
   // ------------------------------------------------ financial statements
   static const ApiException noFinancial = ApiException(
     ApiErrorKind.forbidden,
@@ -300,6 +389,7 @@ abstract class TallyRepository extends ChangeNotifier {
     String mode = 'adjusted',
     bool doubtful = false,
     bool refresh = false,
+    int weeks = 13,
   }) async => throw noFinancial;
 
   /// The bills expected in the forecast week starting [start] (`YYYY-MM-DD`).
@@ -313,7 +403,8 @@ abstract class TallyRepository extends ChangeNotifier {
   Future<SalesDash> salesAnalytics(String from, String to) async =>
       throw noFinancial;
 
-  /// [kind]: `pl` / `exp` (from–to) or `bs` / `tb` (as on [to]).
+  /// [kind]: `pl` / `exp` / `cf` (from–to) or `bs` / `tb` (as on [to],
+  /// the period starting [from]).
   Future<FinReport> financialReport(
     String kind, {
     required DateTime to,
@@ -321,9 +412,22 @@ abstract class TallyRepository extends ChangeNotifier {
     bool includePurchases = false,
   }) async => throw noFinancial;
 
+  /// One ledger's vouchers in [from] … [to] (by [guid], else [name]).
+  Future<LedgerVouchers> ledgerVouchers({
+    String? guid,
+    String? name,
+    required DateTime from,
+    required DateTime to,
+  }) async => throw noFinancial;
+
   /// Team members the admin allowed (user ids).
   Future<Set<String>> financialAccess() async => throw noFinancial;
   Future<void> setFinancialAccess(String userId, bool enabled) async =>
+      throw noFinancial;
+
+  /// Admin: the closing stock on [asOn] (e.g. a year end whose value Tally
+  /// cannot be asked for without freezing it).
+  Future<void> setFinancialStock(DateTime asOn, num value) async =>
       throw noFinancial;
 
   // ------------------------------------------------------- AI assistant

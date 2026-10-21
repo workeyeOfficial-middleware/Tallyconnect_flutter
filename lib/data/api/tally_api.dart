@@ -54,6 +54,59 @@ class TallyApi {
   Future<Object?> sendFeedback(Json body) =>
       http.post('/api/feedback', body: body);
 
+  // ------------------------------------------- sales team attendance
+  // Check-in / check-out for every team member; the admin's view of the
+  // team. Scoped by the server to the login's
+  // account (and its active company for the admin views).
+  Future<Object?> attendanceMe() => http.get('/api/attendance/me');
+  Future<Object?> attendanceCheckIn(Json body) =>
+      http.post('/api/attendance/check-in', body: body);
+  Future<Object?> attendanceCheckOut(Json body) =>
+      http.post('/api/attendance/check-out', body: body);
+  Future<Object?> attendancePing() =>
+      http.post('/api/attendance/ping', body: const <String, Object?>{});
+  Future<Object?> attendanceHistory(Map<String, String> q) =>
+      http.get('/api/attendance/me/history', query: q);
+  Future<Object?> attendanceTeam(Map<String, String> q) =>
+      http.get('/api/attendance/team', query: q);
+  Future<Object?> attendanceMemberHistory(
+    String userId,
+    Map<String, String> q,
+  ) => http.get(
+    '/api/attendance/team/${Uri.encodeComponent(userId)}/history',
+    query: q,
+  );
+
+  // ------------------------------------------------- leave management
+  // Every rule is the admin's Leave settings; the server checks balances,
+  // overlaps and dates. Scoped by the server to the login's account.
+  Future<Object?> leaveMe(Map<String, String> q) =>
+      http.get('/api/leave/me', query: q);
+  Future<Object?> leaveApply(Json body) =>
+      http.post('/api/leave/requests', body: body);
+  Future<Object?> leaveDecide(int id, String action, Json body) =>
+      http.post('/api/leave/requests/$id/$action', body: body);
+  Future<Object?> leaveRequests(Map<String, String> q) =>
+      http.get('/api/leave/requests', query: q);
+  Future<Object?> leaveMember(String userId, Map<String, String> q) =>
+      http.get('/api/leave/team/${Uri.encodeComponent(userId)}', query: q);
+  Future<Object?> leaveCalendar(Map<String, String> q) =>
+      http.get('/api/leave/calendar', query: q);
+  Future<Object?> leaveSettings(Map<String, String> q) =>
+      http.get('/api/leave/settings', query: q);
+  Future<Object?> leaveSaveSettings(Json body) =>
+      http.put('/api/leave/settings', body: body);
+  Future<Object?> leaveAddType(Json body) =>
+      http.post('/api/leave/types', body: body);
+  Future<Object?> leaveDefaultTypes() =>
+      http.post('/api/leave/types/defaults', body: const <String, Object?>{});
+  Future<Object?> leaveEditType(int id, Json body) =>
+      http.put('/api/leave/types/$id', body: body);
+  Future<Object?> leaveAddHoliday(Json body) =>
+      http.post('/api/leave/holidays', body: body);
+  Future<Object?> leaveDeleteHoliday(String date) =>
+      http.delete('/api/leave/holidays/${Uri.encodeComponent(date)}');
+
   // ------------------------------------------------- financial statements
   // Admins always; team members only when the admin granted access. The
   // server scopes everything to the login's account and active company.
@@ -83,6 +136,13 @@ class TallyApi {
   Future<Object?> setFinancialAccess(String userId, bool enabled) => http.put(
     '/api/financial/access/${Uri.encodeComponent(userId)}',
     body: <String, Object?>{'enabled': enabled},
+  );
+
+  /// PUT /api/financial/stock-values `{as_on, value}` — a closing stock the
+  /// admin enters (e.g. a year end), active company.
+  Future<Object?> setFinancialStock(String asOn, num value) => http.put(
+    '/api/financial/stock-values',
+    body: <String, Object?>{'as_on': asOn, 'value': value},
   );
 
   // ------------------------------------------------------ AI assistant

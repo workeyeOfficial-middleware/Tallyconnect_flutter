@@ -20,6 +20,9 @@ const {
   HEAVY_EVERY_MS,
   HEAVY_SLOW_EVERY_MS,
   MAX_HEAVY_TIMEOUTS,
+  HEAVY_METHOD,
+  plReportXml,
+  readPlStock,
 } = require(
   path.join(AGENT_DIR, "lib", "financialSync.cjs")
 );
@@ -34,12 +37,34 @@ function parseNumber(val = "0") {
 }
 
 const tag = (xml, t) => (new RegExp(`<${t}>([^<]*)</${t}>`).exec(xml) || [])[1] || null;
+/** A stock-value request: Tally's Profit and Loss report. */
+const PL = /<REPORTNAME>Profit and Loss<\/REPORTNAME>/;
 
 /** A fake Tally: masters, books date, item openings, stock by date. */
-function fakeTally({ slowStock = false } = {}) {
+function fakeTally({ slowStock = false, report = "ok" } = {}) {
   const calls = [];
   async function tallyPost(xml, timeoutMs) {
     calls.push({ xml, timeoutMs });
+    if (/<REPORTNAME>Profit and Loss<\/REPORTNAME>/.test(xml)) {
+      if (slowStock) {
+        const e = new Error(`timeout of ${timeoutMs}ms exceeded`);
+        e.code = "ECONNABORTED";
+        throw e;
+      }
+      if (report === "refused") return { data: "<ENVELOPE><LINEERROR>Could not find Report</LINEERROR></ENVELOPE>" };
+      // Same shape as Tally's export (the stored Averlon3 report): each
+      // line name, then its amounts. Closing = month of SVTODATE × 1000.
+      const m = Number(tag(xml, "SVTODATE").slice(4, 6));
+      const line = (n, sub, main = "") =>
+        `<DSPACCNAME><DSPDISPNAME>${n}</DSPDISPNAME></DSPACCNAME><PLAMT><PLSUBAMT>${sub}</PLSUBAMT><BSMAINAMT>${main}</BSMAINAMT></PLAMT>`;
+      if (report === "noStock") return { data: `<ENVELOPE>${line("Sales Accounts", "", "20574.00")}</ENVELOPE>` };
+      if (report === "odd") return { data: `<ENVELOPE>${line("Less: Closing Stock", "")}</ENVELOPE>` };
+      return {
+        data:
+          `<ENVELOPE>${line("Sales Accounts", "", "20574.00")}${line("Cost of Sales :", "", "-9031.00")}` +
+          `${line("Opening Stock", "-777.00")}${line("Add: Purchase Accounts", "11.00")}${line("Less: Closing Stock", `-${m * 1000}.00`)}</ENVELOPE>`,
+      };
+    }
     const type = (/<COLLECTION NAME="[^"]*">\s*<TYPE>(\w+)<\/TYPE>/.exec(xml) || [])[1];
     const fetch = tag(xml, "FETCH");
     let body = "";
@@ -67,10 +92,15 @@ function fakeTally({ slowStock = false } = {}) {
   return { tallyPost, calls };
 }
 
-function fakeBackend() {
+function fakeBackend({ stockDown = 0 } = {}) {
   const posts = [];
   let batch = 0;
+  let down = stockDown; // the next N stock-value uploads fail (server unreachable)
   async function post(p, body) {
+    if (p === "/api/financial/agent/stock-values" && down > 0) {
+      down -= 1;
+      throw Object.assign(new Error("connect ETIMEDOUT 43.239.92.240:443"), { code: "ETIMEDOUT" });
+    }
     posts.push({ path: p, body });
     if (p.endsWith("/begin")) return { data: { batch_id: ++batch } };
     return { data: { success: true } };
@@ -127,6 +157,7 @@ describe("run", () => {
     // No balances, no period: masters only.
     for (const c of tally.calls) {
       assert.ok(!/CLOSINGBALANCE/.test(c.xml), "no balance asked");
+      assert.ok(!PL.test(c.xml), "no report asked");
       assert.ok(!/SVFROMDATE/.test(c.xml), "no period asked");
     }
     const books = be.posts.find((x) => x.path === "/api/financial/agent/books").body;
@@ -145,11 +176,19 @@ describe("run", () => {
     const out = await sync.run({ ...base, state, saveState: () => {}, now: T, stockFromTally: true });
     assert.equal(MAX_HEAVY, 1);
     assert.deepEqual(out.done, ["groups", "books", "stock 2026-03-31"]);
-    const heavy = tally.calls.filter((c) => /CLOSINGBALANCE/.test(c.xml));
+    const heavy = tally.calls.filter((c) => PL.test(c.xml));
     assert.equal(heavy.length, 1);
     assert.equal(heavy[0].timeoutMs, HEAVY_TIMEOUT_MS);
     assert.ok(heavy[0].xml.includes("<SVFROMDATE>20250401</SVFROMDATE>") && heavy[0].xml.includes("<SVTODATE>20260331</SVTODATE>"));
-    assert.deepEqual(be.posts.at(-1).body, { company_guid: "CO-1", values: [{ as_on: "2026-03-31", value: 3000 }] });
+    // One P&L report: closing stock on 31-03-2026 AND opening stock (31-03-2025).
+    assert.deepEqual(be.posts.at(-1).body, {
+      company_guid: "CO-1",
+      values: [
+        { as_on: "2026-03-31", value: 3000 },
+        { as_on: "2025-03-31", value: 777 },
+      ],
+    });
+    assert.ok(!heavy[0].xml.includes("<TYPE>Group</TYPE>"), "not the Stock-in-Hand collection that froze Tally");
     const next = await sync.run({ ...base, state, saveState: () => {}, now: new Date("2026-10-14T11:00:00"), stockFromTally: true });
     assert.deepEqual(next.done, ["stock 2026-10-13"]);
     const third = await sync.run({ ...base, state, saveState: () => {}, now: new Date("2026-10-14T12:00:00"), stockFromTally: true });
@@ -173,7 +212,7 @@ describe("run", () => {
     assert.deepEqual(out.done, ["groups", "books"]);
     assert.ok(out.left > 0);
     assert.match(out.waiting, /20-8/);
-    assert.ok(!tally.calls.some((c) => /CLOSINGBALANCE/.test(c.xml)), "no stock value asked at 10:00");
+    assert.ok(!tally.calls.some((c) => PL.test(c.xml)), "no stock value asked at 10:00");
     const night = await sync.run({ ...base, state: {}, saveState: () => {}, now: new Date("2026-10-14T22:30:00"), stockFromTally: true, heavyHours: "20-8" });
     assert.ok(night.done.includes("stock 2026-03-31"));
   });
@@ -186,7 +225,7 @@ describe("run", () => {
     const out = await sync.run({ ...base, state: {}, saveState: () => {}, now: T, stockFromTally: true, isIdle: async () => (asked++, false) });
     assert.equal(asked, 1);
     assert.match(out.waiting, /busy/);
-    assert.ok(!tally.calls.some((c) => /CLOSINGBALANCE/.test(c.xml)));
+    assert.ok(!tally.calls.some((c) => PL.test(c.xml)));
     const idle = await sync.run({ ...base, state: {}, saveState: () => {}, now: T, stockFromTally: true, isIdle: async () => true });
     assert.ok(idle.done.includes("stock 2026-03-31"));
   });
@@ -205,7 +244,7 @@ describe("run", () => {
     assert.match(b.waiting, /after 10:30/);
     const c = await sync.run({ ...base, state, saveState: () => {}, now: at("10:31"), stockFromTally: true });
     assert.deepEqual(c.done, ["stock 2026-10-13"]);
-    assert.equal(tally.calls.filter((x) => /CLOSINGBALANCE/.test(x.xml)).length, 2);
+    assert.equal(tally.calls.filter((x) => PL.test(x.xml)).length, 2);
   });
 
   test("a slow stock value (over 15 s): the next one waits 4 hours", async () => {
@@ -232,7 +271,7 @@ describe("run", () => {
     const state = {};
     const logs = [];
     const sync = createFinancialSync({ tallyPost: tally.tallyPost, parseXml, parseNumber, post: be.post, log: (m) => logs.push(m) });
-    const stockCalls = () => tally.calls.filter((c) => /CLOSINGBALANCE/.test(c.xml)).length;
+    const stockCalls = () => tally.calls.filter((c) => PL.test(c.xml)).length;
     const first = await sync.run({ ...base, state, saveState: () => {}, now: T, stockFromTally: true });
     assert.match(first.skipped, /paused for 7 days/);
     assert.equal(state.fin_heavy_timeouts, 1);
@@ -260,6 +299,87 @@ describe("run", () => {
     const out = await sync.run({ ...base, state, saveState: () => {}, now: T, stockFromTally: true });
     assert.ok(out.done.includes("stock 2026-03-31"));
     assert.equal(state.fin_heavy_timeouts, 0);
+  });
+
+  test("Tally's P&L report as stored from Averlon3: opening and closing stock read", () => {
+    // The rows of the real export (tally_profit_loss, 2026-04-01 … 2026-10-15).
+    const xml =
+      "<ENVELOPE>" +
+      "<DSPACCNAME><DSPDISPNAME>Sales Accounts</DSPDISPNAME></DSPACCNAME><PLAMT><PLSUBAMT></PLSUBAMT><BSMAINAMT>20574.00</BSMAINAMT></PLAMT>" +
+      "<DSPACCNAME><DSPDISPNAME>Cost of Sales :</DSPDISPNAME></DSPACCNAME><PLAMT><PLSUBAMT></PLSUBAMT><BSMAINAMT>-9031.00</BSMAINAMT></PLAMT>" +
+      "<DSPACCNAME><DSPDISPNAME>Opening Stock</DSPDISPNAME></DSPACCNAME><PLAMT><PLSUBAMT>-771585.00</PLSUBAMT><BSMAINAMT></BSMAINAMT></PLAMT>" +
+      "<DSPACCNAME><DSPDISPNAME>Add: Purchase Accounts</DSPDISPNAME></DSPACCNAME><PLAMT><PLSUBAMT>11.00</PLSUBAMT><BSMAINAMT></BSMAINAMT></PLAMT>" +
+      "<DSPACCNAME><DSPDISPNAME>Less: Closing Stock</DSPDISPNAME></DSPACCNAME><PLAMT><PLSUBAMT>-762543.00</PLSUBAMT><BSMAINAMT></BSMAINAMT></PLAMT>" +
+      "</ENVELOPE>";
+    assert.deepEqual(readPlStock(xml), { opening: 771585, closing: 762543, report: true, unreadable: false });
+    // Classic layout too ("Closing Stock" on the income side).
+    assert.equal(readPlStock("<ENVELOPE><DSPDISPNAME>Closing Stock</DSPDISPNAME><PLSUBAMT>1,23,456.50</PLSUBAMT></ENVELOPE>").closing, 123456.5);
+    // A stock line without a readable amount is never taken as 0.
+    assert.equal(readPlStock("<ENVELOPE><DSPDISPNAME>Closing Stock</DSPDISPNAME><PLSUBAMT></PLSUBAMT></ENVELOPE>").unreadable, true);
+    const x = plReportXml("A & B", "2025-04-01", "2026-03-31");
+    assert.match(x, /<REPORTNAME>Profit and Loss<\/REPORTNAME>/);
+    assert.match(x, /A &amp; B/);
+    assert.ok(!/<COLLECTION/.test(x), "a report export, not a collection");
+  });
+
+  test("no stock lines in Tally's P&L (no stock held): both values 0", async () => {
+    const tally = fakeTally({ report: "noStock" });
+    const be = fakeBackend();
+    const sync = createFinancialSync({ tallyPost: tally.tallyPost, parseXml, parseNumber, post: be.post });
+    await sync.run({ ...base, state: {}, saveState: () => {}, now: T, stockFromTally: true });
+    assert.deepEqual(be.posts.at(-1).body.values, [
+      { as_on: "2026-03-31", value: 0 },
+      { as_on: "2025-03-31", value: 0 },
+    ]);
+  });
+
+  test("report refused or not understood: nothing saved, tried again in 4 hours", async () => {
+    for (const report of ["refused", "odd"]) {
+      const tally = fakeTally({ report });
+      const be = fakeBackend();
+      const state = {};
+      const logs = [];
+      const sync = createFinancialSync({ tallyPost: tally.tallyPost, parseXml, parseNumber, post: be.post, log: (m) => logs.push(m) });
+      const out = await sync.run({ ...base, state, saveState: () => {}, now: T, stockFromTally: true });
+      assert.ok(!be.posts.some((p) => p.path === "/api/financial/agent/stock-values"), `${report}: no value saved`);
+      assert.match(out.waiting, /not read/);
+      assert.equal(state.fin_heavy_next_at - T.getTime(), HEAVY_SLOW_EVERY_MS);
+      assert.ok(!state.fin_heavy_off_at && !state.fin_heavy_timeouts, "not counted as Tally being slow");
+      assert.ok(logs.some((l) => /tried again in 4 h/.test(l)));
+    }
+  });
+
+  test("server unreachable after Tally answered: values kept, sent next sync, Tally NOT asked again", async () => {
+    const tally = fakeTally();
+    const be = fakeBackend({ stockDown: 1 });
+    const state = {};
+    const logs = [];
+    const sync = createFinancialSync({ tallyPost: tally.tallyPost, parseXml, parseNumber, post: be.post, log: (m) => logs.push(m) });
+    const a = await sync.run({ ...base, state, saveState: () => {}, now: T, stockFromTally: true });
+    assert.match(a.waiting, /server could not be reached/);
+    assert.ok(state.fin_stock_unsent, "kept");
+    assert.ok(!state.fin_heavy_timeouts, "not counted as Tally being slow");
+    assert.ok(logs.some((l) => /Tally is not asked again/.test(l)));
+    assert.ok(!logs.some((l) => /not read/.test(l)), "not reported as a Tally problem");
+    const reports = tally.calls.filter((c) => PL.test(c.xml)).length;
+    // Next sync, 5 minutes later: only the upload, no new Tally report.
+    const b = await sync.run({ ...base, state, saveState: () => {}, now: new Date("2026-10-14T10:05:00"), stockFromTally: true });
+    assert.ok(b.done.includes("stock values sent"));
+    assert.equal(tally.calls.filter((c) => PL.test(c.xml)).length, reports);
+    assert.ok(!state.fin_stock_unsent);
+    assert.deepEqual(be.posts.at(-1).body.values.map((v) => v.as_on), ["2026-03-31", "2025-03-31"]);
+    assert.ok(state.fin_stock["2026-03-31"] && state.fin_stock["2025-03-31"], "marked done");
+  });
+
+  test("switching to the report method clears pauses earned by the old request", async () => {
+    const tally = fakeTally();
+    const be = fakeBackend();
+    const state = { fin_paused_until: T.getTime() + 5 * 86400000, fin_heavy_timeouts: 1, fin_heavy_off_at: 1 };
+    const sync = createFinancialSync({ tallyPost: tally.tallyPost, parseXml, parseNumber, post: be.post });
+    const out = await sync.run({ ...base, state, saveState: () => {}, now: T, stockFromTally: true });
+    assert.equal(state.fin_heavy_method, HEAVY_METHOD);
+    assert.ok(out.done.includes("stock 2026-03-31"));
+    assert.ok(!state.fin_heavy_off_at && !state.fin_paused_until);
   });
 
   test("hours", () => {
@@ -301,9 +421,11 @@ describe("run", () => {
 describe("voucher lines", () => {
   const ev = (rows) => rows.map(([n, dp, a]) => ({ LEDGERNAME: [n], ISDEEMEDPOSITIVE: [dp], AMOUNT: [String(a)] }));
   const x = (v) => (typeof v === "string" ? v : v && v._ ? v._ : null);
+  // The stored line (gross_dr / gross_cr are extra, for the Cash Flow).
+  const stored = (l) => l && { ledger_name: l.ledger_name, amount: l.amount, is_debit: l.is_debit };
 
   test("a ledger that appears once is stored exactly as before", () => {
-    assert.deepEqual(mergeLedgerLines(ev([["Mehta", "Yes", -1180], ["Sales", "No", 1000], ["GST", "No", 180]]), x), [
+    assert.deepEqual(mergeLedgerLines(ev([["Mehta", "Yes", -1180], ["Sales", "No", 1000], ["GST", "No", 180]]), x).map(stored), [
       { ledger_name: "Mehta", amount: 1180, is_debit: false },
       { ledger_name: "Sales", amount: 1000, is_debit: true },
       { ledger_name: "GST", amount: 180, is_debit: true },
@@ -312,12 +434,11 @@ describe("voucher lines", () => {
 
   test("repeated lines of a ledger are added up (not dropped), so the voucher balances", () => {
     const out = mergeLedgerLines(ev([["Mehta", "Yes", -2360], ["Sales", "No", 1000], ["Sales", "No", 1000], ["GST", "No", 360]]), x);
-    assert.deepEqual(out.find((e) => e.ledger_name === "Sales"), { ledger_name: "Sales", amount: 2000, is_debit: true });
+    assert.deepEqual(stored(out.find((e) => e.ledger_name === "Sales")), { ledger_name: "Sales", amount: 2000, is_debit: true });
     assert.equal(out.reduce((a, e) => a + (e.is_debit ? e.amount : -e.amount), 0), 0);
-    assert.deepEqual(mergeLedgerLines(ev([["Cash", "Yes", -500], ["Cash", "No", 200], ["Bank", "No", 300]]), x)[0], {
-      ledger_name: "Cash",
-      amount: 300,
-      is_debit: false,
-    });
+    const cash = mergeLedgerLines(ev([["Cash", "Yes", -500], ["Cash", "No", 200], ["Bank", "No", 300]]), x)[0];
+    assert.deepEqual(stored(cash), { ledger_name: "Cash", amount: 300, is_debit: false });
+    // Before netting: Dr 500, Cr 200 (Tally's Cash Flow counts each line).
+    assert.deepEqual([cash.gross_dr, cash.gross_cr], [500, 200]);
   });
 });

@@ -25,9 +25,17 @@
      GET /api/financial/profit-loss?from=&to=
      GET /api/financial/balance-sheet?as_on=
      GET /api/financial/expenses?from=&to=&purchases=1
+     GET /api/financial/cash-flow?from=&to=         cash / bank in and out
+     GET /api/financial/ledger-vouchers?guid=|name=&from=&to=
+   When the synced vouchers begin with the books, every report takes any
+   From–To period (Tally's F2): Trial Balance / Balance Sheet as on `to`
+   with `from` as the period start (as_on still accepted).
    Account admin:
      GET /api/financial/access
      PUT /api/financial/access/:userId           {enabled}
+     PUT /api/financial/stock-values             {as_on, value} — a closing
+         stock the admin enters (e.g. a year end, so that year's opening
+         stock is known); /periods lists the missing ones as stock_needed
 
    Everything is scoped to the login's account and its ACTIVE company.
    Read-only for the app; nothing is written to Tally.
@@ -37,12 +45,13 @@ import {
   balanceSheet,
   cleanRow,
   dayBefore,
+  expenseMonths,
   expenseReport,
   isIsoDate,
   profitLoss,
   trialBalance,
 } from "./financialCore.js";
-import { createFinancialData } from "./financialData.js";
+import { createFinancialData, todayIst } from "./financialData.js";
 
 const MAX_ROWS_PER_CALL = 5000;
 
@@ -411,6 +420,41 @@ export function createFinancialRouter({ db, auth, log = console, now = () => new
 
   const meta = (s, extra) => ({ company: s.companyName, ...extra });
 
+  /**
+   * The period of a request: [to] = `to` (or `as_on`); [from] = `from`, else
+   * the start of [to]'s financial year (what the reports showed before).
+   */
+  function periodOf(req, ctx) {
+    const to = String(req.query.to || req.query.as_on || "");
+    if (!isIsoDate(to)) throw new HttpError(400, "Dates must be YYYY-MM-DD");
+    const from = req.query.from ? String(req.query.from) : data.fyStartFor(ctx, to);
+    if (!isIsoDate(from) || from > to) throw new HttpError(400, "from and to must be YYYY-MM-DD dates (from ≤ to)");
+    return { from, to };
+  }
+
+  const dmy = (d) => `${d.slice(8, 10)}-${d.slice(5, 7)}-${d.slice(0, 4)}`;
+
+  /** Figures for [from] … [to] (any period), or a 404 naming the stock dates missing. */
+  async function figures(s, ctx, from, to, opts) {
+    const x = await data.periodFigures(s, ctx, from, to, opts);
+    if (x.missing) {
+      throw new HttpError(
+        404,
+        `Tally's closing stock on ${x.missing.map(dmy).join(" and ")} is not synced yet. The TallyConnect Agent ` +
+          `reads it from Tally (year ends and month ends first, then every day) — try again later or choose other dates.`,
+        "no_stock"
+      );
+    }
+    return x;
+  }
+
+  /** Vouchers synced from the books' start (any period possible), else the reason. */
+  function needBooks(ctx) {
+    if (!data.booksAnchored(ctx)) {
+      throw new HttpError(409, REASONS.vouchers_after_books, "vouchers_after_books");
+    }
+  }
+
   router.get(
     "/api/financial/me",
     auth,
@@ -440,6 +484,14 @@ export function createFinancialRouter({ db, auth, log = console, now = () => new
         company: s.companyName,
         groups_synced: ready,
         snapshots: ready ? await data.offeredDates(ctx) : [],
+        // Year ends whose closing stock is missing (the admin can enter them).
+        stock_needed: ready ? await data.neededStock(ctx) : [],
+        can_enter_stock: s.isAdmin,
+        // Any From–To period can be worked out (vouchers from the books' start);
+        // the dates with a closing stock value (P&L / Balance Sheet need one).
+        any_period: ready && data.booksAnchored(ctx),
+        books_from: ctx.books ? ctx.books.from : null,
+        stock_dates: ready ? data.stockDates(ctx) : [],
         ...(reason ? { reason, message: REASONS[reason] } : {}),
       });
     })
@@ -451,7 +503,20 @@ export function createFinancialRouter({ db, auth, log = console, now = () => new
     handle(async (req, res) => {
       const s = await readScope(req);
       const ctx = await contextOf(s);
-      const snap = await at(s, ctx, String(req.query.as_on || ""));
+      if (data.booksAnchored(ctx)) {
+        // Tally's Trial Balance for a period: closing balances on [to];
+        // income / expense ledgers for the period; the Profit & Loss A/c
+        // with the profit made before [from]; opening stock the day before.
+        const { from, to } = periodOf(req, ctx);
+        const x = await figures(s, ctx, from, to, { closingStock: false });
+        const ledgers = x.snap.ledgers.map((l) => (x.plName && l.name === x.plName ? { ...l, closing: x.plOpening } : l));
+        if (!x.plName && x.plOpening !== 0) {
+          ledgers.push({ name: "Profit & Loss A/c", guid: null, parent: "Primary", closing: x.plOpening, opening: 0 });
+        }
+        const tb = trialBalance(ctx.groups, { ...x.snap, ledgers });
+        return res.json({ success: true, data: meta(s, { ...tb, from: x.from, to }) });
+      }
+      const snap = await at(s, ctx, String(req.query.as_on || req.query.to || ""));
       res.json({ success: true, data: meta(s, trialBalance(ctx.groups, snap)) });
     })
   );
@@ -462,6 +527,12 @@ export function createFinancialRouter({ db, auth, log = console, now = () => new
     handle(async (req, res) => {
       const s = await readScope(req);
       const ctx = await contextOf(s);
+      if (data.booksAnchored(ctx)) {
+        // Any period, across financial years too (Tally's F2 period).
+        const { from, to } = periodOf(req, ctx);
+        const x = await figures(s, ctx, from, to);
+        return res.json({ success: true, data: meta(s, { ...profitLoss(ctx.groups, x.snap, null), from: x.from, to }) });
+      }
       const { end, prev } = await periodPair(s, ctx, String(req.query.from || ""), String(req.query.to || ""));
       res.json({ success: true, data: meta(s, { ...profitLoss(ctx.groups, end, prev), from: String(req.query.from) }) });
     })
@@ -473,7 +544,16 @@ export function createFinancialRouter({ db, auth, log = console, now = () => new
     handle(async (req, res) => {
       const s = await readScope(req);
       const ctx = await contextOf(s);
-      const snap = await at(s, ctx, String(req.query.as_on || ""));
+      if (data.booksAnchored(ctx)) {
+        // As on [to]; the Profit & Loss A/c split like Tally: Opening Balance
+        // (its own + profit before [from]) and Current Period ([from] … [to]).
+        const { from, to } = periodOf(req, ctx);
+        const x = await figures(s, ctx, from, to);
+        const check = await data.unbalanced(s, dayBefore(ctx.books.from), to);
+        const bs = balanceSheet(ctx.groups, x.snap, { plOpening: x.plOpening });
+        return res.json({ success: true, data: meta(s, { ...bs, from: x.from, to, data_check: check }) });
+      }
+      const snap = await at(s, ctx, String(req.query.as_on || req.query.to || ""));
       const [plOpening, check] = await Promise.all([data.plOpening(s, ctx, snap), data.dataCheck(s, ctx, snap.as_on)]);
       res.json({ success: true, data: meta(s, { ...balanceSheet(ctx.groups, snap, { plOpening }), data_check: check }) });
     })
@@ -485,6 +565,16 @@ export function createFinancialRouter({ db, auth, log = console, now = () => new
     handle(async (req, res) => {
       const s = await readScope(req);
       const ctx = await contextOf(s);
+      const includePurchases = req.query.purchases === "1";
+      if (data.booksAnchored(ctx)) {
+        // Any period; stock is not part of this report.
+        const { from: f0, to } = periodOf(req, ctx);
+        const x = await figures(s, ctx, f0, to, { stock: false });
+        const monthly = await data.monthlyMovements(s, dayBefore(x.from), to);
+        const rep = expenseReport(ctx.groups, x.snap, null, { includePurchases, months: [] });
+        rep.by_month = expenseMonths(ctx.groups, ctx.masters, monthly, { includePurchases, to });
+        return res.json({ success: true, data: meta(s, { ...rep, from: x.from, to }) });
+      }
       const from = String(req.query.from || "");
       const { end, prev } = await periodPair(s, ctx, from, String(req.query.to || ""));
       // Month-wise trend straight from the voucher movements.
@@ -496,6 +586,69 @@ export function createFinancialRouter({ db, auth, log = console, now = () => new
           from,
         }),
       });
+    })
+  );
+
+  // Cash Flow statement for a period, from the cash / bank vouchers (no stock,
+  // nothing estimated). Separate from the Cash Flow Forecast (/api/cashflow).
+  router.get(
+    "/api/financial/cash-flow",
+    auth,
+    handle(async (req, res) => {
+      const s = await readScope(req);
+      const ctx = await contextOf(s);
+      needBooks(ctx);
+      const { from, to } = periodOf(req, ctx);
+      res.json({ success: true, data: meta(s, await data.cashFlow(s, ctx, from, to)) });
+    })
+  );
+
+  // One ledger's vouchers in a period (drill-down from a report row).
+  router.get(
+    "/api/financial/ledger-vouchers",
+    auth,
+    handle(async (req, res) => {
+      const s = await readScope(req);
+      const ctx = await contextOf(s);
+      needBooks(ctx);
+      const { from, to } = periodOf(req, ctx);
+      const guid = req.query.guid ? String(req.query.guid).slice(0, 100) : null;
+      const name = req.query.name ? String(req.query.name).slice(0, 300) : null;
+      if (!guid && !name) throw new HttpError(400, "guid or name is required");
+      const out = await data.ledgerVouchers(s, ctx, { guid, name }, from, to);
+      if (!out) throw new HttpError(404, "Ledger not found", "no_ledger");
+      res.json({ success: true, data: meta(s, out) });
+    })
+  );
+
+  /* ------------------------------- admin: a closing stock entered by hand */
+  // Tally's closing stock on a past date can only be asked of Tally with a
+  // date range, which froze it; the admin can enter the figure instead
+  // (e.g. the audited closing stock of 31-03, so that year's opening stock
+  // is known). Active company only; replaces a value saved for that date.
+  router.put(
+    "/api/financial/stock-values",
+    auth,
+    handle(async (req, res) => {
+      const s = await readScope(req);
+      if (!s.isAdmin) throw new HttpError(403, "Only the admin can enter closing stock.", "forbidden");
+      const asOn = String(req.body?.as_on || "");
+      const raw = req.body?.value;
+      const value = typeof raw === "number" ? raw : Number(String(raw ?? "").replace(/,/g, "").trim());
+      if (!isIsoDate(asOn)) throw new HttpError(400, "as_on must be a YYYY-MM-DD date");
+      if (asOn > todayIst(now())) throw new HttpError(400, "The date cannot be in the future");
+      if (raw === null || raw === undefined || String(raw).trim() === "" || !Number.isFinite(value) || value < 0 || value > 1e13) {
+        throw new HttpError(400, "value must be a closing stock amount (0 or more)");
+      }
+      const v = Math.round(value * 100) / 100;
+      await db.query(
+        `INSERT INTO fin_stock_values (admin_id, company_guid, as_on, value)
+         VALUES ($1, $2, $3::date, $4)
+         ON CONFLICT (admin_id, company_guid, as_on)
+         DO UPDATE SET value = EXCLUDED.value, synced_at = NOW()`,
+        [s.adminId, s.company, asOn, v]
+      );
+      res.json({ success: true, as_on: asOn, value: v });
     })
   );
 

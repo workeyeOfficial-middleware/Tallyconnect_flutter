@@ -1,5 +1,5 @@
-// Official Tally reports: a statement tile opens Tally's own figures when
-// the Agent has fetched them (else the calculated report, as before), the
+// Official Tally reports: Tally's own figures as fetched by the Agent (the
+// statement tiles open the reports worked out from the synced data), the
 // periods, the sides check, group → ledger drill-down, Cash Flow, errors,
 // the screens at 320 px and the PDF.
 library;
@@ -134,7 +134,7 @@ Future<AppController> _start(FakeBackend f) async {
 void main() {
   group('controller', () {
     test(
-      'tile opens Tally figures when fetched, else the calculated report',
+      'Tally figures when fetched; the tiles open the calculated reports',
       () async {
         final FakeBackend f = _fake();
         final AppController c = await _start(f);
@@ -142,7 +142,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 20));
         expect(c.hasTallyReport('bs'), isTrue);
         expect(c.hasTallyReport('pl'), isFalse); // not fetched yet
-        await c.openStatement('bs');
+        await c.openTallyReport('balance_sheet');
         expect(c.screen, 'tallyReport');
         final TallyReport r = c.trData!;
         expect(r.title, 'Balance Sheet');
@@ -165,7 +165,11 @@ void main() {
         expect(c.trData!.balanced, isFalse);
         expect(c.trData!.difference, 150000);
 
-        // P&L not fetched from Tally: the calculated report, as before.
+        // Every statement tile: the calculated report.
+        await c.openStatement('bs');
+        expect(c.screen, 'finReport');
+        await c.openStatement('cf');
+        expect(c.screen, 'finReport');
         await c.openStatement('pl');
         expect(c.screen, 'finReport');
         // Expenses: always calculated.
@@ -178,11 +182,11 @@ void main() {
     test('Trial Balance and Cash Flow from Tally', () async {
       final AppController c = await _start(_fake());
       await c.checkFinancialAccess(force: true);
-      await c.openStatement('tb');
+      await c.openTallyReport('trial_balance');
       final TallyReport tb = c.trData!;
       expect(tb.ledgers, hasLength(4));
       expect((tb.debit, tb.credit, tb.balanced), (175000.5, 175000.5, true));
-      await c.openStatement('cf');
+      await c.openTallyReport('cash_flow');
       expect(c.trData!.rows.first.amounts, <String, num>{
         'DSPINFLOW': 50000,
         'DSPOUTFLOW': -20000,
@@ -195,7 +199,7 @@ void main() {
       () async {
         final AppController c = await _start(_fake(withTally: false));
         await c.checkFinancialAccess(force: true);
-        await c.openStatement('cf'); // Cash Flow is only from Tally
+        await c.openTallyReport('cash_flow');
         expect(c.screen, 'tallyReport');
         expect(c.trError, contains('No figures from Tally'));
         c.dispose();
@@ -221,7 +225,7 @@ void main() {
     test('PDF, Dr / Cr, column labels', () async {
       final AppController c = await _start(_fake());
       await c.checkFinancialAccess(force: true);
-      await c.openStatement('tb');
+      await c.openTallyReport('trial_balance');
       final ShareDoc tb = tallyReportDoc(c, c.trData!);
       expect(tb.title, 'Trial Balance');
       expect(tb.table!.rows.first, <String>[
@@ -231,7 +235,7 @@ void main() {
         '',
       ]);
       expect(tb.totals.first, ('Total debit', '₹1,75,000.50'));
-      await c.openStatement('bs');
+      await c.openTallyReport('balance_sheet');
       final ShareDoc bs = tallyReportDoc(c, c.trData!);
       expect(bs.table!.rows.last, <String>[
         'Current Assets',
@@ -269,7 +273,7 @@ void main() {
     }
 
     testWidgets(
-      'Reports: "Tally" mark on fetched tiles; Balance Sheet lines open ledgers',
+      'Reports: one tile per statement; Tally\'s Balance Sheet opens ledgers',
       (WidgetTester t) async {
         final AppController c = await open(t, _fake());
         await c.checkFinancialAccess(force: true);
@@ -280,17 +284,10 @@ void main() {
           300,
           scrollable: find.byType(Scrollable).first,
         );
-        expect(
-          find.byKey(const ValueKey<String>('fin-tally-bs')),
-          findsOneWidget,
-        );
-        expect(
-          find.byKey(const ValueKey<String>('fin-tally-pl')),
-          findsNothing,
-        );
+        expect(find.byKey(const ValueKey<String>('fin-bs')), findsOneWidget);
         expect(t.takeException(), isNull);
 
-        await c.openStatement('bs');
+        await c.openTallyReport('balance_sheet');
         await settle(t);
         expect(find.text('Both sides are equal'), findsOneWidget);
         expect(
@@ -326,7 +323,7 @@ void main() {
     ) async {
       final AppController c = await open(t, _fake());
       await c.checkFinancialAccess(force: true);
-      await c.openStatement('tb');
+      await c.openTallyReport('trial_balance');
       await settle(t);
       expect(
         find.textContaining('Debit ₹1,75,000.50 = Credit ₹1,75,000.50'),
@@ -340,7 +337,7 @@ void main() {
       await settle(t);
       expect(find.text('Cash'), findsOneWidget);
       expect(t.takeException(), isNull);
-      await c.openStatement('cf');
+      await c.openTallyReport('cash_flow');
       await settle(t);
       expect(find.text('April'), findsOneWidget);
       expect(find.textContaining('Inflow ₹50,000'), findsOneWidget);

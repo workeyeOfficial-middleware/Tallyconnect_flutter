@@ -223,6 +223,10 @@ class FakeDb {
     // Synced data of CO-1 (account 7).
     this.ledgers = MASTERS.map((m) => ({ admin_id: 7, company_guid: "CO-1", ...m }));
     this.entries = ENTRIES.map((e) => ({ admin_id: 7, company_guid: "CO-1", ...e }));
+    // vouchers rows by GUID (Cash Flow flag, party) and whether the Cash Flow
+    // columns exist (before the SQL that adds them: no).
+    this.vouchers = {};
+    this.cfColumns = true;
     this.stockSummary = [
       { admin_id: 7, company_guid: "CO-1", closing_value: "20000" },
       { admin_id: 7, company_guid: "CO-1", closing_value: "6000" },
@@ -315,7 +319,9 @@ class FakeDb {
       return { rows: this.snapshots.filter((x) => mine(x) && x.kind === "anchor").sort((a, b) => a.as_on.localeCompare(b.as_on)) };
     }
     if (s.startsWith("INSERT INTO fin_stock_values")) {
-      for (const x of JSON.parse(p[2])) {
+      // Agent: a JSON list; admin entry: one (as_on, value).
+      const list = s.includes("jsonb_to_recordset") ? JSON.parse(p[2]) : [{ as_on: p[2], value: p[3] }];
+      for (const x of list) {
         this.stockValues = this.stockValues.filter((v) => !(mine(v) && v.as_on === x.as_on));
         this.stockValues.push({ admin_id: p[0], company_guid: p[1], ...x });
       }
@@ -340,6 +346,57 @@ class FakeDb {
     }
     if (s.startsWith("SELECT group_name AS name, closing FROM fin_group_balances")) {
       return { rows: this.groupRows.filter((r) => r.batch_id === p[0]).map((r) => ({ name: r.name, closing: String(r.closing) })) };
+    }
+    // Name keys as Tally compares names (the SQL's lower/btrim/regexp_replace).
+    const key = (n) => String(n ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+    const counted = (e) => {
+      const re = /!~\* '([^']+)'/.exec(s);
+      return mine(e) && e.voucher_date > p[2] && e.voucher_date <= p[3] && e.is_active !== false && !(re && new RegExp(re[1], "i").test(e.voucher_type || ""));
+    };
+    const signed = (e) => (e.is_debit ? e.amount : -e.amount);
+    // Cash flow: are the Agent's Cash Flow columns there (vouchers.has_cash_flow,
+    // voucher_entries.gross_dr / gross_cr)?
+    if (s.includes("FROM information_schema.columns")) {
+      return { rows: this.cfColumns ? [{}, {}, {}] : [] };
+    }
+    // Cash flow: every line of the vouchers that touch a cash / bank ledger or
+    // that Tally flags as cash flow, with the voucher's flag and party.
+    if (s.includes("AS guid, ve.voucher_date::text AS d, ve.ledger_name AS name")) {
+      const keys = new Set(p[4]);
+      const cols = s.includes("v.has_cash_flow AS hcf");
+      const touch = new Set(this.entries.filter((e) => counted(e) && keys.has(key(e.ledger_name))).map((e) => e.voucher_guid));
+      if (cols) for (const [g, v] of Object.entries(this.vouchers)) if (v.has_cash_flow === true) touch.add(g);
+      return {
+        rows: this.entries
+          .filter((e) => counted(e) && touch.has(e.voucher_guid))
+          .map((e) => ({
+            guid: e.voucher_guid,
+            d: e.voucher_date,
+            name: e.ledger_name,
+            net: String(signed(e)),
+            gdr: cols && e.gross_dr != null ? String(e.gross_dr) : null,
+            gcr: cols && e.gross_cr != null ? String(e.gross_cr) : null,
+            hcf: cols ? this.vouchers[e.voucher_guid]?.has_cash_flow ?? null : null,
+            party: this.vouchers[e.voucher_guid]?.party_name ?? null,
+          })),
+      };
+    }
+    // Ledger vouchers: opening movement / the vouchers of one ledger / the other side.
+    if (s.includes("COALESCE(SUM(") && s.includes("= $5")) {
+      return { rows: [{ net: String(this.entries.filter((e) => counted(e) && key(e.ledger_name) === p[4]).reduce((a, e) => a + signed(e), 0)) }] };
+    }
+    if (s.includes("AS type") && s.includes("= $5")) {
+      const by = new Map();
+      for (const e of this.entries.filter((x) => counted(x) && key(x.ledger_name) === p[4])) {
+        const cur = by.get(e.voucher_guid) || { guid: e.voucher_guid, d: e.voucher_date, type: e.voucher_type, ref: "", net: 0 };
+        cur.net += signed(e);
+        by.set(e.voucher_guid, cur);
+      }
+      return { rows: [...by.values()].sort((a, b) => a.d.localeCompare(b.d)).map((x) => ({ ...x, net: String(x.net) })) };
+    }
+    if (s.includes("ve.voucher_guid = ANY($3::text[])")) {
+      const ids = new Set(p[2]);
+      return { rows: this.entries.filter((e) => mine(e) && e.is_active !== false && ids.has(e.voucher_guid) && key(e.ledger_name) !== p[3]).map((e) => ({ guid: e.voucher_guid, name: e.ledger_name, net: String(signed(e)) })) };
     }
     if (s.includes("FROM voucher_entries ve")) {
       assert.ok(s.includes("COALESCE(ve.is_active, TRUE) = TRUE"));
@@ -651,7 +708,9 @@ describe("routes (no balances from Tally: books opening + vouchers)", () => {
     db = new FakeDb();
     // The ledger masters' opening balances (Dr −) at the books' start: the
     // same figures as the Tally anchor of the other tests.
-    const open = { "Capital A/c": 115000, "HDFC Bank": -40000, Cash: -5000, "Mehta Electricals": -30000, "Polycab Wires": 20000, Furniture: -50000, "Profit & Loss A/c": 10000 };
+    // Balanced openings (Dr = Cr with the opening stock 15000): the P&L A/c
+    // opening is 6000. A test below unbalances it on purpose.
+    const open = { "Capital A/c": 115000, "HDFC Bank": -40000, Cash: -5000, "Mehta Electricals": -30000, "Polycab Wires": 20000, Furniture: -50000, "Profit & Loss A/c": 6000 };
     for (const l of db.ledgers) if (open[l.name] !== undefined) l.opening_balance = String(open[l.name]);
     const app = express();
     app.use(express.json({ limit: "20mb" }));
@@ -720,6 +779,234 @@ describe("routes (no balances from Tally: books opening + vouchers)", () => {
     assert.equal(bs.difference, 0);
     assert.equal(bs.profit_loss.opening, 6000 + 122000); // earlier years + last year
     assert.equal(bs.profit_loss.current_period, 55000);
+  });
+
+  test("a missing year-end stock is listed; the admin enters it; that year's reports appear", async () => {
+    for (const e of db.entries) e.voucher_date = e.voucher_date.replace(/^2026-/, "2025-").replace(/^2025-03-/, "2024-03-");
+    await groups();
+    await books({ books_from: "2025-04-01", vouchers_from: "2025-04-01", fy_from: "2025-04-01", opening_stock: 15000 });
+    let per = (await call("GET", "/api/financial/periods", ADMIN)).body;
+    assert.deepEqual(per.stock_needed, ["2026-03-31"]);
+    assert.equal(per.can_enter_stock, true);
+    assert.ok(!per.snapshots.some((x) => x.fy_from === "2026-04-01"), "nothing for this year yet");
+    // Checked: admin only, a real past date, an amount ≥ 0.
+    db.access.push({ admin_id: 7, user_id: 21 });
+    assert.equal((await call("GET", "/api/financial/periods", USER)).body.can_enter_stock, false);
+    assert.equal((await call("PUT", "/api/financial/stock-values", USER, { as_on: "2026-03-31", value: 1 })).status, 403);
+    assert.equal((await call("PUT", "/api/financial/stock-values", ADMIN, { as_on: "31-03-2026", value: 1 })).status, 400);
+    assert.equal((await call("PUT", "/api/financial/stock-values", ADMIN, { as_on: "2026-12-31", value: 1 })).status, 400);
+    assert.equal((await call("PUT", "/api/financial/stock-values", ADMIN, { as_on: "2026-03-31", value: -5 })).status, 400);
+    assert.equal((await call("PUT", "/api/financial/stock-values", ADMIN, { as_on: "2026-03-31", value: "" })).status, 400);
+    const ok = await call("PUT", "/api/financial/stock-values", ADMIN, { as_on: "2026-03-31", value: "25,000" });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(ok.body, { success: true, as_on: "2026-03-31", value: 25000 });
+    per = (await call("GET", "/api/financial/periods", ADMIN)).body;
+    assert.deepEqual(per.stock_needed, []);
+    assert.ok(per.snapshots.some((x) => x.as_on === "2026-10-12" && x.fy_from === "2026-04-01"), "this year up to today");
+    const pl = (await call("GET", "/api/financial/profit-loss?from=2026-04-01&to=2026-10-12", ADMIN)).body.data;
+    assert.equal(pl.trading.opening_stock, 25000);
+    // Another company of another account is not touched.
+    assert.ok(db.stockValues.every((v) => v.admin_id === 7 && v.company_guid === "CO-1"));
+  });
+
+  /** Books from 2025-04-01: the worked vouchers moved one year back + one sale this year. */
+  async function twoYears() {
+    for (const e of db.entries) e.voucher_date = e.voucher_date.replace(/^2026-/, "2025-").replace(/^2025-03-/, "2024-03-");
+    db.entries.push(...E("2026-05-05", "Sales", [["Mehta Electricals", true, 50000], ["Sales", false, 50000]], { tag: "ny", admin_id: 7, company_guid: "CO-1" }));
+    await groups();
+    await books({ books_from: "2025-04-01", vouchers_from: "2025-04-01", fy_from: "2025-04-01", opening_stock: 15000 });
+    await stock([["2026-03-31", 25000], ["2026-09-30", 30000]]);
+  }
+  const otherLedger = (tb, name) =>
+    tb.sections.flatMap((x) => x.children || []).find((l) => l.name === name);
+
+  test("any period (Tally's F2): P&L across financial years, Balance Sheet / Trial Balance for a period", async () => {
+    await twoYears();
+    // 1-Apr-25 … 30-Sep-26, like Tally's "1-Apr-23 to 15-Oct-26": both years' income and expenses.
+    const pl = (await call("GET", "/api/financial/profit-loss?from=2025-04-01&to=2026-09-30", ADMIN)).body.data;
+    assert.equal(pl.from, "2025-04-01");
+    assert.equal(pl.trading.opening_stock, 15000); // the books' opening stock
+    assert.equal(pl.trading.closing_stock, 30000);
+    assert.equal(pl.net_profit, 122000 + 55000);
+    // Balance Sheet for that period: P&L A/c = its own opening + the period's profit.
+    let bs = (await call("GET", "/api/financial/balance-sheet?from=2025-04-01&to=2026-09-30", ADMIN)).body.data;
+    assert.equal(bs.profit_loss.opening, 6000);
+    assert.equal(bs.profit_loss.current_period, 177000);
+    assert.equal(bs.difference, 0);
+    // Same date, this year as the period: last year's profit moves into the opening.
+    bs = (await call("GET", "/api/financial/balance-sheet?from=2026-04-01&to=2026-09-30", ADMIN)).body.data;
+    assert.equal(bs.profit_loss.opening, 6000 + 122000);
+    assert.equal(bs.profit_loss.current_period, 55000);
+    assert.equal(bs.difference, 0);
+    assert.equal(bs.total_assets, bs.total_liabilities);
+    // Old style (as_on only): the period starts with the year.
+    const old = (await call("GET", "/api/financial/balance-sheet?as_on=2026-09-30", ADMIN)).body.data;
+    assert.equal(old.profit_loss.opening, 128000);
+    // Trial Balance for this year: Dr = Cr, P&L A/c carries last year, opening stock 25000.
+    let tb = (await call("GET", "/api/financial/trial-balance?from=2026-04-01&to=2026-09-30", ADMIN)).body.data;
+    assert.equal(tb.total_debit, tb.total_credit);
+    assert.equal(tb.opening_stock, 25000);
+    assert.equal(otherLedger(tb, "Profit & Loss A/c").amount, -128000); // Cr
+    // … and since the books began: the ledger's own opening, the books' stock.
+    tb = (await call("GET", "/api/financial/trial-balance?from=2025-04-01&to=2026-09-30", ADMIN)).body.data;
+    assert.equal(tb.total_debit, tb.total_credit);
+    assert.equal(tb.opening_stock, 15000);
+    assert.equal(otherLedger(tb, "Profit & Loss A/c").amount, -6000);
+    // /periods says any period works and which dates have stock.
+    const per = (await call("GET", "/api/financial/periods", ADMIN)).body;
+    assert.equal(per.any_period, true);
+    assert.equal(per.books_from, "2025-04-01");
+    assert.ok(per.stock_dates.includes("2025-03-31") && per.stock_dates.includes("2026-09-30"));
+  });
+
+  test("openings that do not agree: shown as 'Difference in opening balances', like Tally", async () => {
+    db.ledgers.find((l) => l.name === "Profit & Loss A/c").opening_balance = "10000";
+    await groups();
+    await books({ books_from: "2026-04-01", vouchers_from: "2026-04-01", fy_from: "2026-04-01", opening_stock: 15000 });
+    await stock([["2026-09-30", 25000]]);
+    const bs = (await call("GET", "/api/financial/balance-sheet?from=2026-04-01&to=2026-09-30", ADMIN)).body.data;
+    assert.equal(bs.profit_loss.opening, 10000); // the ledger's own opening, not a derived figure
+    assert.equal(bs.difference, -4000);
+    const tb = (await call("GET", "/api/financial/trial-balance?from=2026-04-01&to=2026-09-30", ADMIN)).body.data;
+    assert.equal(tb.difference, -4000);
+  });
+
+  test("a period whose closing stock is not synced: a clear 404, no guessed figures", async () => {
+    await twoYears();
+    const r = await call("GET", "/api/financial/profit-loss?from=2026-04-01&to=2026-08-15", ADMIN);
+    assert.equal(r.status, 404);
+    assert.equal(r.body.code, "no_stock");
+    assert.match(r.body.message, /15-08-2026/);
+    // Expenses do not need stock.
+    const ex = await call("GET", "/api/financial/expenses?from=2025-04-01&to=2026-08-15", ADMIN);
+    assert.equal(ex.status, 200);
+    assert.equal(ex.body.data.total, 12000 + 18000); // rent + salary (purchases left out)
+    assert.ok(ex.body.data.by_month.length >= 1);
+    assert.ok(ex.body.data.by_month.every((m) => m.as_on <= "2026-08-15"));
+  });
+
+  test("a period ending after today: today's closing stock (nothing moved after today)", async () => {
+    await twoYears();
+    await stock([["2026-10-12", 33000]]); // today's stock (server's today: 2026-10-12)
+    const r = await call("GET", "/api/financial/profit-loss?from=2026-04-01&to=2027-03-31", ADMIN);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.data.trading.closing_stock, 33000);
+    const bs = await call("GET", "/api/financial/balance-sheet?from=2026-04-01&to=2026-12-31", ADMIN);
+    assert.equal(bs.status, 200);
+    // A past date without its stock still says so.
+    assert.equal((await call("GET", "/api/financial/profit-loss?from=2026-04-01&to=2026-08-15", ADMIN)).body.code, "no_stock");
+  });
+
+  test("Cash Flow statement: cash / bank in and out from the vouchers, by month and by group", async () => {
+    await twoYears();
+    const r = await call("GET", "/api/financial/cash-flow?from=2025-04-01&to=2026-09-30", ADMIN);
+    assert.equal(r.status, 200);
+    const cf = r.body.data;
+    assert.equal(cf.opening, 45000); // HDFC 40000 Dr + Cash 5000 Dr
+    assert.equal(cf.inflow, 52000); // receipt 50000 + interest 2000 (memorandum left out)
+    assert.equal(cf.outflow, 30000); // rent 12000 + salary 18000
+    assert.equal(cf.closing, 67000);
+    assert.equal(cf.closing, cf.opening + cf.inflow - cf.outflow);
+    assert.deepEqual(cf.inflow_groups, [
+      { name: "Sundry Debtors", amount: 50000 },
+      { name: "Indirect Incomes", amount: 2000 },
+    ]);
+    assert.deepEqual(cf.outflow_groups, [
+      { name: "Indirect Expenses", amount: 18000 },
+      { name: "Office Expenses", amount: 12000 },
+    ]);
+    assert.equal(cf.months.length, 18); // Apr-25 … Sep-26, empty months included
+    assert.deepEqual(cf.months.find((m) => m.month === "2025-09"), { month: "2025-09", inflow: 2000, outflow: 30000, net: -28000 });
+    assert.deepEqual(cf.accounts.map((a) => [a.name, a.opening, a.closing]), [["HDFC Bank", 40000, 62000], ["Cash", 5000, 5000]]);
+  });
+
+  /** The three GI cases of the Cash Flow check (see the test below). */
+  function cashFlowCases() {
+    const x = { admin_id: 7, company_guid: "CO-1" };
+    // GI 3-Aug-2023 Journal #539: cash paid out through a Cash-in-Hand ledger,
+    // saved by Tally WITHOUT the cash flow flag → not in Tally's Cash Flow.
+    db.entries.push(...E("2026-06-10", "Journal", [["Salary", true, 3000], ["Cash", false, 3000]], { tag: "j1", ...x }));
+    db.vouchers["2026-06-10-Journal-j1"] = { has_cash_flow: false, party_name: null };
+    // GI 4-Jul-2023 Journal #257: flagged, but no cash / bank line any more
+    // (the ledger moved group) → the party is its cash side; Out 5,000 only.
+    db.entries.push(...E("2026-07-04", "Journal", [["Real Glory", true, 5000], ["Mehta Electricals", false, 5000]], { tag: "j2", ...x }));
+    db.vouchers["2026-07-04-Journal-j2"] = { has_cash_flow: true, party_name: "Mehta Electricals" };
+    // GI 4-Jul-2023 Receipt #1176: a ledger with Dr and Cr lines in one
+    // voucher — Tally counts each (In 2, Out 12), not the net Dr 10.
+    db.entries.push(
+      ...E("2026-07-20", "Receipt", [["HDFC Bank", true, 990], ["Bank Charges", true, 10], ["Mehta Electricals", false, 1000]], { tag: "r1", ...x })
+    );
+    db.entries.find((e) => e.voucher_guid === "2026-07-20-Receipt-r1" && e.ledger_name === "Bank Charges").gross_dr = 12;
+    db.entries.find((e) => e.voucher_guid === "2026-07-20-Receipt-r1" && e.ledger_name === "Bank Charges").gross_cr = 2;
+    db.vouchers["2026-07-20-Receipt-r1"] = { has_cash_flow: true, party_name: "Mehta Electricals" };
+  }
+
+  test("Cash Flow as TallyPrime counts it: its flag, the other side line by line, gross Dr / Cr", async () => {
+    await twoYears();
+    cashFlowCases();
+    const cf = (await call("GET", "/api/financial/cash-flow?from=2025-04-01&to=2026-09-30", ADMIN)).body.data;
+    assert.equal(cf.inflow, 52000 + 1000 + 2); // + Mehta 1,000 + charges' Cr 2
+    assert.equal(cf.outflow, 30000 + 5000 + 12); // + Real Glory 5,000 + charges' Dr 12 (journal j1 left out)
+    assert.equal(cf.net, cf.inflow - cf.outflow);
+    // The real cash: 45,000 + 52,000 − 30,000 + 990 − 3,000.
+    assert.equal(cf.closing, 64990);
+    // Cash moved outside Tally's Cash Flow: −3,000 (j1) … and +5,000 counted
+    // by it (j2) that moved no cash.
+    assert.equal(cf.not_in_flow, 2000);
+    assert.equal(cf.closing, Math.round((cf.opening + cf.net + cf.not_in_flow) * 100) / 100);
+    // Real Glory + Bank Charges (no masters) out; j1's salary not counted.
+    assert.deepEqual(cf.outflow_groups, [
+      { name: "Indirect Expenses", amount: 18000 },
+      { name: "Office Expenses", amount: 12000 },
+      { name: "Other ledgers", amount: 5012 },
+    ]);
+  });
+
+  test("Cash Flow before the database has the flag columns: vouchers with a cash / bank line, net lines", async () => {
+    db.cfColumns = false; // the SQL that adds vouchers.has_cash_flow / gross_dr / gross_cr not run yet
+    await twoYears();
+    cashFlowCases();
+    const r = await call("GET", "/api/financial/cash-flow?from=2025-04-01&to=2026-09-30", ADMIN);
+    assert.equal(r.status, 200);
+    const cf = r.body.data;
+    assert.equal(cf.inflow, 52000 + 1000); // r1: Mehta in; charges are net Dr 10
+    assert.equal(cf.outflow, 30000 + 3000 + 10); // j1 has a cash line; j2 has none
+    assert.equal(cf.not_in_flow, 0); // every cash movement counted
+  });
+
+  test("ledger vouchers (drill-down): opening, each voucher with the other side, running balance", async () => {
+    await twoYears();
+    const r = await call("GET", "/api/financial/ledger-vouchers?guid=g-HDFC%20Bank&from=2025-04-01&to=2026-09-30", ADMIN);
+    assert.equal(r.status, 200);
+    const lv = r.body.data;
+    assert.equal(lv.ledger.name, "HDFC Bank");
+    assert.equal(lv.opening, -40000); // Dr
+    assert.deepEqual(lv.rows.map((x) => [x.date, x.particulars, x.debit, x.credit]), [
+      ["2025-07-01", "Mehta Electricals", 50000, 0],
+      ["2025-09-05", "Office Rent", 0, 12000],
+      ["2025-09-25", "Salary", 0, 18000],
+      ["2025-09-30", "Interest Received", 2000, 0],
+    ]);
+    assert.equal(lv.closing, -62000);
+    assert.equal(lv.rows.at(-1).balance, -62000);
+    assert.equal(lv.total_debit, 52000);
+    assert.equal(lv.total_credit, 30000);
+    // An income ledger starts each financial year at 0 (Tally).
+    const sales = (await call("GET", "/api/financial/ledger-vouchers?name=sales&from=2026-04-01&to=2026-09-30", ADMIN)).body.data;
+    assert.equal(sales.opening, 0);
+    assert.deepEqual(sales.rows.map((x) => x.credit), [50000]);
+    assert.equal((await call("GET", "/api/financial/ledger-vouchers?name=Nobody&from=2026-04-01&to=2026-09-30", ADMIN)).status, 404);
+    assert.equal((await call("GET", "/api/financial/ledger-vouchers?from=2026-04-01&to=2026-09-30", ADMIN)).status, 400);
+  });
+
+  test("today: the Agent's saved stock value wins over the stock items' values", async () => {
+    await groups();
+    await books({ books_from: "2026-04-01", vouchers_from: "2026-04-01", fy_from: "2026-04-01", opening_stock: 15000 });
+    const before = (await call("GET", "/api/financial/profit-loss?from=2026-04-01&to=2026-10-12", ADMIN)).body.data;
+    await stock([["2026-10-12", 99999]]);
+    const after = (await call("GET", "/api/financial/profit-loss?from=2026-04-01&to=2026-10-12", ADMIN)).body.data;
+    assert.equal(after.trading.closing_stock, 99999);
+    assert.notEqual(before.trading.closing_stock, 99999);
   });
 
   test("vouchers synced from later than the books: a clear reason", async () => {

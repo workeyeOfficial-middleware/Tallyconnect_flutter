@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tallyconnect_ui/app/app_state.dart';
 import 'package:tallyconnect_ui/app/providers.dart';
 import 'package:tallyconnect_ui/core/storage/local_storage.dart';
+import 'package:tallyconnect_ui/core/utils/format.dart' show ymd;
 import 'package:tallyconnect_ui/data/models/models.dart';
 import 'package:tallyconnect_ui/data/repositories/api_tally_repository.dart'
     show DataSet;
@@ -158,6 +159,39 @@ void main() {
       d.dispose();
     });
 
+    test(
+      'missing year-end closing stock: the admin enters it, reports reload',
+      () async {
+        final FakeBackend f = FakeBackend()..finStockNeeded.add('2026-03-31');
+        final AppController c = await _start(f);
+        await c.openFinancial('pl');
+        expect(c.finPeriods!.stockNeeded, <DateTime>[DateTime(2026, 3, 31)]);
+        expect(c.finPeriods!.canEnterStock, isTrue);
+        c.openFinStock(DateTime(2026, 3, 31));
+        expect(c.overlay, 'finStock');
+        // Checked before sending.
+        c.setF('fsValue', '-5');
+        await c.saveFinStock();
+        expect(c.finStockError, isNotNull);
+        c.setF('fsValue', '');
+        await c.saveFinStock();
+        expect(c.finStockError, isNotNull);
+        expect(f.finStockSaved, isEmpty);
+        // Indian grouping accepted.
+        c.setF('fsValue', '2,50,000.50');
+        await c.saveFinStock();
+        expect(f.finStockSaved.single, <String, Object?>{
+          'as_on': '2026-03-31',
+          'value': 250000.5,
+        });
+        expect(c.overlay, isNull);
+        expect(c.finStockError, isNull);
+        expect(c.finPeriods!.stockNeeded, isEmpty);
+        expect(c.toast, contains('Closing stock saved'));
+        c.dispose();
+      },
+    );
+
     test('admin gives and removes a team member\'s access', () async {
       final FakeBackend f = FakeBackend();
       final AppController c = await _start(f);
@@ -170,6 +204,107 @@ void main() {
       expect(c.toast, contains('Asha can now see financial reports'));
       await c.setMemberFinancialAccess(m, false);
       expect(f.finGranted, isEmpty);
+      c.dispose();
+    });
+
+    test(
+      'any period: Cash Flow, From / To, ledger vouchers keep the dates',
+      () async {
+        final FakeBackend f = FakeBackend()..finAnyPeriod = true;
+        final AppController c = await _start(f);
+        // The Cash Flow tile: the statement from cash / bank vouchers (not
+        // the stored Tally figures, which may be empty).
+        await c.openStatement('cf');
+        expect(c.screen, 'finReport');
+        expect(c.finKind, 'cf');
+        final DateTime t = c.today;
+        final DateTime fy = DateTime(t.month >= 4 ? t.year : t.year - 1, 4);
+        expect(_last(f, 'cash-flow')['from'], ymd(fy));
+        expect(_last(f, 'cash-flow')['to'], ymd(t));
+        expect(c.finData!.n('closing'), 67000);
+        expect(c.finData!.cashMonths, hasLength(2));
+        expect(c.finData!.pairs('outflow_groups').first, (
+          'Indirect Expenses',
+          18000,
+        ));
+        expect(c.finData!.cashAccounts.first, ('HDFC Bank', 40000, 60000));
+        // A month row: just that month.
+        await c.pickCashMonth(DateTime(2026, 8));
+        expect(_last(f, 'cash-flow')['from'], '2026-08-01');
+        expect(_last(f, 'cash-flow')['to'], '2026-08-31');
+
+        // From / To on a statement: any dates — also a To after today.
+        await c.openFinancial('pl');
+        c.openFinRange();
+        expect(c.overlay, 'dateRange');
+        expect(c.rangePresets, AppController.kRangePresets);
+        c.setF('drFrom', '2024-04-01');
+        final String future = ymd(t.add(const Duration(days: 40)));
+        c.setF('drTo', future);
+        expect(c.rangeError, isNull);
+        c.applyRange();
+        await pumpEventQueue();
+        expect(_last(f, 'profit-loss')['to'], future);
+        c.openFinRange();
+        c.setF('drFrom', '2024-04-01');
+        c.setF('drTo', '2026-09-15');
+        expect(c.rangeError, isNull);
+        c.applyRange();
+        await pumpEventQueue();
+        expect(c.overlay, isNull);
+        expect(c.finPreset, 'range');
+        expect(_last(f, 'profit-loss')['from'], '2024-04-01');
+        expect(_last(f, 'profit-loss')['to'], '2026-09-15');
+
+        // A ledger → its vouchers in the same period → a voucher.
+        final FinNode salary = c.finData!
+            .subNodes('indirect', 'expense')
+            .first
+            .children
+            .firstWhere((FinNode n) => n.name == 'Salary');
+        await c.openFinLedger(salary);
+        expect(c.screen, 'finLedger');
+        expect(_last(f, 'ledger-vouchers')['guid'], 'g-Salary');
+        expect(_last(f, 'ledger-vouchers')['from'], '2024-04-01');
+        expect(_last(f, 'ledger-vouchers')['to'], '2026-09-15');
+        expect(c.finLed!.rows, hasLength(2));
+        expect(c.finLed!.totalDebit, 18000);
+        expect(c.finLed!.closing, -18000);
+        // New dates on the ledger reload it with them.
+        c.openFinRange();
+        c.setF('drFrom', '2026-09-01');
+        c.setF('drTo', '2026-09-30');
+        c.applyRange();
+        await pumpEventQueue();
+        expect(_last(f, 'ledger-vouchers')['from'], '2026-09-01');
+        expect(c.screen, 'finLedger');
+        c.openFinVoucher(c.finLed!.rows.first);
+        expect(c.screen, 'entryDetail');
+        c.dispose();
+      },
+    );
+
+    test('forecast From / To: this week, 4–26 weeks', () async {
+      final FakeBackend f = FakeBackend();
+      final AppController c = await _start(f);
+      c.openCfRange();
+      expect(c.overlay, 'dateRange');
+      expect(c.rangePresets, AppController.kForecastPresets);
+      expect(c.f('drFrom'), ymd(c.cfStart));
+      c.rangePreset('w8');
+      expect(c.f('drTo'), ymd(c.cfStart.add(const Duration(days: 55))));
+      expect(c.rangeError, isNull);
+      c.applyRange();
+      await pumpEventQueue();
+      expect(c.cfWeeks, 8);
+      expect(f.cashflowQueries.last['weeks'], '8');
+      // Starts this week; at most 26 weeks.
+      c.openCfRange();
+      c.setF('drFrom', ymd(c.cfStart.add(const Duration(days: 7))));
+      expect(c.rangeError, contains('starts with this week'));
+      c.setF('drFrom', ymd(c.cfStart));
+      c.setF('drTo', ymd(c.cfStart.add(const Duration(days: 7 * 27))));
+      expect(c.rangeError, contains('at most 26 weeks'));
       c.dispose();
     });
   });
@@ -204,6 +339,14 @@ void main() {
             if (x.evaluate().isEmpty) {
               c.reg.screenScroll?.jumpTo(0);
               await settle();
+            }
+            // Rows below the fold are built as the page scrolls.
+            if (x.evaluate().isEmpty) {
+              await t.scrollUntilVisible(
+                x,
+                200,
+                scrollable: find.byType(Scrollable).first,
+              );
             }
             await t.ensureVisible(x);
             await t.pump();
@@ -249,12 +392,24 @@ void main() {
           await settle();
           expect(find.text('Liabilities'), findsOneWidget);
           expect(find.text('Profit & Loss A/c'), findsOneWidget);
+          expect(find.text('Opening Balance'), findsOneWidget);
+          expect(find.text('Current Period'), findsOneWidget);
+          // Both sides total alike, Tally's way (no ₹ sign, two decimals).
+          expect(find.text('2,17,000.00'), findsNWidgets(2));
           expect(t.takeException(), isNull);
 
           await c.openFinancial('tb');
           await settle();
-          expect(find.textContaining(' Dr'), findsWidgets);
-          expect(find.textContaining(' Cr'), findsWidgets);
+          expect(find.text('PARTICULARS'), findsOneWidget);
+          expect(find.text('DEBIT'), findsOneWidget);
+          expect(find.text('CREDIT'), findsOneWidget);
+          expect(find.text('Grand Total'), findsOneWidget);
+          expect(find.text('3,62,000.00'), findsNWidgets(2));
+          // A group opens to its ledgers, each in its column.
+          expect(find.text('Capital A/c'), findsNothing);
+          await tapKey('finNode-tb/Capital Account');
+          expect(find.text('Capital A/c'), findsOneWidget);
+          expect(find.text('1,15,000.00'), findsNWidgets(2));
           expect(t.takeException(), isNull);
 
           await c.openFinancial('exp');
@@ -276,6 +431,201 @@ void main() {
         },
       );
     }
+
+    for (final bool admin in <bool>[true, false]) {
+      testWidgets(
+        'missing year-end closing stock: ${admin ? 'admin enters it' : 'team member is told to ask'} (320 px)',
+        (WidgetTester t) async {
+          t.view.physicalSize = const Size(320 * 3, 800 * 3);
+          t.view.devicePixelRatio = 3;
+          addTearDown(t.view.reset);
+          final FakeBackend f = FakeBackend()
+            ..finStockNeeded.add('2026-03-31')
+            ..finCanEnterStock = admin;
+          final AppController c = await _start(f);
+          await t.pumpWidget(
+            ProviderScope(
+              overrides: <Override>[appProvider.overrideWith((Ref ref) => c)],
+              child: const TallyConnectApp(),
+            ),
+          );
+          Future<void> settle() async {
+            for (int i = 0; i < 8; i++) {
+              await t.pump(const Duration(milliseconds: 100));
+            }
+          }
+
+          await c.openFinancial('pl');
+          await settle();
+          const ValueKey<String> btn = ValueKey<String>('finStock-2026-3-31');
+          expect(find.textContaining('Closing stock as on'), findsOneWidget);
+          if (!admin) {
+            expect(find.byKey(btn), findsNothing);
+            expect(find.textContaining('Ask your admin'), findsOneWidget);
+            expect(t.takeException(), isNull);
+            await t.pump(const Duration(seconds: 6));
+            return;
+          }
+          await t.ensureVisible(find.byKey(btn));
+          await t.pump();
+          await t.tap(find.byKey(btn));
+          await settle();
+          expect(c.overlay, 'finStock');
+          expect(t.takeException(), isNull);
+          await t.enterText(
+            find.descendant(
+              of: find.byKey(const ValueKey<String>('finStockValue')),
+              matching: find.byType(TextField),
+            ),
+            '125000',
+          );
+          await t.pump();
+          await t.tap(find.byKey(const ValueKey<String>('finStockSave')));
+          await settle();
+          expect(f.finStockSaved.single['value'], 125000);
+          expect(c.overlay, isNull);
+          expect(find.byKey(btn), findsNothing);
+          expect(t.takeException(), isNull);
+          await t.pump(const Duration(seconds: 6));
+        },
+      );
+    }
+
+    testWidgets(
+      'dashboard sections; Cash Flow; From / To; ledger vouchers at 320 px',
+      (WidgetTester t) async {
+        t.view.physicalSize = const Size(320 * 3, 800 * 3);
+        t.view.devicePixelRatio = 3;
+        addTearDown(t.view.reset);
+        final FakeBackend f = FakeBackend()..finAnyPeriod = true;
+        final AppController c = await _start(f);
+        await t.pumpWidget(
+          ProviderScope(
+            overrides: <Override>[appProvider.overrideWith((Ref ref) => c)],
+            child: const TallyConnectApp(),
+          ),
+        );
+        Future<void> settle() async {
+          for (int i = 0; i < 8; i++) {
+            await t.pump(const Duration(milliseconds: 100));
+          }
+        }
+
+        Future<void> tapKey(String k) async {
+          final Finder x = find.byKey(ValueKey<String>(k));
+          if (x.evaluate().isEmpty) {
+            c.reg.screenScroll?.jumpTo(0);
+            await settle();
+          }
+          await t.ensureVisible(x);
+          await t.pump();
+          await t.tap(x);
+          await settle();
+        }
+
+        c.go('reports');
+        await settle();
+        await settle();
+        // Financial statements, then Business analytics.
+        for (final String k in <String>[
+          'fin-bs',
+          'fin-pl',
+          'fin-tb',
+          'fin-cf',
+          'cashflowTile',
+          'fin-exp',
+        ]) {
+          expect(find.byKey(ValueKey<String>(k)), findsOneWidget, reason: k);
+        }
+        expect(
+          find.textContaining(
+            RegExp('Financial statements', caseSensitive: false),
+          ),
+          findsOneWidget,
+        );
+        // Square cards: each at least as tall as it is wide.
+        final Size bs = t.getSize(find.byKey(const ValueKey<String>('fin-bs')));
+        expect(bs.height, greaterThanOrEqualTo(bs.width - 0.5));
+        final Finder analytics = find.textContaining(
+          RegExp('Business analytics', caseSensitive: false),
+        );
+        await t.scrollUntilVisible(
+          analytics,
+          300,
+          scrollable: find.byType(Scrollable).first,
+        );
+        expect(analytics, findsOneWidget);
+        expect(t.takeException(), isNull);
+
+        await tapKey('fin-cf');
+        expect(c.finKind, 'cf');
+        expect(
+          find.byKey(const ValueKey<String>('periodFrom')),
+          findsOneWidget,
+        );
+        expect(find.text('₹67,000'), findsWidgets);
+        expect(find.text('Month-wise'), findsOneWidget);
+        await t.scrollUntilVisible(
+          find.text('Cash and bank accounts'),
+          300,
+          scrollable: find.byType(Scrollable).first,
+        );
+        expect(find.text('Cash and bank accounts'), findsOneWidget);
+        // Nothing left out of Cash Flow: no note.
+        expect(find.byKey(const ValueKey<String>('cfNotInFlow')), findsNothing);
+        expect(t.takeException(), isNull);
+        // Cash moved by vouchers Tally's Cash Flow leaves out: the note.
+        f.finCashNotInFlow = -3000;
+        await c.loadFinancial();
+        await settle();
+        await t.scrollUntilVisible(
+          find.byKey(const ValueKey<String>('cfNotInFlow')),
+          300,
+          scrollable: find.byType(Scrollable).first,
+        );
+        expect(
+          find.textContaining('of cash / bank movement is not in Cash Flow'),
+          findsOneWidget,
+        );
+        expect(t.takeException(), isNull);
+        await tapKey('cfMonth-2026-8');
+        expect(_last(f, 'cash-flow')['from'], '2026-08-01');
+        expect(t.takeException(), isNull);
+
+        // The From / To sheet from the header.
+        await tapKey('periodFrom');
+        expect(c.overlay, 'dateRange');
+        await settle();
+        expect(
+          find.byKey(const ValueKey<String>('rangePreset-fy')),
+          findsOneWidget,
+        );
+        c.closeOv();
+        await settle();
+
+        // P&L → a group → a ledger → its vouchers.
+        await c.openFinancial('pl');
+        await settle();
+        await tapKey('finNode-ie/Indirect Expenses');
+        await tapKey('finNode-ie/Indirect Expenses/Salary');
+        expect(c.screen, 'finLedger');
+        await settle();
+        expect(find.text('Opening Balance'), findsOneWidget);
+        expect(find.text('Closing Balance'), findsOneWidget);
+        expect(find.text('HDFC Bank'), findsOneWidget);
+        expect(find.text('18,000.00'), findsWidgets);
+        expect(t.takeException(), isNull);
+        // A voucher row opens the voucher (its detail call is not part of
+        // this fake server, so only the navigation is checked here).
+        await t.ensureVisible(
+          find.byKey(const ValueKey<String>('finLedRow-v-1')),
+        );
+        await t.pump();
+        await t.tap(find.byKey(const ValueKey<String>('finLedRow-v-1')));
+        expect(c.screen, 'entryDetail');
+        await t.pump(const Duration(seconds: 6));
+      },
+    );
 
     testWidgets('team member without access: no tiles', (WidgetTester t) async {
       t.view.physicalSize = const Size(390 * 3, 800 * 3);

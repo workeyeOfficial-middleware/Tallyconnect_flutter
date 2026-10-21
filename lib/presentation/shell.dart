@@ -18,7 +18,12 @@ import 'screens/auth_screens.dart';
 import 'screens/cashflow_screens.dart' show CashflowScreen, CashflowWeekScreen;
 import 'screens/tally_report_screens.dart' show TallyReportScreen;
 import 'screens/dues_screens.dart';
-import 'screens/financial_screens.dart' show FinancialReportScreen;
+import 'screens/attendance_screens.dart'
+    show AttMemberScreen, AttTeamScreen, AttendanceScreen;
+import 'screens/leave_screens.dart'
+    show LeaveMemberScreen, LeaveReqsScreen, LeaveScreen, LeaveSettingsScreen;
+import 'screens/financial_screens.dart'
+    show FinLedgerScreen, FinancialReportScreen;
 import 'screens/sales_screens.dart' show SalesDashScreen;
 import 'screens/flow_screen.dart';
 import 'screens/home_screen.dart';
@@ -55,6 +60,14 @@ Widget screenFor(String s) => switch (s) {
   'reports' => const ReportsScreen(),
   'report' => const ReportScreen(),
   'finReport' => const FinancialReportScreen(),
+  'finLedger' => const FinLedgerScreen(),
+  'attendance' => const AttendanceScreen(),
+  'attTeam' => const AttTeamScreen(),
+  'attMember' => const AttMemberScreen(),
+  'leave' => const LeaveScreen(),
+  'leaveReqs' => const LeaveReqsScreen(),
+  'leaveSettings' => const LeaveSettingsScreen(),
+  'leaveMember' => const LeaveMemberScreen(),
   'salesDash' => const SalesDashScreen(),
   'cashflow' => const CashflowScreen(),
   'cfWeek' => const CashflowWeekScreen(),
@@ -96,6 +109,14 @@ const List<String> kScreens = <String>[
   'reports',
   'report',
   'finReport',
+  'finLedger',
+  'attendance',
+  'attTeam',
+  'attMember',
+  'leave',
+  'leaveReqs',
+  'leaveSettings',
+  'leaveMember',
   'salesDash',
   'cashflow',
   'cfWeek',

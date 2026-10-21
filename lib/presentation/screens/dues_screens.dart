@@ -7,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/app_state.dart';
 import '../../app/providers.dart';
-import '../../core/design/tc_fields.dart';
 import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
@@ -18,6 +17,7 @@ import '../../data/models/models.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../../core/share/report_data.dart';
 import '../widgets/common.dart';
+import '../widgets/voice_search.dart';
 import '../widgets/report_chart.dart';
 
 class OutHubScreen extends ConsumerWidget {
@@ -710,12 +710,12 @@ class OutSearchBox extends StatelessWidget {
     final TcPalette p = Tc.of(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Inp(
+      child: VoiceSearchField(
+        field: 'outQuery',
         value: c.outQuery,
         onChanged: c.setOutQuery,
         placeholder: 'Party, bill no., amount…',
-        icon: 'search',
-        trailing: GestureDetector(
+        extra: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: c.toggleOutSearch,
           child: SizedBox(

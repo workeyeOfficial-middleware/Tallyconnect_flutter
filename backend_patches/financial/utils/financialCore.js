@@ -19,7 +19,7 @@
 ========================================================= */
 
 export const STOCK_GROUP_RE = /^stock[\s-]*in[\s-]*hand$/i;
-const PL_LEDGER_RE = /^profit\s*(&|and)\s*loss/i;
+export const PL_LEDGER_RE = /^profit\s*(&|and)\s*loss/i;
 
 /** Rupees → paise-exact sum helpers (no float drift in totals). */
 const p = (n) => Math.round(Number(n || 0) * 100);
@@ -37,7 +37,7 @@ export const nameKey = (s) =>
     .trim()
     .toLowerCase();
 
-const isPrimaryParent = (parent) => {
+export const isPrimaryParent = (parent) => {
   const s = String(parent ?? "").replace(/[\u0000-\u001f]/g, "").trim().toLowerCase();
   return s === "" || s === "primary";
 };
@@ -359,6 +359,29 @@ export function expenseReport(groups, to, prev = null, { includePurchases = fals
     top_ledgers: top,
     by_month: trend,
   };
+}
+
+/**
+ * Month-wise expenses straight from voucher movements: [{name, month
+ * (YYYY-MM), net (Cr +)}] → [{month, as_on (month end, at most [to]),
+ * amount}]. Same groups as the Expenses report (purchases only when asked).
+ */
+export function expenseMonths(groups, masters, monthly, { includePurchases = false, to = null } = {}) {
+  const idx = groupIndex(groups);
+  const parentOf = new Map((masters || []).map((m) => [nameKey(m.name), m.parent]));
+  const isPurchase = (name) => /^purchase\s*accounts?$/i.test(String(name));
+  const by = new Map();
+  for (const x of monthly || []) {
+    const i = idx.info(parentOf.get(nameKey(x.name)));
+    if (!i || i.nature !== "expense") continue;
+    if (!includePurchases && isPurchase(i.primary)) continue;
+    by.set(x.month, (by.get(x.month) || 0) - p(x.net));
+  }
+  return [...by.keys()].sort().map((month) => {
+    const [y, mo] = month.split("-").map(Number);
+    const end = new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10);
+    return { month, as_on: to && end > to ? to : end, amount: r(by.get(month)) };
+  });
 }
 
 /* ------------------------------------------- balances from vouchers */

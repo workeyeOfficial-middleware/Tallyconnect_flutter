@@ -11,11 +11,15 @@
 //  (ledger masters) and adds the synced vouchers — no balances from Tally.
 //
 //  Closing stock on past dates (month and year ends) can only come from
-//  Tally's stock valuation, which is HEAVY on large companies (it once
-//  kept Tally busy for 30 minutes). It is therefore OFF unless switched on
-//  (FIN_STOCK_FROM_TALLY=1, after tools/fin-probe.cjs showed it is quick),
-//  and then: one such request per sync, a 90-second limit, and a 7-day
-//  pause if Tally is slow. Never for dates before the books begin. Order:
+//  Tally's stock valuation. It is read from Tally's own Profit and Loss
+//  REPORT (export) for the year up to the date: its "Closing Stock" line is
+//  the stock on that date, its "Opening Stock" line the stock the day
+//  before the year (two values per request). NOT from a Group / Ledger
+//  collection with a date range: that kind froze Tally (no answer in 90 s
+//  even on a 6-item company, 16-10-2026), while the P&L report export took
+//  0.2 s. One such request per sync, a 90-second limit, a 7-day pause if
+//  Tally is slow, off for the company after twice. Never for dates before
+//  the books begin. Order:
 //  year ends (each year's opening stock), yesterday (one value per day from
 //  then on), month ends newest first. Paced: at most one per 30 minutes
 //  (4 hours after one that took over 15 s), only when Tally answers a tiny
@@ -43,6 +47,10 @@ const HEAVY_SLOW_EVERY_MS = 4 * 60 * 60 * 1000;
 // times (each followed by the 7-day pause): heavy requests are switched off
 // for it for good (the Agent decides; nothing to set on the PC).
 const MAX_HEAVY_TIMEOUTS = 2;
+// How stock values are read (state.fin_heavy_method): Tally's P&L report.
+// "-2": the first build counted a server outage as a report failure (a
+// 4-hour wait); a changed value clears such waits once.
+const HEAVY_METHOD = "pl-report-2";
 const DAILY_MS = 24 * 3600 * 1000;
 const ANCHOR_REFRESH_MS = 7 * DAY_MS;
 const RECENT_STOCK_REFRESH_MS = 7 * DAY_MS;
@@ -153,6 +161,80 @@ function inHeavyHours(date, spec) {
   return start < end ? h >= start && h < end : h >= start || h < end;
 }
 
+/** Tally's Profit and Loss report for [from] … [to] (export, XML). */
+function plReportXml(company, from, to) {
+  const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `
+<ENVELOPE>
+ <HEADER>
+  <TALLYREQUEST>Export Data</TALLYREQUEST>
+ </HEADER>
+ <BODY>
+  <EXPORTDATA>
+   <REQUESTDESC>
+    <REPORTNAME>Profit and Loss</REPORTNAME>
+    <STATICVARIABLES>
+     <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+     <SVCURRENTCOMPANY>${esc(company)}</SVCURRENTCOMPANY>
+     <SVFROMDATE>${tallyDate(from)}</SVFROMDATE>
+     <SVTODATE>${tallyDate(to)}</SVTODATE>
+    </STATICVARIABLES>
+   </REQUESTDESC>
+  </EXPORTDATA>
+ </BODY>
+</ENVELOPE>`;
+}
+
+/** Tally amount text → number ("-771585.00", "(1,234.50)", "250.00 Dr" → negative). */
+function reportAmount(t) {
+  const s = String(t ?? "").trim();
+  if (!s) return null;
+  const neg = /^-/.test(s) || /^\(.*\)$/.test(s.replace(/\s*(Dr|Cr)$/i, "")) || /\bDr$/i.test(s);
+  const n = Number(s.replace(/[^0-9.]/g, ""));
+  return Number.isFinite(n) && /\d/.test(s) ? (neg ? -n : n) : null;
+}
+
+/**
+ * Opening / closing stock from the P&L report XML: each line name
+ * (DSPDISPNAME) is followed by its amounts (PLSUBAMT / BSMAINAMT /
+ * PLMAINAMT / BSSUBAMT); the first amount after "Opening Stock" /
+ * "(Less:) Closing Stock" is taken. Values positive, null when the line
+ * is missing. `report` false: not a P&L report at all.
+ */
+function readPlStock(xml) {
+  const s = String(xml || "");
+  const decode = (t) =>
+    String(t ?? "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&#\d+;/g, " ")
+      .trim();
+  const re = /<(DSPDISPNAME|PLSUBAMT|BSMAINAMT|PLMAINAMT|BSSUBAMT)>([^<]*)<\/\1>/g;
+  let name = "";
+  let names = 0;
+  const out = { opening: null, closing: null };
+  const seen = { opening: false, closing: false };
+  let m;
+  while ((m = re.exec(s))) {
+    if (m[1] === "DSPDISPNAME") {
+      name = decode(m[2]);
+      names += 1;
+      if (/opening\s+stock/i.test(name)) seen.opening = true;
+      if (/closing\s+stock/i.test(name)) seen.closing = true;
+      continue;
+    }
+    const v = reportAmount(m[2]);
+    if (v === null) continue;
+    if (/opening\s+stock/i.test(name) && out.opening === null) out.opening = Math.round(Math.abs(v) * 100) / 100;
+    else if (/closing\s+stock/i.test(name) && out.closing === null) out.closing = Math.round(Math.abs(v) * 100) / 100;
+  }
+  // A stock line with no readable amount: the layout is not understood —
+  // never guessed as 0.
+  const unreadable = (seen.opening && out.opening === null) || (seen.closing && out.closing === null);
+  return { ...out, report: names > 0, unreadable };
+}
+
 /** Is it a timeout (axios / our own)? */
 const isTimeout = (e) => e && (e.code === "ECONNABORTED" || /timeout/i.test(String(e.message || "")));
 
@@ -257,6 +339,26 @@ function createFinancialSync({ tallyPost, parseXml, parseNumber, post, log = () 
     return g ? parseNumber(g.CLOSINGBALANCE ?? "0") : 0;
   }
 
+  /**
+   * Tally's own Profit and Loss REPORT for [fyFrom] … [asOn] (a report
+   * export, like the Bills reports — not a collection with a date range,
+   * which froze Tally). Its "Opening Stock" line is the closing stock of the
+   * day before [fyFrom], its "Closing Stock" line the closing stock on
+   * [asOn]: two values from one request. → {opening, closing} (positive;
+   * null when the line is not in the report — no stock in that period).
+   */
+  async function fetchStockFromReport(company, fyFrom, asOn) {
+    const res = await tallyPost(plReportXml(company, fyFrom, asOn), HEAVY_TIMEOUT_MS);
+    const body = String(res?.data || "");
+    if (/<LINEERROR>/i.test(body) || !/<ENVELOPE/i.test(body)) {
+      throw new Error(`Tally did not give its Profit and Loss report (${(/<LINEERROR>([^<]*)/i.exec(body) || [])[1] || "no report"})`);
+    }
+    const r = readPlStock(body);
+    if (!r.report || r.unreadable) throw new Error("Tally's Profit and Loss report was not understood (stock lines not read)");
+    // A line Tally leaves out is zero (no stock at that date).
+    return { opening: r.opening ?? 0, closing: r.closing ?? 0 };
+  }
+
   /** Every ledger's closing balance on [asOn] (heavy; only with FIN_TALLY_ANCHOR). */
   async function fetchLedgerBalances(company, fyFrom, asOn) {
     return (
@@ -340,6 +442,17 @@ function createFinancialSync({ tallyPost, parseXml, parseNumber, post, log = () 
     }
 
     // ---- heavy, at most MAX_HEAVY, only when switched on
+    // Stock values now come from Tally's Profit and Loss REPORT. Pauses /
+    // switch-offs earned by the earlier date-range request (which froze
+    // Tally) do not count against the report: reset once.
+    if (state.fin_heavy_method !== HEAVY_METHOD) {
+      delete state.fin_paused_until;
+      delete state.fin_heavy_off_at;
+      delete state.fin_heavy_next_at;
+      state.fin_heavy_timeouts = 0;
+      state.fin_heavy_method = HEAVY_METHOD;
+      saveState(state);
+    }
     // Switched off for this company by the Agent itself (Tally too slow
     // MAX_HEAVY_TIMEOUTS times) — unless forced on.
     if (state.fin_heavy_off_at && !forceHeavy && (stockFromTally || tallyAnchor)) {
@@ -347,6 +460,30 @@ function createFinancialSync({ tallyPost, parseXml, parseNumber, post, log = () 
     }
     const plan = () =>
       planHeavy({ fyFrom, booksFrom: state.fin_books_from, syncStart, today, state, nowMs, stockFromTally, tallyAnchor });
+
+    /** Stock values Tally already gave but the server did not get yet. */
+    async function sendUnsent() {
+      const u = state.fin_stock_unsent;
+      if (!u) return true;
+      try {
+        await post("/api/financial/agent/stock-values", { company_guid: companyGuid, values: u.values });
+      } catch (e) {
+        log(`⚠️ Stock values from Tally not saved — the server could not be reached (${e.message}). Sent again next sync; Tally is not asked again.`);
+        return false;
+      }
+      const marks = {};
+      for (const d of u.dates || []) marks[d] = nowMs;
+      state.fin_stock = { ...(state.fin_stock || {}), ...marks };
+      delete state.fin_stock_unsent;
+      saveState(state);
+      return true;
+    }
+    if (state.fin_stock_unsent) {
+      if (!(await sendUnsent())) {
+        return { done, left: plan().length, skipped: null, waiting: "the server could not be reached — the values from Tally are sent next sync" };
+      }
+      done.push("stock values sent");
+    }
     // Heavy requests make Tally value stock: only in the allowed hours and
     // only when Tally answers a tiny request at once (nobody is keeping it
     // busy). Otherwise nothing heavy is sent this sync.
@@ -370,30 +507,59 @@ function createFinancialSync({ tallyPost, parseXml, parseNumber, post, log = () 
       heavy++;
       const startedAt = clock();
       try {
+        let took;
         if (it.kind === "anchor") {
           const ledgers = await fetchLedgerBalances(companyName, it.fyFrom, it.asOn);
           await uploadAnchor(companyGuid, it.asOn, it.fyFrom, ledgers);
           state.fin_anchors = { ...(state.fin_anchors || {}), [it.asOn]: nowMs };
           done.push(`anchor ${it.asOn}`);
+          took = clock() - startedAt;
         } else {
-          const v = await fetchStock(companyName, it.fyFrom, it.asOn);
-          await post("/api/financial/agent/stock-values", { company_guid: companyGuid, values: [{ as_on: it.asOn, value: Math.abs(v) }] });
-          state.fin_stock = { ...(state.fin_stock || {}), [it.asOn]: nowMs };
+          // Tally's P&L report for the year up to [asOn]: closing stock on
+          // [asOn] AND opening stock (= closing the day before the year).
+          const sv = await fetchStockFromReport(companyName, it.fyFrom, it.asOn);
+          took = clock() - startedAt; // Tally's time only (not the upload)
+          const openDay = addDays(it.fyFrom, -1);
+          const values = [{ as_on: it.asOn, value: sv.closing }];
+          if (openDay !== it.asOn) values.push({ as_on: openDay, value: sv.opening });
+          log(
+            `📦 Tally P&L ${it.fyFrom} … ${it.asOn} (${Math.round(took / 100) / 10} s): closing stock ₹${sv.closing} (${it.asOn}), ` +
+              `opening stock ₹${sv.opening} (${openDay}).`
+          );
+          // Kept until the server has them: if it cannot be reached they are
+          // sent again next sync — Tally is NOT asked again.
+          state.fin_stock_unsent = { values, dates: [it.asOn, openDay] };
+          state.fin_heavy_next_at = nowMs + (took > heavySlowMs ? heavySlowEveryMs : heavyEveryMs);
+          state.fin_heavy_timeouts = 0;
+          saveState(state);
+          if (took > heavySlowMs) {
+            log(`🐢 Tally took ${Math.round(took / 1000)} s for the closing stock of ${it.asOn} — the next one waits ${Math.round(heavySlowEveryMs / 3600000)} h.`);
+          }
+          if (!(await sendUnsent())) {
+            return { done, left: plan().length, skipped: null, waiting: "the server could not be reached — the values from Tally are sent next sync" };
+          }
           done.push(`stock ${it.asOn}`);
         }
-        const took = clock() - startedAt;
         const slow = took > heavySlowMs;
         state.fin_heavy_next_at = nowMs + (slow ? heavySlowEveryMs : heavyEveryMs);
         state.fin_heavy_timeouts = 0; // answered in time: earlier misses are forgiven
-        if (slow) {
+        if (slow && it.kind === "anchor") {
           log(
-            `🐢 Tally took ${Math.round(took / 1000)} s for the ${it.kind === "anchor" ? "ledger balances" : "closing stock"} of ${it.asOn} — ` +
+            `🐢 Tally took ${Math.round(took / 1000)} s for the ledger balances of ${it.asOn} — ` +
               `the next one waits ${Math.round(heavySlowEveryMs / 3600000)} h.`
           );
         }
         saveState(state);
       } catch (e) {
-        if (!isTimeout(e)) throw e;
+        if (!isTimeout(e)) {
+          if (it.kind !== "stock") throw e;
+          // Report refused / not understood: nothing is saved (never a
+          // guessed value); tried again later, not every sync.
+          state.fin_heavy_next_at = nowMs + heavySlowEveryMs;
+          saveState(state);
+          log(`⚠️ ${e.message} — tried again in ${Math.round(heavySlowEveryMs / 3600000)} h.`);
+          return { done, left: plan().length, skipped: null, waiting: "Tally's P&L report not read — tried again later" };
+        }
         state.fin_paused_until = nowMs + PAUSE_AFTER_SLOW_MS;
         state.fin_heavy_timeouts = Number(state.fin_heavy_timeouts || 0) + 1;
         const what = it.kind === "anchor" ? "ledger balances" : "closing stock";
@@ -417,7 +583,7 @@ function createFinancialSync({ tallyPost, parseXml, parseNumber, post, log = () 
     return { done, left: plan().length, skipped: null };
   }
 
-  return { run, fetchGroups, fetchBooksFrom, fetchOpeningStock, fetchStock, fetchLedgerBalances };
+  return { run, fetchGroups, fetchBooksFrom, fetchOpeningStock, fetchStock, fetchStockFromReport, fetchLedgerBalances };
 }
 
 module.exports = {
@@ -437,4 +603,7 @@ module.exports = {
   HEAVY_SLOW_MS,
   HEAVY_SLOW_EVERY_MS,
   MAX_HEAVY_TIMEOUTS,
+  HEAVY_METHOD,
+  plReportXml,
+  readPlStock,
 };

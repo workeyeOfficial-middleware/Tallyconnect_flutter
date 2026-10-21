@@ -1,0 +1,94 @@
+-- Read-only. GI, 1-Apr-2016 to 21-Oct-2026: Tally vs app, ledger by ledger
+-- (Indirect Expenses / Indirect Incomes). Lists only ledgers that differ.
+WITH RECURSIVE
+t(name, tally_dr, tally_group) AS (VALUES
+  ('Advertisment & Promotional Exp', 381062.00, 'Indirect Expenses'),
+  ('AGARWAL MOTOR', -17000.00, 'Indirect Expenses'),
+  ('Amar Mali', 10000.00, 'Indirect Expenses'),
+  ('AMC', 448568.00, 'Indirect Expenses'),
+  ('ashish Mishra Miscellaneous Exp.', 550.00, 'Indirect Expenses'),
+  ('Bank Charge Non GST', 32711.90, 'Indirect Expenses'),
+  ('Bank Charges GST', 7609.32, 'Indirect Expenses'),
+  ('Bipin Plumber 23000/-', 6000.00, 'Indirect Expenses'),
+  ('Casual Waiters / Labour Wages', 1234696.00, 'Indirect Expenses'),
+  ('Commission for Room Sales', 5215.00, 'Indirect Expenses'),
+  ('Commission for Sale', 15600.53, 'Indirect Expenses'),
+  ('Diesel Expense for Generator', 1398943.66, 'Indirect Expenses'),
+  ('Electricity Exp.', 6150080.34, 'Indirect Expenses'),
+  ('Freight, Cartage & couriar', 160945.00, 'Indirect Expenses'),
+  ('FREIGHT GST', 140.00, 'Indirect Expenses'),
+  ('Fuel Exp', 464044.19, 'Indirect Expenses'),
+  ('HOTEL EXP', 3681972.61, 'Indirect Expenses'),
+  ('Houskeeping Exp Non-Gst', 2286100.20, 'Indirect Expenses'),
+  ('INCENTIVE', 52837.00, 'Indirect Expenses'),
+  ('Insurance', 241776.00, 'Indirect Expenses'),
+  ('INTEREST', 300546.56, 'Indirect Expenses'),
+  ('INTERNET SERVICES', 31263.83, 'Indirect Expenses'),
+  ('Misc. Exp.', 5709.12, 'Indirect Expenses'),
+  ('Mobile & Broadbands Recharge', 83128.80, 'Indirect Expenses'),
+  ('OMPRAKASH ELTRIC MISTRY', 12500.00, 'Indirect Expenses'),
+  ('Pollution Department', 134678.32, 'Indirect Expenses'),
+  ('RAJIV RANJAN SINGER', 22000.00, 'Indirect Expenses'),
+  ('Rakesh Tiles Mistry Ground Floor', 103000.00, 'Indirect Expenses'),
+  ('Rent Exp.', 2100960.00, 'Indirect Expenses'),
+  ('Repairing & Maintenance', 2613690.79, 'Indirect Expenses'),
+  ('R/O', 2381.02, 'Indirect Expenses'),
+  ('SALARY', 22150012.00, 'Indirect Expenses'),
+  ('Sale Promotions Exp.', 1000.00, 'Indirect Expenses'),
+  ('Sales Incentive', 10680.00, 'Indirect Expenses'),
+  ('Sanjiv Marwa (160000)', 280000.00, 'Indirect Expenses'),
+  ('Sharma Watch Sangam', 14000.00, 'Indirect Expenses'),
+  ('Shyam Kumar (Carpainter)', 86500.00, 'Indirect Expenses'),
+  ('SPL DISCOUNT BY MD SIR', 10000.00, 'Indirect Expenses'),
+  ('Staff Walfare Exp.', 57850.00, 'Indirect Expenses'),
+  ('Stationary Exp.', 3960.00, 'Indirect Expenses'),
+  ('Stationary Exp Non Gst', 75671.50, 'Indirect Expenses'),
+  ('Suspense A/c', 164293.12, 'Indirect Expenses'),
+  ('Travling Exp', 37086.00, 'Indirect Expenses'),
+  ('VECHILE EXP', 750844.58, 'Indirect Expenses'),
+  ('DISCOUNT', 520564.41, 'Indirect Incomes'),
+  ('Dj & Light', -6500.00, 'Indirect Incomes'),
+  ('Hall Decoration', 89791.00, 'Indirect Incomes'),
+  ('Rooms', -51700.00, 'Indirect Incomes'),
+  ('Singer', 14000.00, 'Indirect Incomes'),
+  ('SOCIAL MEDIA (PRIYANKA SINGH)', 34000.00, 'Indirect Incomes')
+),
+grp AS (
+  SELECT name FROM tally_groups
+   WHERE admin_id = 3 AND company_guid = 'f868f002-3e6c-4f78-b558-5bfdadd0cceb'
+     AND name IN ('Indirect Expenses', 'Indirect Incomes')
+  UNION
+  SELECT g.name FROM tally_groups g JOIN grp ON g.parent = grp.name
+   WHERE g.admin_id = 3 AND g.company_guid = 'f868f002-3e6c-4f78-b558-5bfdadd0cceb'
+),
+mv AS (
+  SELECT lower(btrim(regexp_replace(ve.ledger_name, '[[:space:]]+', ' ', 'g'))) AS k,
+         SUM(CASE WHEN ve.is_debit THEN -ve.amount ELSE ve.amount END) AS app_dr,
+         COUNT(DISTINCT ve.voucher_guid) AS vouchers
+    FROM voucher_entries ve
+   WHERE ve.admin_id = 3 AND ve.company_guid = 'f868f002-3e6c-4f78-b558-5bfdadd0cceb'
+     AND COALESCE(ve.is_active, TRUE) = TRUE
+     AND ve.voucher_date BETWEEN '2016-04-01' AND '2026-10-21'
+     AND COALESCE(ve.voucher_type, '') !~* '(memorandum|reversing journal|optional)'
+   GROUP BY 1
+),
+app AS (
+  SELECT l.name, l.parent_group, COALESCE(l.opening_balance, 0) AS opening,
+         lower(btrim(regexp_replace(l.name, '[[:space:]]+', ' ', 'g'))) AS k
+    FROM ledgers l
+   WHERE l.admin_id = 3 AND l.company_guid = 'f868f002-3e6c-4f78-b558-5bfdadd0cceb'
+)
+SELECT COALESCE(t.name, app.name) AS ledger,
+       t.tally_group,
+       app.parent_group AS app_group,
+       t.tally_dr,
+       COALESCE(mv.app_dr, 0) AS app_dr,
+       COALESCE(mv.app_dr, 0) - COALESCE(t.tally_dr, 0) AS diff,
+       app.opening,
+       mv.vouchers
+  FROM t
+  FULL JOIN app ON app.k = lower(btrim(regexp_replace(t.name, '[[:space:]]+', ' ', 'g')))
+  LEFT JOIN mv ON mv.k = COALESCE(app.k, lower(btrim(regexp_replace(t.name, '[[:space:]]+', ' ', 'g'))))
+ WHERE (t.name IS NOT NULL OR app.parent_group IN (SELECT name FROM grp))
+   AND ABS(COALESCE(mv.app_dr, 0) - COALESCE(t.tally_dr, 0)) > 0.01
+ ORDER BY ABS(COALESCE(mv.app_dr, 0) - COALESCE(t.tally_dr, 0)) DESC;

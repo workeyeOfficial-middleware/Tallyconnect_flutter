@@ -7,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/app_state.dart';
 import '../../app/providers.dart';
-import '../../core/design/tc_fields.dart';
 import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
@@ -19,21 +18,15 @@ import '../../data/models/models.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../../data/repositories/voucher_pager.dart';
 import '../widgets/common.dart';
+import '../widgets/voice_search.dart';
 import '../widgets/report_chart.dart';
 import '../widgets/tab_bar.dart' show PillFilter;
-import 'cashflow_screens.dart' show CashflowTile;
+import 'attendance_screens.dart' show AttStatusLine, TeamAttCard;
+import 'leave_screens.dart' show TeamLeaveCard;
 import 'financial_screens.dart' show FinancialTiles;
 import 'sales_screens.dart' show SalesTile;
 import 'stock_party_screens.dart' show StatBox;
 import 'voucher_screens.dart' show monthSums;
-
-const List<(String, String)> kRC = <(String, String)>[
-  ('all', 'All'),
-  ('sales', 'Sales'),
-  ('party', 'Party'),
-  ('stock', 'Stock'),
-  ('accounts', 'Accounts'),
-];
 
 String stockValue(AppController c) =>
     inr(sumRupees(c.repo.items().map((Item x) => x.worth)));
@@ -59,21 +52,18 @@ class ReportsScreen extends ConsumerWidget {
       '${c.repo.version}|$pk|${identityHashCode(vc)}|${vc?.complete}|${vc?.stale}',
       () => <String, String>{
         for (final Report r in c.repo.reports())
-          r.id: reportData(
-            c.repo,
-            r.id,
-            period: period,
-            range: c.range,
-          ).card,
+          r.id: reportData(c.repo, r.id, period: period, range: c.range).card,
       },
     );
+    final String tab = c.repTab;
+    // The old Expenses card opens the financial Expenses statement (with
+    // its own From–To) when this login may see financial reports.
+    final bool expStatement =
+        c.repo.isRemote && !c.demo && c.finCanView == true;
     final ({List<Report> rows, int hidden, VoidCallback unhide}) v = c
         .listView<Report>(
           'reports',
-          c.repo
-              .reports()
-              .where((Report r) => c.repCat == 'all' || r.cat == c.repCat)
-              .toList(),
+          c.repo.reports().where((Report r) => r.cat == tab).toList(),
           (Report r) => r.id,
         );
     return Scr(
@@ -109,62 +99,75 @@ class ReportsScreen extends ConsumerWidget {
             ],
           ),
         ),
+        // Category tabs right under the summary: the open tab's report
+        // cards show at once (no long page to scroll through).
         Chips(
+          margin: const EdgeInsets.only(top: 14, bottom: 12),
           children: <Widget>[
-            for (final (String, String) x in kRC)
+            for (final (String, String) x in c.repTabs)
               ChipBtn(
                 x.$2,
-                on: c.repCat == x.$1,
-                onTap: () => c.update(() => c.repCat = x.$1),
+                key: ValueKey<String>('repTab-${x.$1}'),
+                on: tab == x.$1,
+                onTap: () => c.setRepTab(x.$1),
               ),
           ],
         ),
-        // Sales dashboard (real company).
-        const SalesTile(),
-        // Next 13 weeks of money in / out (same access as below).
-        const CashflowTile(),
-        // P&L, Balance Sheet, Trial Balance, Expenses (when allowed).
-        const FinancialTiles(),
-        Grid(
-          cols: 2,
-          children: <Widget>[
-            for (final Report r in v.rows)
-              LRow(
-                list: 'reports',
-                lk: r.id,
-                radius: 22,
-                pinCorner: true,
-                child: Tap(
-                  onTap: () {
-                    if (c.guardTap('reports', r.id)) {
-                      c.go('report', <String, Object?>{'report': r.id});
-                    }
-                  },
-                  child: Glass(
-                    child: Container(
-                      constraints: const BoxConstraints(minHeight: 150),
-                      padding: const EdgeInsets.all(14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Ico(r.ic, size: IcoSize.sm, color: p.cat(r.c)),
-                          const SizedBox(height: 12),
-                          Text(r.t, style: rtStyle(context)),
-                          const SizedBox(height: 2),
-                          Text(
-                            rv[r.id] ?? '',
-                            style: ts(15, w: w700, h: 1.25, c: p.cat(r.c)),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(r.s, style: rsStyle(context)),
-                        ],
+        // Financial statements (when allowed): Balance Sheet, P&L, Trial
+        // Balance, Cash Flow, Cash Flow Forecast, Expenses.
+        if (tab == 'fin')
+          const FinancialTiles(title: false)
+        // Business analytics: Sales Analytics, Top customers, Top products.
+        else if (tab == 'analytics')
+          const SalesTile()
+        else
+          Grid(
+            cols: 2,
+            children: <Widget>[
+              for (final Report r in v.rows)
+                LRow(
+                  list: 'reports',
+                  lk: r.id,
+                  radius: 22,
+                  pinCorner: true,
+                  child: Tap(
+                    onTap: () {
+                      if (!c.guardTap('reports', r.id)) return;
+                      // Expenses: the financial statement (any From–To) when
+                      // this login may see it.
+                      if (r.id == 'exp' && expStatement) {
+                        c.openStatement('exp');
+                      } else {
+                        c.go('report', <String, Object?>{'report': r.id});
+                      }
+                    },
+                    child: Glass(
+                      child: Container(
+                        constraints: const BoxConstraints(minHeight: 150),
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Ico(r.ic, size: IcoSize.sm, color: p.cat(r.c)),
+                            const SizedBox(height: 12),
+                            Text(r.t, style: rtStyle(context)),
+                            const SizedBox(height: 2),
+                            Text(
+                              r.id == 'exp' && expStatement
+                                  ? 'Any period'
+                                  : rv[r.id] ?? '',
+                              style: ts(15, w: w700, h: 1.25, c: p.cat(r.c)),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(r.s, style: rsStyle(context)),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-          ],
-        ),
+            ],
+          ),
         if (v.hidden > 0)
           Padding(
             padding: const EdgeInsets.only(top: 12),
@@ -826,21 +829,45 @@ class TeamScreen extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
     final String q = c.f('teamQ').toLowerCase();
+    // The server keeps no account status (active / invite sent / turned
+    // off): on real data only the check-in status from the server is shown.
+    final bool live = c.repo.isRemote;
+    final List<(String, String)> segs = live
+        ? const <(String, String)>[
+            ('all', 'All'),
+            ('in', 'Checked in'),
+            ('out', 'Out'),
+            ('absent', 'Not in'),
+          ]
+        : const <(String, String)>[
+            ('all', 'All'),
+            ('active', 'Active'),
+            ('pending', 'Pending'),
+            ('off', 'Off'),
+          ];
+    final String filter = segs.any(((String, String) s) => s.$1 == c.teamFilter)
+        ? c.teamFilter
+        : 'all';
+    bool shown(Member m) {
+      if (filter == 'all') return true;
+      if (!live) return m.st == filter;
+      final AttStatus? s = c.attOf(m.id)?.status;
+      return switch (filter) {
+        'in' => s == AttStatus.active || s == AttStatus.idle,
+        'out' => s == AttStatus.checkedOut,
+        _ => s == AttStatus.absent,
+      };
+    }
+
     final List<Member> trows = c.team
         .where(
           (Member m) =>
-              (c.teamFilter == 'all' || m.st == c.teamFilter) &&
+              shown(m) &&
               (q.isEmpty || '${m.name} ${m.email}'.toLowerCase().contains(q)),
         )
         .toList();
     final ({List<Member> rows, int hidden, VoidCallback unhide}) v = c
         .listView<Member>('team', trows, (Member m) => m.email);
-    const List<(String, String)> segs = <(String, String)>[
-      ('all', 'All'),
-      ('active', 'Active'),
-      ('pending', 'Pending'),
-      ('off', 'Off'),
-    ];
     final List<(String, int, String, String)> stats =
         <(String, int, String, String)>[
           ('Total', c.team.length, 'team', 'team'),
@@ -895,29 +922,37 @@ class TeamScreen extends ConsumerWidget {
         ),
         const TitleBadge('Sales Team'),
         const Sub('Add people and send invites'),
-        Grid(
-          cols: 4,
-          gap: 10,
-          children: <Widget>[
-            for (final (String, int, String, String) s in stats)
-              StatBox(
-                '${s.$2}',
-                s.$1,
-                glass: true,
-                top: Padding(
-                  padding: const EdgeInsets.only(bottom: 2),
-                  child: Ico(
-                    s.$3,
-                    size: IcoSize.xs,
-                    box: 32,
-                    radius: 10,
-                    color: p.cat(s.$4),
-                    icon: IcSize.xs,
+        // Today's check-ins (opens Team attendance).
+        const TeamAttCard(),
+        // Leave requests waiting and who is on leave today.
+        const TeamLeaveCard(),
+        const SizedBox(height: 12),
+        // Account counts (sample data only: the server keeps no account
+        // status; today's check-ins are the card above).
+        if (!live)
+          Grid(
+            cols: 4,
+            gap: 10,
+            children: <Widget>[
+              for (final (String, int, String, String) s in stats)
+                StatBox(
+                  '${s.$2}',
+                  s.$1,
+                  glass: true,
+                  top: Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Ico(
+                      s.$3,
+                      size: IcoSize.xs,
+                      box: 32,
+                      radius: 10,
+                      color: p.cat(s.$4),
+                      icon: IcSize.xs,
+                    ),
                   ),
                 ),
-              ),
-          ],
-        ),
+            ],
+          ),
         const SizedBox(height: 12),
         Grid(
           cols: 2,
@@ -970,19 +1005,17 @@ class TeamScreen extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 18),
-        Inp(
+        VoiceSearchField(
+          field: 'teamQ',
           value: c.f('teamQ'),
           onChanged: (String s) => c.setF('teamQ', s),
           placeholder: 'Search by name or email',
-          icon: 'search',
         ),
         Seg(
           margin: const EdgeInsets.only(top: 12, bottom: 14),
           fontSize: 14,
           items: segs.map(((String, String) e) => e.$2).toList(),
-          selected: segs.indexWhere(
-            ((String, String) e) => e.$1 == c.teamFilter,
-          ),
+          selected: segs.indexWhere(((String, String) e) => e.$1 == filter),
           onPick: (int i) => c.update(() => c.teamFilter = segs[i].$1),
         ),
         Padding(
@@ -1028,12 +1061,15 @@ class TeamScreen extends ConsumerWidget {
                           const SizedBox(height: 4),
                           Row(
                             children: <Widget>[
-                              Bdg(
-                                kTS[m.st]!.$1,
-                                kind: kTS[m.st]!.$2,
-                                dot: true,
-                              ),
-                              const SizedBox(width: 6),
+                              // Account status: sample data only.
+                              if (!live) ...<Widget>[
+                                Bdg(
+                                  kTS[m.st]!.$1,
+                                  kind: kTS[m.st]!.$2,
+                                  dot: true,
+                                ),
+                                const SizedBox(width: 6),
+                              ],
                               Flexible(
                                 child: Text(
                                   m.role,
@@ -1044,6 +1080,8 @@ class TeamScreen extends ConsumerWidget {
                               ),
                             ],
                           ),
+                          // Check-in today (team members).
+                          AttStatusLine(m.id),
                         ],
                       ),
                     ),

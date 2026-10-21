@@ -21,6 +21,7 @@ import '../../data/repositories/tally_repository.dart' show HistoryTotals;
 import '../overlays/email_reminder_sheets.dart' show PartyReminders;
 import '../widgets/bulk_bar.dart';
 import '../widgets/common.dart';
+import '../widgets/voice_search.dart';
 
 /// `.tot.stat` (centred column) / `.glass.stat` (left).
 class StatBox extends StatelessWidget {
@@ -90,10 +91,14 @@ class SearchRow extends StatelessWidget {
     required this.placeholder,
     this.icon,
     this.onAction,
+    this.voice,
   });
   final String value;
   final ValueChanged<String> onChanged;
   final String placeholder;
+
+  /// The field's key for voice search (mic in the field); none when null.
+  final String? voice;
 
   /// Button beside the field (e.g. sort); none when null.
   final String? icon;
@@ -103,14 +108,23 @@ class SearchRow extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
     child: Row(
+      // The button stays level with the field (a voice note may sit below).
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Expanded(
-          child: Inp(
-            value: value,
-            onChanged: onChanged,
-            placeholder: placeholder,
-            icon: 'search',
-          ),
+          child: voice == null
+              ? Inp(
+                  value: value,
+                  onChanged: onChanged,
+                  placeholder: placeholder,
+                  icon: 'search',
+                )
+              : VoiceSearchField(
+                  field: voice!,
+                  value: value,
+                  onChanged: onChanged,
+                  placeholder: placeholder,
+                ),
         ),
         if (icon != null) ...<Widget>[
           const SizedBox(width: 10),
@@ -317,6 +331,7 @@ class ItemsScreen extends ConsumerWidget {
             onPick: (int i) => c.update(() => c.itemsFilter = segs[i].$1),
           ),
         SearchRow(
+          voice: 'itemQ',
           value: c.f('itemQ'),
           onChanged: (String s) => c.setQuery('itemQ', s),
           placeholder: showGroups ? 'Search stock group' : 'Search item name',
@@ -514,6 +529,7 @@ class PartyScreen extends ConsumerWidget {
           onPick: (int i) => c.update(() => c.partyFilter = segs[i].$1),
         ),
         SearchRow(
+          voice: 'partyQ',
           value: c.f('partyQ'),
           onChanged: (String s) => c.setQuery('partyQ', s),
           placeholder: 'Search party name',

@@ -17,6 +17,7 @@ import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
+import 'attendance_screens.dart' show ProfileButton;
 import 'sales_screens.dart' show SalesHomeCard;
 
 double homePagerTop(BuildContext c) => topIn(c) + 148;
@@ -97,21 +98,42 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
                 NavRow(
+                  // Compact actions leave the wordmark room to stand out.
+                  gap: 5,
                   children: <Widget>[
-                    CBtn('menu', onTap: () => c.openOverlay('menu')),
-                    // Shrinks (never wraps) on narrow phones.
-                    const Expanded(
-                      child: FittedBox(fit: BoxFit.scaleDown, child: Brand()),
+                    CBtn(
+                      'menu',
+                      small: true,
+                      onTap: () => c.openOverlay('menu'),
                     ),
-                    CBtn('search', onTap: () => c.openOverlay('search')),
+                    // Shrinks (never wraps) only on very narrow phones.
+                    const Expanded(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Brand(size: 24),
+                      ),
+                    ),
+                    CBtn(
+                      'search',
+                      size: kHomeActionSize,
+                      iconSize: IcSize.s,
+                      onTap: () => c.openOverlay('search'),
+                    ),
                     CBtn(
                       'bell',
+                      size: kHomeActionSize,
+                      iconSize: IcSize.s,
                       onTap: () => c.go('notifs'),
                       dot: c.unread > 0,
                     ),
+                    // Team members only: Check in / Check out (dot while
+                    // checked in). The admin has no profile button here.
+                    if (!c.isAdmin) const ProfileButton(),
                     CBtn(
                       'feedback',
                       key: const ValueKey<String>('feedbackBtn'),
+                      size: kHomeActionSize,
+                      iconSize: IcSize.s,
                       onTap: c.openFeedback,
                     ),
                   ],
@@ -269,6 +291,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 }
+
+/// Home header action buttons (search, alerts, profile, feedback): a
+/// little smaller than the standard 46, so the wordmark leads the row.
+const double kHomeActionSize = 38;
 
 class _CoIc extends StatelessWidget {
   const _CoIc();
