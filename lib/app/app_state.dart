@@ -444,6 +444,10 @@ class AppController extends ChangeNotifier {
 
   /// Glass see-through, 20–100 %: higher = clearer glass.
   double glass = kDefaultGlass;
+
+  /// Frosted cards (Settings → Look → Glass): every card blurs what is
+  /// behind it. Off by default — costly on slower phones. Saved on this phone.
+  bool cardBlur = false;
   static const double kDefaultGlass = 80;
 
   Map<String, List<List<String>>> pagesByWs = <String, List<List<String>>>{};
@@ -773,6 +777,7 @@ class AppController extends ChangeNotifier {
     if (ht is List) hiddenTabs = ht.whereType<String>().toSet()..remove('home');
     navBarHidden = store.load<Object?>(LocalStorage.kNavHidden, false) == true;
     iconMatch = store.load<Object?>(LocalStorage.kIconMatch, true) != false;
+    cardBlur = store.load<Object?>(LocalStorage.kGlassBlur, false) == true;
     final Object? dm = store.load<Object?>(LocalStorage.kDemoMode, 'auto');
     demoMode = dm == 'on' || dm == 'off' ? dm! as String : 'auto';
     final Object? sl = store.load<Object?>(LocalStorage.kDemoSeenLive, null);
@@ -787,6 +792,7 @@ class AppController extends ChangeNotifier {
     repPeriod = rp == 'all' || (rp == 'range' && range != null)
         ? rp! as String
         : 'month';
+    _loadSavedPeriods();
     bgShade =
         ((store.load<Object?>(LocalStorage.kBgShade, kDefaultShade) as num?) ??
                 kDefaultShade)
@@ -842,6 +848,7 @@ class AppController extends ChangeNotifier {
     opacity: bgOpacity / 100,
     shade: bgShade / 100,
     textTone: textTone / 100,
+    cardBlur: cardBlur,
   );
 
   bool get showTabs => loggedIn && !navBarHidden && !kNoTab.contains(screen);
@@ -1359,9 +1366,19 @@ class AppController extends ChangeNotifier {
 
   /// Opens one statement with its default period.
   Future<void> openFinancial(String kind) async {
+    // The period last used for this statement (else its default).
+    final (String, DateTime?, DateTime?)? saved = _finSaved[kind];
+    final bool fixed =
+        saved != null &&
+        _kFixedFinPresets.contains(saved.$1) &&
+        saved.$3 != null;
     _set(() {
       finKind = kind;
-      finPreset = kind == 'bs' || kind == 'tb' ? 'latest' : 'fy';
+      finPreset = saved?.$1 ?? (kind == 'bs' || kind == 'tb' ? 'latest' : 'fy');
+      if (fixed) {
+        finFrom = saved.$2;
+        finTo = saved.$3;
+      }
       finData = null;
       finError = null;
       finOpen.clear();
@@ -1369,7 +1386,9 @@ class AppController extends ChangeNotifier {
     go('finReport');
     await _loadFinPeriods();
     if (_finReady(finPeriods)) {
-      _applyFinPreset(finPreset);
+      // A picked range / month stays as picked; "This FY", "Latest" … follow
+      // the newest figures.
+      if (!fixed) _applyFinPreset(finPreset);
       await loadFinancial();
     }
   }
@@ -1665,6 +1684,8 @@ class AppController extends ChangeNotifier {
   Future<void> loadFinancial() async {
     final DateTime? to = finTo;
     if (to == null) return;
+    // The period shown is the one kept for this statement.
+    _saveFinPeriod();
     final int req = ++_finReq;
     final String key = _finKey;
     _set(() {
@@ -1696,6 +1717,84 @@ class AppController extends ChangeNotifier {
   /// The From / To sheet of the open financial report (also the ledger
   /// drill-down, which keeps the report's dates).
   void openFinRange() => openRange('fin');
+
+  // ------------------------------------------- periods kept on the phone
+  // Every report keeps the period the user chose — through Back, refresh,
+  // reopening and restarting the app — until the user picks another one.
+
+  /// Each statement's last period: kind → (preset, from, to).
+  final Map<String, (String, DateTime?, DateTime?)> _finSaved =
+      <String, (String, DateTime?, DateTime?)>{};
+
+  /// Presets whose dates are fixed when chosen (a picked range / month):
+  /// restored as they were. The others ("This FY", "Latest", "Last month"…)
+  /// follow the newest figures each time.
+  static const Set<String> _kFixedFinPresets = <String>{'range', 'pick'};
+
+  static DateTime? _parseDay(Object? v) =>
+      v == null ? null : DateTime.tryParse('$v');
+
+  void _loadSavedPeriods() {
+    final Object? fp = store.load<Object?>(LocalStorage.kFinPeriods, null);
+    if (fp is Map) {
+      for (final MapEntry<Object?, Object?> e in fp.entries) {
+        final Object? v = e.value;
+        if (v is! Map || v['preset'] is! String) continue;
+        _finSaved['${e.key}'] = (
+          v['preset']! as String,
+          _parseDay(v['from']),
+          _parseDay(v['to']),
+        );
+      }
+    }
+    final Object? sp = store.load<Object?>(LocalStorage.kSalesPeriod, null);
+    if (sp is Map && sp['preset'] is String) {
+      final DateTime? a = _parseDay(sp['from']), b = _parseDay(sp['to']);
+      if (sp['preset'] == 'custom') {
+        if (a != null && b != null && !b.isBefore(a)) {
+          salesCustom = DateRange(a, b);
+          salesPreset = 'custom';
+        }
+      } else if (kSalesPresets.any(
+        ((String, String) p) => p.$1 == sp['preset'],
+      )) {
+        salesPreset = sp['preset']! as String;
+      }
+    }
+    final Object? cw = store.load<Object?>(LocalStorage.kCfWeeks, null);
+    if (cw is num) cfWeeks = cw.toInt().clamp(1, kCfMaxWeeks);
+    final Object? ar = store.load<Object?>(LocalStorage.kAttRange, null);
+    if (ar is Map) {
+      final DateTime? a = _parseDay(ar['from']), b = _parseDay(ar['to']);
+      if (a != null && b != null && !b.isBefore(a)) {
+        attFrom = a;
+        attTo = b;
+      }
+    }
+  }
+
+  /// Saves the open statement's period (every load goes through here).
+  void _saveFinPeriod() {
+    _finSaved[finKind] = (finPreset, finFrom, finTo);
+    store.save(LocalStorage.kFinPeriods, <String, Object?>{
+      for (final MapEntry<String, (String, DateTime?, DateTime?)> e
+          in _finSaved.entries)
+        e.key: <String, Object?>{
+          'preset': e.value.$1,
+          'from': e.value.$2 == null ? null : ymd(e.value.$2!),
+          'to': e.value.$3 == null ? null : ymd(e.value.$3!),
+        },
+    });
+  }
+
+  void _saveSalesPeriod() {
+    final DateRange? c = salesCustom;
+    store.save(LocalStorage.kSalesPeriod, <String, Object?>{
+      'preset': salesPreset,
+      if (salesPreset == 'custom' && c != null) 'from': ymd(c.from),
+      if (salesPreset == 'custom' && c != null) 'to': ymd(c.to),
+    });
+  }
 
   /// Cash Flow: one month of the statement (its own From / To).
   Future<void> pickCashMonth(DateTime month) async {
@@ -2824,6 +2923,7 @@ class AppController extends ChangeNotifier {
       return;
     }
     _set(() => salesPreset = k);
+    _saveSalesPeriod();
     await loadSales();
   }
 
@@ -4472,6 +4572,14 @@ class AppController extends ChangeNotifier {
         attTo = r.to;
         overlay = null;
       });
+      // My own history keeps its dates (the admin's view of a person starts
+      // at the day shown on Team attendance).
+      if (screen == 'attendance') {
+        store.save(LocalStorage.kAttRange, <String, String>{
+          'from': ymd(r.from),
+          'to': ymd(r.to),
+        });
+      }
       unawaited(loadAttHistory());
       return;
     }
@@ -4482,6 +4590,7 @@ class AppController extends ChangeNotifier {
         cfWeeks = ((days + 6) ~/ 7).clamp(1, kCfMaxWeeks);
         overlay = null;
       });
+      store.save(LocalStorage.kCfWeeks, cfWeeks);
       unawaited(loadCashflow());
       return;
     }
@@ -4492,6 +4601,7 @@ class AppController extends ChangeNotifier {
         salesPreset = 'custom';
         overlay = null;
       });
+      _saveSalesPeriod();
       unawaited(loadSales());
       return;
     }
@@ -7376,10 +7486,17 @@ class AppController extends ChangeNotifier {
     store.save(LocalStorage.kGlassClear, v);
   }
 
+  void toggleCardBlur() {
+    _set(() => cardBlur = !cardBlur);
+    store.save(LocalStorage.kGlassBlur, cardBlur);
+  }
+
   void resetLook() {
     store.save(LocalStorage.kGlassClear, kDefaultGlass);
+    store.save(LocalStorage.kGlassBlur, false);
     _set(() {
       glass = kDefaultGlass;
+      cardBlur = false;
       preset = 'aurora';
       accent = 'look';
       mode = 'look';

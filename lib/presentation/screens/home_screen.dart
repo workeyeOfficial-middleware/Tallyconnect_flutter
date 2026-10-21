@@ -776,7 +776,7 @@ class _EntryHero extends ConsumerWidget {
                             height: 40,
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: whiteA(.92),
+                              color: p.raisedFill,
                               borderRadius: BorderRadius.circular(14),
                               boxShadow: <BoxShadow>[
                                 css(0, 6, 12, -6, mix(p.acc3, .45)),

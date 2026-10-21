@@ -119,6 +119,36 @@ void main() {
       c.dispose();
     });
 
+    test(
+      'my history keeps its From / To after the app is opened again',
+      () async {
+        final FakeBackend f = FakeBackend();
+        final LocalStorage store = LocalStorage.memory();
+        Future<AppController> start() async {
+          final DemoAwareRepository r = DemoAwareRepository(live: f.repo());
+          await r.login('ravi@x.in', 'secret', 'USER');
+          await r.refreshAll();
+          return AppController(store: store, repo: r, startScreen: 'home');
+        }
+
+        final AppController c = await start();
+        c.openAttendance();
+        await pumpEventQueue();
+        c.openAttRange();
+        c.setF('drFrom', '2026-09-01');
+        c.setF('drTo', '2026-09-30');
+        c.applyRange();
+        await pumpEventQueue();
+        c.dispose();
+        final AppController d = await start();
+        expect(d.attRange, (DateTime(2026, 9), DateTime(2026, 9, 30)));
+        d.openAttendance();
+        await pumpEventQueue();
+        expect(_calls(f, 'me/history').last['from'], '2026-09-01');
+        d.dispose();
+      },
+    );
+
     test('server refuses / admin / demo / older server', () async {
       final FakeBackend f = FakeBackend()..attOnTeam = false;
       final AppController c = await _start(f);

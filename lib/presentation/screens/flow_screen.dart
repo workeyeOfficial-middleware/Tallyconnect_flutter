@@ -1188,7 +1188,7 @@ class _JInpState extends State<_JInp> {
       padding: const EdgeInsets.symmetric(horizontal: 10),
       alignment: Alignment.centerRight,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: p.fieldFill,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: navyA(.13)),
       ),

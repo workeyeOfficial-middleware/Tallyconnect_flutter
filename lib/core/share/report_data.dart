@@ -133,7 +133,10 @@ ReportData reportData(
   final List<Voucher> vs = rg != null
       ? (remote
             ? (loaded ?? const <Voucher>[])
-            : repo.vouchers().where((Voucher v) => rg.contains(v.date)).toList())
+            : repo
+                  .vouchers()
+                  .where((Voucher v) => rg.contains(v.date))
+                  .toList())
       : !allTime
       ? repo.vouchers().where((Voucher v) {
           final DateTime? d = v.date;
@@ -331,7 +334,9 @@ ReportData reportData(
           ),
       ];
       final String n = partial ? countOf('all') : grouped(d.length);
-      tot = partial ? amtOf('all') : inr(sumRupees(d.map((Voucher v) => v.amt)));
+      tot = partial
+          ? amtOf('all')
+          : inr(sumRupees(d.map((Voucher v) => v.amt)));
       tl = '$n entries · value';
       card = '$n entries';
       if (!partial) {

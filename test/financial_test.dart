@@ -284,6 +284,81 @@ void main() {
       },
     );
 
+    test(
+      'each report keeps its From / To: Back, reopening, restarting',
+      () async {
+        final FakeBackend f = FakeBackend()..finAnyPeriod = true;
+        final LocalStorage store = LocalStorage.memory();
+        Future<AppController> start() async {
+          final DemoAwareRepository r = DemoAwareRepository(live: f.repo());
+          await r.login('ravi@x.in', 'secret', 'ADMIN');
+          await r.refreshAll();
+          final AppController c = AppController(
+            store: store,
+            repo: r,
+            startScreen: 'home',
+          );
+          c.afterRefresh(quietOk: true);
+          return c;
+        }
+
+        final AppController c = await start();
+        // P&L: a picked From / To.
+        await c.openFinancial('pl');
+        c.openFinRange();
+        c.setF('drFrom', '2026-04-15');
+        c.setF('drTo', '2026-08-31');
+        c.applyRange();
+        await pumpEventQueue();
+        expect(_last(f, 'profit-loss')['from'], '2026-04-15');
+        // Another statement keeps its own default …
+        await c.openFinancial('cf');
+        final DateTime t = c.today;
+        expect(_last(f, 'cash-flow')['to'], ymd(t));
+        // … Cash Flow: one month picked.
+        await c.pickCashMonth(DateTime(2026, 8));
+        // Back to the P&L: still the picked dates (not "This FY").
+        c.back();
+        await c.openFinancial('pl');
+        expect(c.finPreset, 'range');
+        expect(_last(f, 'profit-loss')['from'], '2026-04-15');
+        expect(_last(f, 'profit-loss')['to'], '2026-08-31');
+        // A refresh asks for the same dates.
+        await c.loadFinancial();
+        expect(_last(f, 'profit-loss')['from'], '2026-04-15');
+        // Sales analytics: 12 months.
+        await c.setSalesPreset('last12');
+        // The forecast: 8 weeks.
+        c.openCfRange();
+        c.rangePreset('w8');
+        c.applyRange();
+        expect(c.cfWeeks, 8);
+        c.dispose();
+
+        // The app opened again: every report as it was left.
+        final AppController d = await start();
+        expect(d.salesPreset, 'last12');
+        expect(d.cfWeeks, 8);
+        await d.openFinancial('pl');
+        expect(_last(f, 'profit-loss')['from'], '2026-04-15');
+        expect(_last(f, 'profit-loss')['to'], '2026-08-31');
+        await d.openFinancial('cf');
+        expect(_last(f, 'cash-flow')['from'], '2026-08-01');
+        expect(_last(f, 'cash-flow')['to'], '2026-08-31');
+        // A preset chip changes it — and that is kept instead.
+        await d.openFinancial('pl');
+        await d.setFinPreset('fy');
+        final DateTime fy = DateTime(t.month >= 4 ? t.year : t.year - 1, 4);
+        expect(_last(f, 'profit-loss')['from'], ymd(fy));
+        d.dispose();
+        final AppController e = await start();
+        await e.openFinancial('pl');
+        expect(e.finPreset, 'fy');
+        expect(_last(f, 'profit-loss')['from'], ymd(fy));
+        e.dispose();
+      },
+    );
+
     test('forecast From / To: this week, 4–26 weeks', () async {
       final FakeBackend f = FakeBackend();
       final AppController c = await _start(f);

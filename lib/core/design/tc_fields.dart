@@ -170,7 +170,7 @@ class _InpState extends State<Inp> {
       duration: const Duration(milliseconds: 200),
       height: h,
       decoration: BoxDecoration(
-        color: whiteA(.88),
+        color: p.fieldFill,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: focus ? p.navy2 : navyA(.13)),
         boxShadow: focus
@@ -247,7 +247,16 @@ class _InpState extends State<Inp> {
               child: Center(child: widget.prefix),
             ),
           if (widget.trailing != null)
-            Positioned(right: 6, top: 6, child: widget.trailing!),
+            // Centred in a one-line field of any height (6 px from the top
+            // at the usual 56); at the top of a text area.
+            widget.textarea
+                ? Positioned(right: 6, top: 6, child: widget.trailing!)
+                : Positioned(
+                    right: 6,
+                    top: 0,
+                    bottom: 0,
+                    child: Center(child: widget.trailing!),
+                  ),
         ],
       ),
     );
@@ -276,7 +285,7 @@ class SelBtn extends StatelessWidget {
         height: 56,
         padding: const EdgeInsets.only(left: 8, right: 12),
         decoration: BoxDecoration(
-          color: whiteA(.88),
+          color: p.fieldFill,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: navyA(.13)),
         ),
@@ -299,6 +308,38 @@ class SelBtn extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The date / time pickers in the app's glass: the look's glass tint
+/// (nearly solid — the dimmed screen behind it is not blurred), rounded like
+/// the sheets, the look's navy for the selection.
+ThemeData pickerTheme(BuildContext c, TcPalette p) {
+  final Color bg = p.gt.withValues(alpha: .96);
+  final RoundedRectangleBorder shape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(28),
+    side: BorderSide(color: whiteA(.7)),
+  );
+  return Theme.of(c).copyWith(
+    colorScheme: ColorScheme.light(
+      primary: p.navy,
+      onPrimary: Colors.white,
+      surface: bg,
+      onSurface: p.ink,
+    ),
+    datePickerTheme: DatePickerThemeData(
+      backgroundColor: bg,
+      surfaceTintColor: Colors.transparent,
+      shape: shape,
+      headerBackgroundColor: p.navy,
+      headerForegroundColor: Colors.white,
+    ),
+    timePickerTheme: TimePickerThemeData(
+      backgroundColor: bg,
+      shape: shape,
+      dialBackgroundColor: p.fieldFill,
+      hourMinuteColor: p.fieldFill,
+    ),
+  );
 }
 
 /// `<input type=date>` — shows dd/mm/yyyy, opens the platform date picker.
@@ -331,16 +372,8 @@ class DateInp extends StatelessWidget {
           initialDate: init,
           firstDate: DateTime(2000),
           lastDate: DateTime(2100),
-          builder: (BuildContext c, Widget? child) => Theme(
-            data: Theme.of(c).copyWith(
-              colorScheme: ColorScheme.light(
-                primary: p.navy,
-                onPrimary: Colors.white,
-                onSurface: p.ink,
-              ),
-            ),
-            child: child!,
-          ),
+          builder: (BuildContext c, Widget? child) =>
+              Theme(data: pickerTheme(c, p), child: child!),
         );
         if (d != null) {
           onChanged(
@@ -352,7 +385,7 @@ class DateInp extends StatelessWidget {
         height: 56,
         padding: EdgeInsets.symmetric(horizontal: hPad),
         decoration: BoxDecoration(
-          color: whiteA(.88),
+          color: p.fieldFill,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: navyA(.13)),
         ),
@@ -412,16 +445,8 @@ class TimeInp extends StatelessWidget {
         final TimeOfDay? picked = await showTimePicker(
           context: context,
           initialTime: t ?? TimeOfDay.now(),
-          builder: (BuildContext c, Widget? child) => Theme(
-            data: Theme.of(c).copyWith(
-              colorScheme: ColorScheme.light(
-                primary: p.navy,
-                onPrimary: Colors.white,
-                onSurface: p.ink,
-              ),
-            ),
-            child: child!,
-          ),
+          builder: (BuildContext c, Widget? child) =>
+              Theme(data: pickerTheme(c, p), child: child!),
         );
         if (picked != null) {
           onChanged(
@@ -433,7 +458,7 @@ class TimeInp extends StatelessWidget {
         height: 56,
         padding: EdgeInsets.symmetric(horizontal: hPad),
         decoration: BoxDecoration(
-          color: whiteA(.88),
+          color: p.fieldFill,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: navyA(.13)),
         ),

@@ -78,7 +78,8 @@ const Map<String, String> tcIconPaths = <String, String>{
   'chat': 'M4 20l1.3-4A8 8 0 1 1 8 19z',
   // Feedback: a square message box with a star (rate / tell us) — clearly
   // not the round chat bubble.
-  'whatsapp': 'M3.6 20.4l1.1-4A8.5 8.5 0 1 1 8 19.6zM9.1 7.9h1.4l1 2.3-.9 1.1a6 6 0 0 0 2.6 2.6l1.1-.9 2.3 1v1.4c0 .5-.5 1-1 1A8 8 0 0 1 8.1 9c0-.6.4-1.1 1-1.1z',
+  'whatsapp':
+      'M3.6 20.4l1.1-4A8.5 8.5 0 1 1 8 19.6zM9.1 7.9h1.4l1 2.3-.9 1.1a6 6 0 0 0 2.6 2.6l1.1-.9 2.3 1v1.4c0 .5-.5 1-1 1A8 8 0 0 1 8.1 9c0-.6.4-1.1 1-1.1z',
   'feedback':
       'M4 4h16v12H10l-5 4v-4H4zM12 6.8l1.1 2.2 2.4.35-1.75 1.7.4 2.4L12 12.3l-2.15 1.15.4-2.4-1.75-1.7 2.4-.35z',
   // AI assistant: a four-point sparkle with a small one beside it.

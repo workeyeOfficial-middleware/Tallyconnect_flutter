@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tallyconnect_ui/app/app_state.dart';
 import 'package:tallyconnect_ui/app/providers.dart';
+import 'package:tallyconnect_ui/core/design/tc_fields.dart';
 import 'package:tallyconnect_ui/core/design/tc_kit.dart';
 import 'package:tallyconnect_ui/core/design/tc_palette.dart';
 import 'package:tallyconnect_ui/core/storage/local_storage.dart';
@@ -52,6 +53,17 @@ void main() {
                   reason: at,
                 );
                 expect(p.sheen, lessThan(prev.sheen), reason: at);
+                // Fields and raised controls follow the setting too.
+                expect(
+                  p.fieldFill.a,
+                  lessThanOrEqualTo(prev.fieldFill.a),
+                  reason: at,
+                );
+                expect(
+                  p.raisedFill.a,
+                  lessThanOrEqualTo(prev.raisedFill.a),
+                  reason: at,
+                );
               }
               // Card ink readable on the glass over this background.
               final double bg = backdropLum(
@@ -67,6 +79,13 @@ void main() {
                 greaterThanOrEqualTo(4.5),
                 reason: at,
               );
+              // Typed text stays readable on a field over this background.
+              final double field = bg + (gl - bg) * p.fieldFill.a;
+              expect(
+                _ratio(field, p.ink.computeLuminance()),
+                greaterThanOrEqualTo(4.5),
+                reason: 'field $at',
+              );
               prev = p;
             }
           }
@@ -74,11 +93,11 @@ void main() {
       }
     });
 
-    test('light background: 20 % → 74 % tint, 100 % → 12 %', () {
+    test('light background: 20 % → 74 % tint, 100 % → 8 %', () {
       final TcPalette lo = resolvePalette(preset: 'aurora', glass: 20);
       final TcPalette hi = resolvePalette(preset: 'aurora', glass: 100);
       expect(lo.glassA, closeTo(.74, 1e-9));
-      expect(hi.glassA, closeTo(.12, 1e-9));
+      expect(hi.glassA, closeTo(.08, 1e-9));
       expect(hi.sheen, .5);
     });
 
@@ -95,6 +114,72 @@ void main() {
       );
       expect(hi.glassA, lessThan(lo.glassA - .2));
     });
+  });
+
+  group('fields and frosted cards', () {
+    setUpAll(loadFigtree);
+
+    testWidgets(
+      'a text field follows the setting; Frosted cards blur every card',
+      (WidgetTester t) async {
+        t.view.physicalSize = const Size(390 * 3, 844 * 3);
+        t.view.devicePixelRatio = 3;
+        addTearDown(t.view.reset);
+        final LocalStorage store = LocalStorage.memory();
+        final AppController c = AppController(
+          store: store,
+          startScreen: 'login',
+        );
+        await t.pumpWidget(
+          ProviderScope(
+            overrides: <Override>[appProvider.overrideWith((Ref ref) => c)],
+            child: const TallyConnectApp(),
+          ),
+        );
+        Future<void> settle() async {
+          for (int i = 0; i < 6; i++) {
+            await t.pump(const Duration(milliseconds: 100));
+          }
+        }
+
+        await settle();
+        double fieldAlpha() {
+          final AnimatedContainer box = t.widget<AnimatedContainer>(
+            find
+                .descendant(
+                  of: find.byType(Inp).first,
+                  matching: find.byType(AnimatedContainer),
+                )
+                .first,
+          );
+          return (box.decoration! as BoxDecoration).color!.a;
+        }
+
+        c.setGlass(20);
+        await settle();
+        final double dense = fieldAlpha();
+        c.setGlass(100);
+        await settle();
+        expect(fieldAlpha(), lessThan(dense - .2)); // clearer, not fixed white
+        expect(fieldAlpha(), closeTo(c.palette.fieldFill.a, 1e-9));
+
+        // Frosted cards: off by default; on → cards blur; kept on the phone.
+        c.jump('home');
+        await settle();
+        final int before = t.widgetList(find.byType(BackdropFilter)).length;
+        expect(c.cardBlur, isFalse);
+        c.toggleCardBlur();
+        await settle();
+        expect(
+          t.widgetList(find.byType(BackdropFilter)).length,
+          greaterThan(before + 3),
+        );
+        expect(AppController(store: store).cardBlur, isTrue);
+        c.resetLook();
+        expect(c.cardBlur, isFalse);
+        await t.pump(const Duration(seconds: 6));
+      },
+    );
   });
 
   group('saved setting', () {
@@ -159,7 +244,10 @@ void main() {
         // Bottom bar tint.
         final Glass bar = t.widget<Glass>(
           find
-              .descendant(of: find.byType(TcTabBar), matching: find.byType(Glass))
+              .descendant(
+                of: find.byType(TcTabBar),
+                matching: find.byType(Glass),
+              )
               .first,
         );
         final double top = (bar.gradient! as LinearGradient).colors.first.a;

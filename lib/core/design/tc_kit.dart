@@ -71,6 +71,13 @@ const FontWeight w800 = FontWeight.w800;
 
 // ------------------------------------------------------------------- glass
 
+/// Frosted cards (Settings → Look → Glass): a lighter blur than sheets, so
+/// a screen of cards stays smooth to scroll.
+final ui.ImageFilter _cardFilter = ui.ImageFilter.compose(
+  outer: ColorFilter.matrix(_saturate(1.5)),
+  inner: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14, tileMode: TileMode.clamp),
+);
+
 final ui.ImageFilter _glassFilter = ui.ImageFilter.compose(
   outer: ColorFilter.matrix(_saturate(1.85)),
   inner: ui.ImageFilter.blur(sigmaX: 26, sigmaY: 26, tileMode: TileMode.clamp),
@@ -180,10 +187,14 @@ class Glass extends StatelessWidget {
         ),
       ),
     );
-    if (blur) {
+    // Sheets / bars always frost; cards too when Frosted cards is on.
+    if (blur || p.cardBlur) {
       body = ClipRRect(
         borderRadius: br,
-        child: BackdropFilter(filter: filter ?? _glassFilter, child: body),
+        child: BackdropFilter(
+          filter: filter ?? (blur ? _glassFilter : _cardFilter),
+          child: body,
+        ),
       );
     }
     final List<BoxShadow> sh = shadows ?? glassShadows();
@@ -228,8 +239,7 @@ class GlassDecoration extends Decoration {
       listEquals(other.shadows, shadows);
 
   @override
-  int get hashCode =>
-      Object.hash(fill, radius, sheen, Object.hashAll(shadows));
+  int get hashCode => Object.hash(fill, radius, sheen, Object.hashAll(shadows));
 }
 
 class _GlassBoxPainter extends BoxPainter {
@@ -301,10 +311,10 @@ class _Sheen extends CustomPainter {
     begin: const Alignment(-.42, -.9),
     end: const Alignment(.42, .9),
     colors: <Color>[
-      Color.fromRGBO(255, 255, 255, .65 * k),
+      Color.fromRGBO(255, 255, 255, .72 * k),
       const Color.fromRGBO(255, 255, 255, 0),
       const Color.fromRGBO(255, 255, 255, 0),
-      Color.fromRGBO(196, 208, 246, .22 * k),
+      Color.fromRGBO(196, 208, 246, .26 * k),
     ],
     stops: const <double>[0, .36, .72, 1],
   );
@@ -319,8 +329,7 @@ class _Sheen extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_Sheen old) =>
-      old.br != br || old.g != g || old.k != k;
+  bool shouldRepaint(_Sheen old) => old.br != br || old.g != g || old.k != k;
 }
 
 class _GlassEdge extends CustomPainter {
@@ -880,7 +889,9 @@ class PBtn extends StatelessWidget {
                 radius: r,
                 width: height,
                 height: height,
-                child: Center(child: Ic('chevL', size: IcSize.m, color: p.acc)),
+                child: Center(
+                  child: Ic('chevL', size: IcSize.m, color: p.acc),
+                ),
               )
             : Glass(
                 radius: r,
@@ -1067,7 +1078,7 @@ class Seg extends StatelessWidget {
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         color: i == selected
-                            ? Colors.white
+                            ? p.raisedFill
                             : Colors.white.withValues(alpha: 0),
                         borderRadius: BorderRadius.circular(13),
                         boxShadow: i == selected
@@ -1541,74 +1552,74 @@ class Kv extends StatelessWidget {
   Widget _body(BuildContext context) {
     final TcPalette p = Tc.of(context);
     return LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints box) {
-          final TextStyle ks = strong
-              ? ts(17, w: w800, c: p.ink)
-              : ts(15, c: p.ink3);
-          final TextStyle vs = ts(
-            strong ? 17 : 15,
-            w: strong ? w800 : w700,
-            c: p.ink,
-          );
-          final TextScaler sc = MediaQuery.textScalerOf(context);
-          double natural(String t, TextStyle st) =>
-              (TextPainter(
-                text: TextSpan(text: t, style: st),
-                textDirection: TextDirection.ltr,
-                textScaler: sc,
-              )..layout()).width +
-              1;
-          // CSS flex: both items shrink in proportion to their natural width
-          // (`justify-content: space-between`, value right-aligned).
-          // min-width:auto — an item never shrinks below its longest word.
-          double minContent(String t, TextStyle st) => t
-              .split(RegExp(r'\s+'))
-              .map((String w) => natural(w, st))
-              .fold<double>(0, (double a, double b) => a > b ? a : b);
-          final double nk = natural(k, ks), nv = natural(v, vs);
-          final double room = box.maxWidth - 14;
-          // Unbreakable words that cannot share one line (long references,
-          // big numbers on narrow phones): value goes under the key instead
-          // of overflowing.
-          if (minContent(k, ks) + minContent(v, vs) > room) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                Text(k, style: ks),
-                const SizedBox(height: 2),
-                Text(v, textAlign: TextAlign.right, style: vs),
-              ],
-            );
-          }
-          double kw = nk, vw = nv;
-          if (nk + nv > room) {
-            final double over = nk + nv - room;
-            kw = nk - over * nk / (nk + nv);
-            vw = nv - over * nv / (nk + nv);
-            final double mk = minContent(k, ks), mv = minContent(v, vs);
-            if (kw < mk) {
-              kw = mk;
-              vw = room - kw;
-            } else if (vw < mv) {
-              vw = mv;
-              kw = room - vw;
-            }
-          }
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      builder: (BuildContext context, BoxConstraints box) {
+        final TextStyle ks = strong
+            ? ts(17, w: w800, c: p.ink)
+            : ts(15, c: p.ink3);
+        final TextStyle vs = ts(
+          strong ? 17 : 15,
+          w: strong ? w800 : w700,
+          c: p.ink,
+        );
+        final TextScaler sc = MediaQuery.textScalerOf(context);
+        double natural(String t, TextStyle st) =>
+            (TextPainter(
+              text: TextSpan(text: t, style: st),
+              textDirection: TextDirection.ltr,
+              textScaler: sc,
+            )..layout()).width +
+            1;
+        // CSS flex: both items shrink in proportion to their natural width
+        // (`justify-content: space-between`, value right-aligned).
+        // min-width:auto — an item never shrinks below its longest word.
+        double minContent(String t, TextStyle st) => t
+            .split(RegExp(r'\s+'))
+            .map((String w) => natural(w, st))
+            .fold<double>(0, (double a, double b) => a > b ? a : b);
+        final double nk = natural(k, ks), nv = natural(v, vs);
+        final double room = box.maxWidth - 14;
+        // Unbreakable words that cannot share one line (long references,
+        // big numbers on narrow phones): value goes under the key instead
+        // of overflowing.
+        if (minContent(k, ks) + minContent(v, vs) > room) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              SizedBox(
-                width: kw,
-                child: Text(k, style: ks),
-              ),
-              const Spacer(),
-              SizedBox(
-                width: vw,
-                child: Text(v, textAlign: TextAlign.right, style: vs),
-              ),
+              Text(k, style: ks),
+              const SizedBox(height: 2),
+              Text(v, textAlign: TextAlign.right, style: vs),
             ],
           );
-        },
+        }
+        double kw = nk, vw = nv;
+        if (nk + nv > room) {
+          final double over = nk + nv - room;
+          kw = nk - over * nk / (nk + nv);
+          vw = nv - over * nv / (nk + nv);
+          final double mk = minContent(k, ks), mv = minContent(v, vs);
+          if (kw < mk) {
+            kw = mk;
+            vw = room - kw;
+          } else if (vw < mv) {
+            vw = mv;
+            kw = room - vw;
+          }
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            SizedBox(
+              width: kw,
+              child: Text(k, style: ks),
+            ),
+            const Spacer(),
+            SizedBox(
+              width: vw,
+              child: Text(v, textAlign: TextAlign.right, style: vs),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -1908,7 +1919,7 @@ class Stepper2 extends StatelessWidget {
         height: 38,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Tc.of(context).raisedFill,
           borderRadius: BorderRadius.circular(11),
           boxShadow: <BoxShadow>[css(0, 1, 3, 0, navyA(.14))],
         ),
@@ -2107,9 +2118,7 @@ class LMark extends StatelessWidget {
       ),
     );
     return CustomPaint(
-      painter: OuterShadow(br, <BoxShadow>[
-        css(0, 12, 26, -10, navyA(.32)),
-      ]),
+      painter: OuterShadow(br, <BoxShadow>[css(0, 12, 26, -10, navyA(.32))]),
       child: Semantics(
         label: 'TallyConnect',
         image: true,

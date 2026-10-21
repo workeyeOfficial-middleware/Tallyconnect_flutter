@@ -226,7 +226,7 @@ class ReferScreen extends ConsumerWidget {
                     BorderRadius.circular(18),
                     mix(p.acc, .35),
                     2,
-                    fill: whiteA(.7),
+                    fill: p.glassFill,
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(14),

@@ -235,7 +235,7 @@ class _ActionBtn extends StatelessWidget {
           width: 54,
           height: 46,
           decoration: BoxDecoration(
-            color: whiteA(.6),
+            color: p.fieldFill,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: navyA(.1)),
           ),

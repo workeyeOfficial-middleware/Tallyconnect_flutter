@@ -143,7 +143,12 @@ class _Profile extends ConsumerWidget {
                   minHeight: 60,
                   onTap: () => c.demo ? c.useMyData() : c.setDemoMode('on'),
                   children: <Widget>[
-                    Ico('grid', size: IcoSize.xs, color: p.navy, icon: IcSize.s),
+                    Ico(
+                      'grid',
+                      size: IcoSize.xs,
+                      color: p.navy,
+                      icon: IcSize.s,
+                    ),
                     const Expanded(
                       child: RTx(
                         'Demo data',
@@ -168,7 +173,12 @@ class _Profile extends ConsumerWidget {
                   minHeight: 60,
                   onTap: c.openReminderTemplates,
                   children: <Widget>[
-                    Ico('mail', size: IcoSize.xs, color: p.navy, icon: IcSize.s),
+                    Ico(
+                      'mail',
+                      size: IcoSize.xs,
+                      color: p.navy,
+                      icon: IcSize.s,
+                    ),
                     const Expanded(
                       child: RTx(
                         'Email reminder templates',
@@ -1044,9 +1054,32 @@ class _Look extends ConsumerWidget {
                     ),
                     _GlassPreview(glassTxt: '${c.glass.round()}%'),
                     Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Tap(
+                        key: const ValueKey<String>('cardBlurRow'),
+                        onTap: c.toggleCardBlur,
+                        radius: 14,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Row(
+                            children: <Widget>[
+                              const Expanded(
+                                child: RTx(
+                                  'Frosted cards',
+                                  'Every card blurs what is behind it. May scroll slower on older phones.',
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Sw(c.cardBlur),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Padding(
                       padding: const EdgeInsets.only(top: 10),
                       child: Text(
-                        'Changes cards, top bars, sheets and the bottom bar on every screen. Text and icons always stay clear.',
+                        'Changes cards, fields, buttons, top bars, sheets, pickers and the bottom bar on every screen. Text and icons always stay clear.',
                         style: rsStyle(context),
                       ),
                     ),
@@ -1283,7 +1316,10 @@ class _TextPreview extends ConsumerWidget {
                             ],
                           ),
                         ),
-                        Text('₹12,500', style: ts(15, w: w800, c: p.ink)),
+                        Text(
+                          '₹12,500',
+                          style: ts(15, w: w800, c: p.ink),
+                        ),
                       ],
                     ),
                   ),
@@ -1295,13 +1331,19 @@ class _TextPreview extends ConsumerWidget {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: <Widget>[
-                        Text('Home', style: ts(12, w: w800, c: p.acc)),
+                        Text(
+                          'Home',
+                          style: ts(12, w: w800, c: p.acc),
+                        ),
                         for (final String t in const <String>[
                           'Dues',
                           'Team',
                           'Reports',
                         ])
-                          Text(t, style: ts(12, w: w700, c: p.tabInk)),
+                          Text(
+                            t,
+                            style: ts(12, w: w700, c: p.tabInk),
+                          ),
                       ],
                     ),
                   ),

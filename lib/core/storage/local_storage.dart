@@ -66,6 +66,9 @@ class LocalStorage {
   /// whose scale ran the other way.
   static const String kGlassClear = 'tc-glass-clear';
 
+  /// Frosted cards: every card blurs what is behind it (off by default).
+  static const String kGlassBlur = 'tc-glass-blur';
+
   /// Text colour −100 (lighter) … 0 (automatic) … +100 (darker).
   static const String kTextTone = 'tc-text-tone';
 
@@ -79,6 +82,19 @@ class LocalStorage {
 
   /// Reports period: `month` | `all` | `range`.
   static const String kRepPeriod = 'tc-report-period';
+
+  /// Each financial statement's period, kept until the user changes it:
+  /// {kind: {preset, from, to}} (`yyyy-mm-dd`).
+  static const String kFinPeriods = 'tc-fin-periods';
+
+  /// Sales analytics period: {preset, from?, to?}.
+  static const String kSalesPeriod = 'tc-sales-period';
+
+  /// Cash flow forecast: weeks shown (1–26).
+  static const String kCfWeeks = 'tc-cf-weeks';
+
+  /// My attendance history From / To: {from, to}.
+  static const String kAttRange = 'tc-att-range';
 
   /// Theme-matched app icon: switch on/off, launcher variant last applied,
   /// exact-colour shortcut pinned + its last colours.

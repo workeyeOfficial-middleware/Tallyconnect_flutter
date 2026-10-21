@@ -1,6 +1,8 @@
 // LOGIN (Main.dc.html 495–516) and FORGOT PASSWORD (518–543).
 library;
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -19,179 +21,188 @@ class LoginScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
     final TcPalette p = Tc.of(context);
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints box) {
-        // Small phones (short screen, or the keyboard open): a tighter
-        // header so the whole form fits without being cut off.
-        final bool compact = box.maxHeight < 720 || box.maxWidth < 360;
-        return SingleChildScrollView(
-          physics: const BouncingScrollPhysics(
-            parent: AlwaysScrollableScrollPhysics(),
-          ),
-          padding: EdgeInsets.fromLTRB(
-            16,
-            topIn(context),
-            16,
-            36 + MediaQuery.paddingOf(context).bottom,
-          ),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              minHeight:
-                  box.maxHeight -
-                  topIn(context) -
-                  36 -
-                  MediaQuery.paddingOf(context).bottom,
+    // The keyboard takes the bottom of the screen: the form gets only what
+    // is left (there is no Scaffold to shrink it), so the field being typed
+    // in and Log In scroll into view instead of hiding behind the keyboard.
+    final double kb = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.only(bottom: kb),
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints box) {
+          // Small phones (short screen, or the keyboard open): a tighter
+          // header, fields and gaps so the whole form fits without being cut.
+          final bool compact = box.maxHeight < 720 || box.maxWidth < 360;
+          final double bottom =
+              (compact ? 12 : 20) +
+              (kb > 0 ? 0 : MediaQuery.paddingOf(context).bottom);
+          final double fieldH = compact ? 48 : 52;
+          final EdgeInsets gap = EdgeInsets.only(bottom: compact ? 10 : 14);
+          return SingleChildScrollView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
             ),
-            child: Padding(
-              padding: EdgeInsets.only(top: compact ? 6 : 24, bottom: 10),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  // Small phones: the TC icon beside the name (one row).
-                  if (compact)
-                    const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: <Widget>[
-                        LMark(
-                          key: ValueKey<String>('loginMark'),
-                          size: 46,
-                          radius: 15,
-                        ),
-                        SizedBox(width: 10),
-                        Flexible(
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Brand(size: 28),
+            padding: EdgeInsets.fromLTRB(16, topIn(context), 16, bottom),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: math.max(0, box.maxHeight - topIn(context) - bottom),
+              ),
+              child: Padding(
+                padding: EdgeInsets.only(top: compact ? 4 : 12, bottom: 4),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    // Small phones: the TC icon beside the name (one row).
+                    if (compact)
+                      const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: <Widget>[
+                          LMark(
+                            key: ValueKey<String>('loginMark'),
+                            size: 46,
+                            radius: 15,
                           ),
-                        ),
-                      ],
-                    )
-                  else ...<Widget>[
-                    const Center(
-                      child: LMark(key: ValueKey<String>('loginMark')),
-                    ),
-                    const SizedBox(height: 14),
-                    const Brand(size: 34),
-                  ],
-                  H1(
-                    'Welcome back',
-                    center: true,
-                    size: compact ? 26 : 34,
-                    margin: compact
-                        ? const EdgeInsets.fromLTRB(4, 4, 4, 2)
-                        : const EdgeInsets.fromLTRB(4, 10, 4, 4),
-                  ),
-                  Sub(
-                    'Log in to see your business',
-                    center: true,
-                    margin: compact
-                        ? const EdgeInsets.fromLTRB(4, 0, 4, 10)
-                        : const EdgeInsets.fromLTRB(4, 0, 4, 16),
-                  ),
-                  Glass(
-                    padding: EdgeInsets.all(compact ? 14 : 18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[
-                        // Required by the server (`loginType`): owner
-                        // accounts log in as Admin, team members as User.
-                        Fld(
-                          label: 'Log in as',
-                          child: Seg(
-                            items: const <String>['Admin', 'User'],
-                            selected: c.loginType == 'USER' ? 1 : 0,
-                            onPick: (int i) => c.update(
-                              () => c.loginType = i == 0 ? 'ADMIN' : 'USER',
+                          SizedBox(width: 10),
+                          Flexible(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Brand(size: 28),
                             ),
-                            margin: EdgeInsets.zero,
                           ),
-                        ),
-                        Fld(
-                          label: c.repo.isRemote
-                              ? 'Email'
-                              : 'Username or email',
-                          child: Inp(
-                            value: c.f('user'),
-                            onChanged: (String v) => c.setF('user', v),
-                            placeholder: c.repo.isRemote
-                                ? 'name@example.com'
-                                : 'e.g. workk72002',
-                            icon: 'person',
-                            keyboard: TextInputType.emailAddress,
+                        ],
+                      )
+                    else ...<Widget>[
+                      const Center(
+                        child: LMark(key: ValueKey<String>('loginMark')),
+                      ),
+                      const SizedBox(height: 10),
+                      const Brand(size: 34),
+                    ],
+                    H1(
+                      'Welcome back',
+                      center: true,
+                      size: compact ? 26 : 34,
+                      margin: compact
+                          ? const EdgeInsets.fromLTRB(4, 4, 4, 2)
+                          : const EdgeInsets.fromLTRB(4, 10, 4, 4),
+                    ),
+                    Sub(
+                      'Log in to see your business',
+                      center: true,
+                      margin: compact
+                          ? const EdgeInsets.fromLTRB(4, 0, 4, 10)
+                          : const EdgeInsets.fromLTRB(4, 0, 4, 16),
+                    ),
+                    Glass(
+                      padding: EdgeInsets.all(compact ? 14 : 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          // Required by the server (`loginType`): owner
+                          // accounts log in as Admin, team members as User.
+                          Fld(
+                            label: 'Log in as',
+                            margin: gap,
+                            child: Seg(
+                              items: const <String>['Admin', 'User'],
+                              selected: c.loginType == 'USER' ? 1 : 0,
+                              onPick: (int i) => c.update(
+                                () => c.loginType = i == 0 ? 'ADMIN' : 'USER',
+                              ),
+                              margin: EdgeInsets.zero,
+                            ),
                           ),
-                        ),
-                        Fld(
-                          label: 'Password',
-                          child: Inp(
-                            value: c.f('pass'),
-                            onChanged: (String v) => c.setF('pass', v),
-                            placeholder: 'Enter your password',
-                            icon: 'lock',
-                            obscure: !c.showPass,
-                            trailing: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: () =>
-                                  c.update(() => c.showPass = !c.showPass),
-                              child: SizedBox(
-                                width: 44,
-                                height: 44,
-                                child: Center(
-                                  child: Ic(
-                                    c.showPass ? 'eyeOff' : 'eye',
-                                    color: p.ink3,
+                          Fld(
+                            label: c.repo.isRemote
+                                ? 'Email'
+                                : 'Username or email',
+                            margin: gap,
+                            child: Inp(
+                              height: fieldH,
+                              value: c.f('user'),
+                              onChanged: (String v) => c.setF('user', v),
+                              placeholder: c.repo.isRemote
+                                  ? 'name@example.com'
+                                  : 'e.g. workk72002',
+                              icon: 'person',
+                              keyboard: TextInputType.emailAddress,
+                            ),
+                          ),
+                          Fld(
+                            label: 'Password',
+                            margin: gap,
+                            child: Inp(
+                              height: fieldH,
+                              value: c.f('pass'),
+                              onChanged: (String v) => c.setF('pass', v),
+                              placeholder: 'Enter your password',
+                              icon: 'lock',
+                              obscure: !c.showPass,
+                              trailing: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () =>
+                                    c.update(() => c.showPass = !c.showPass),
+                                child: SizedBox(
+                                  width: 44,
+                                  height: 44,
+                                  child: Center(
+                                    child: Ic(
+                                      c.showPass ? 'eyeOff' : 'eye',
+                                      color: p.ink3,
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                        Transform.translate(
-                          offset: const Offset(0, -8),
-                          child: Align(
-                            alignment: Alignment.centerRight,
-                            child: LinkBtn(
-                              'Forgot password?',
-                              onTap: c.goForgot,
-                            ),
-                          ),
-                        ),
-                        Btn(
-                          label: c.busy ? 'Logging in…' : 'Log In',
-                          icon: 'arrow',
-                          iconAfter: true,
-                          enabled: !c.busy,
-                          onTap: c.doLogin,
-                        ),
-                        OrDivider(compact: compact),
-                        GlassRow(
-                          onTap: () => c.go('help'),
-                          children: <Widget>[
-                            Ico(
-                              'help',
-                              size: IcoSize.xs,
-                              color: p.navy,
-                              icon: IcSize.s,
-                            ),
-                            const Expanded(
-                              child: RTx(
-                                'Need help logging in?',
-                                'Questions, call or email us',
+                          Transform.translate(
+                            offset: const Offset(0, -8),
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: LinkBtn(
+                                'Forgot password?',
+                                onTap: c.goForgot,
                               ),
                             ),
-                            chevR(),
-                          ],
-                        ),
-                      ],
+                          ),
+                          Btn(
+                            height: compact ? 50 : 54,
+                            label: c.busy ? 'Logging in…' : 'Log In',
+                            icon: 'arrow',
+                            iconAfter: true,
+                            enabled: !c.busy,
+                            onTap: c.doLogin,
+                          ),
+                          OrDivider(compact: compact),
+                          GlassRow(
+                            onTap: () => c.go('help'),
+                            children: <Widget>[
+                              Ico(
+                                'help',
+                                size: IcoSize.xs,
+                                color: p.navy,
+                                icon: IcSize.s,
+                              ),
+                              const Expanded(
+                                child: RTx(
+                                  'Need help logging in?',
+                                  'Questions, call or email us',
+                                ),
+                              ),
+                              chevR(),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const FNote('Version 19.6.2'),
-                ],
+                    const FNote('Version 19.6.2'),
+                  ],
+                ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }

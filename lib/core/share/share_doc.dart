@@ -401,24 +401,24 @@ ShareDoc docBills(
   DateTime today, [
   String? range,
 ]) => ShareDoc(
-      title: recv ? 'Receivable (Outstanding)' : 'Payable (Outstanding)',
-      subtitle: range == null
-          ? 'As on ${dmy(today)}'
-          : 'As on ${dmy(today)} · bills dated $range',
-      company: company,
-      fileStem: recv ? 'Receivable' : 'Payable',
-      table: DocTable(
-        const <String>['Party', 'Bill', 'Due', 'Status', 'Amount'],
-        <List<String>>[
-          for (final Bill b in rows)
-            <String>[b.party, b.no, b.due, b.txt, inr(b.amt)],
-        ],
-        right: const <int>{4},
-      ),
-      totals: <(String, String)>[
-        ('Total', inr(sumRupees(rows.map((Bill b) => b.amt)))),
-      ],
-    );
+  title: recv ? 'Receivable (Outstanding)' : 'Payable (Outstanding)',
+  subtitle: range == null
+      ? 'As on ${dmy(today)}'
+      : 'As on ${dmy(today)} · bills dated $range',
+  company: company,
+  fileStem: recv ? 'Receivable' : 'Payable',
+  table: DocTable(
+    const <String>['Party', 'Bill', 'Due', 'Status', 'Amount'],
+    <List<String>>[
+      for (final Bill b in rows)
+        <String>[b.party, b.no, b.due, b.txt, inr(b.amt)],
+    ],
+    right: const <int>{4},
+  ),
+  totals: <(String, String)>[
+    ('Total', inr(sumRupees(rows.map((Bill b) => b.amt)))),
+  ],
+);
 
 ShareDoc docItems(List<Item> rows, String company) => ShareDoc(
   title: 'Items · Stock summary',

@@ -516,6 +516,7 @@ class TcPalette {
     this.fillFloor = 0,
     this.tabInk = kTabInk0,
     this.filterInk = kTabInk0,
+    this.cardBlur = false,
   }) : pageInk = pageInk ?? ink,
        pageInk2 = pageInk2 ?? ink2,
        pageInk3 = pageInk3 ?? ink3;
@@ -537,6 +538,10 @@ class TcPalette {
   /// over a dark or busy background.
   final double fillFloor;
 
+  /// Frosted cards: every glass card blurs what is behind it (Settings →
+  /// Look → Glass; off by default — costly on slower phones).
+  final bool cardBlur;
+
   /// The background behind the screens is dark (light page text).
   bool get pageDark => pageInk.computeLuminance() > .5;
   final Color pos, neg, warn;
@@ -557,7 +562,7 @@ class TcPalette {
   /// whiter one.
   double get clarity => glassClarity(g);
 
-  /// `.glass` tint opacity (cards, lists, sidebar): 74 % at 20 → 12 % at
+  /// `.glass` tint opacity (cards, lists, sidebar): 74 % at 20 → 8 % at
   /// 100, never below the readability floor.
   double get glassA =>
       math.max(glassTint(g) + gb, fillFloor).clamp(0, 1).toDouble();
@@ -567,6 +572,18 @@ class TcPalette {
   /// `.sheet` fill (bottom sheets, forms): a little denser than cards.
   Color get sheetFill => gt.withValues(
     alpha: math.max(.92 - .44 * clarity, fillFloor).clamp(0, 1).toDouble(),
+  );
+
+  /// Text fields, dropdown buttons and date / time fields: glass a little
+  /// denser than the cards (typed text stays easy to read), clearer as the
+  /// setting rises — never the old fixed 88 % white.
+  Color get fieldFill => gt.withValues(
+    alpha: math.max(.86 - .46 * clarity, fillFloor + .1).clamp(0, 1).toDouble(),
+  );
+
+  /// Raised parts on the glass (the selected segment, stepper buttons).
+  Color get raisedFill => gt.withValues(
+    alpha: math.max(.96 - .36 * clarity, fillFloor + .2).clamp(0, 1).toDouble(),
   );
 
   /// Bars on top of content (sheet / screen footers).
@@ -609,6 +626,7 @@ class TcPalette {
     fillFloor: fillFloor,
     tabInk: tabInk,
     filterInk: filterInk,
+    cardBlur: cardBlur,
   );
 
   @override
@@ -630,7 +648,8 @@ class TcPalette {
       other.ink3 == ink3 &&
       other.tabInk == tabInk &&
       other.filterInk == filterInk &&
-      other.fillFloor == fillFloor;
+      other.fillFloor == fillFloor &&
+      other.cardBlur == cardBlur;
 
   @override
   int get hashCode => Object.hash(
@@ -649,6 +668,7 @@ class TcPalette {
     tabInk,
     filterInk,
     fillFloor,
+    cardBlur,
   );
 }
 
@@ -673,7 +693,7 @@ Color toneInk(Color c, double tone, double bgLum) {
 double glassClarity(double g) => ((g - .2) / .8).clamp(0, 1).toDouble();
 
 /// Glass tint opacity before the photo boost / readability floor.
-double glassTint(double g) => .74 - .62 * glassClarity(g);
+double glassTint(double g) => .74 - .66 * glassClarity(g);
 
 /// The root-class cascade: `g{n} ps-{preset} [ac-{accent}] icmatch [photo]`
 /// plus applyTheme's inline overrides (custom mode, wallpaper key, photo).
@@ -768,6 +788,7 @@ TcPalette resolvePalette({
   double opacity = 1,
   double shade = 0,
   double textTone = 0,
+  bool cardBlur = false,
 }) {
   final Look look = kLookDefs[preset] ?? kLookDefs['aurora']!;
   List<String> acc = look.acc;
@@ -884,6 +905,7 @@ TcPalette resolvePalette({
     fillFloor: floor,
     tabInk: toneInk(tInk, tt, bg),
     filterInk: toneInk(kTabInk0, tt, cardLum),
+    cardBlur: cardBlur,
   );
 }
 
