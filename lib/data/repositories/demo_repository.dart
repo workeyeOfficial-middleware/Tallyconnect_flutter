@@ -170,6 +170,19 @@ class DemoAwareRepository extends TallyRepository {
     required DateTime to,
   }) => _att(() => live.attendanceMemberHistory(userId, from: from, to: to));
 
+  // --------------------------------- e-invoices: real company only
+  @override
+  Future<EinvList> einvoiceList({
+    required DateTime from,
+    required DateTime to,
+    String status = 'all',
+  }) => _demoOn
+      ? Future<EinvList>.error(kDemoEinvoiceBlocked)
+      : live.einvoiceList(from: from, to: to, status: status);
+  @override
+  Future<EinvRow?> einvoiceFor(String voucherGuid) async =>
+      _demoOn ? null : live.einvoiceFor(voucherGuid);
+
   // --------------------------- leave management: real company only
   Future<T> _leave<T>(Future<T> Function() f) =>
       _demoOn ? Future<T>.error(kDemoLeaveBlocked) : f();
@@ -493,6 +506,13 @@ const ApiException kDemoAttendanceBlocked = ApiException(
   ApiErrorKind.forbidden,
   'Check-in works with your Tally company, not Demo Company. Switch to '
   'your company to use it.',
+);
+
+/// E-invoices are the real company's, from Tally.
+const ApiException kDemoEinvoiceBlocked = ApiException(
+  ApiErrorKind.forbidden,
+  'E-invoices show your Tally company, not Demo Company. Switch to your '
+  'company to see them.',
 );
 
 /// Leave belongs to the real company's team.

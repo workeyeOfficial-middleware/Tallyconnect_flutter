@@ -20,6 +20,7 @@ import 'screens/tally_report_screens.dart' show TallyReportScreen;
 import 'screens/dues_screens.dart';
 import 'screens/attendance_screens.dart'
     show AttMemberScreen, AttTeamScreen, AttendanceScreen;
+import 'screens/einvoice_screens.dart' show EinvoicesScreen;
 import 'screens/leave_screens.dart'
     show LeaveMemberScreen, LeaveReqsScreen, LeaveScreen, LeaveSettingsScreen;
 import 'screens/financial_screens.dart'
@@ -65,6 +66,7 @@ Widget screenFor(String s) => switch (s) {
   'attTeam' => const AttTeamScreen(),
   'attMember' => const AttMemberScreen(),
   'leave' => const LeaveScreen(),
+  'einvoices' => const EinvoicesScreen(),
   'leaveReqs' => const LeaveReqsScreen(),
   'leaveSettings' => const LeaveSettingsScreen(),
   'leaveMember' => const LeaveMemberScreen(),
@@ -114,6 +116,7 @@ const List<String> kScreens = <String>[
   'attTeam',
   'attMember',
   'leave',
+  'einvoices',
   'leaveReqs',
   'leaveSettings',
   'leaveMember',

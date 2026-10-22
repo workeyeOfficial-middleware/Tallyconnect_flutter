@@ -15,7 +15,6 @@ import '../../core/design/tc_palette.dart';
 import '../../data/mock/mock_data.dart';
 import 'common.dart';
 
-
 class TcTabBar extends ConsumerWidget {
   const TcTabBar({super.key});
 
@@ -65,9 +64,7 @@ class TcTabBar extends ConsumerWidget {
       final bool hov = c.hovOn && pos == c.hovPos;
       // Labels sit on the see-through bar: they follow the page ink so they
       // stay readable on a dark background.
-      final Color col = on
-          ? p.acc
-          : (hov ? p.pageInk : p.tabInk);
+      final Color col = on ? p.acc : (hov ? p.pageInk : p.tabInk);
       tabs.add(
         AnimatedPositioned(
           key: ValueKey<int>(i),
@@ -185,7 +182,7 @@ class TcTabBar extends ConsumerWidget {
             child: Glass(
               borderRadius: br,
               blur: true,
-              filter: backdrop(6, 2.1, 1.06),
+              filter: backdrop(6, kFrostSat, 1.04),
               // Follows the Glass setting like every glass surface (clearer
               // at a higher setting); stays light so the page-ink labels
               // read on it.
@@ -282,7 +279,7 @@ class LiquidPill extends StatelessWidget {
       child: ClipRRect(
         borderRadius: br,
         child: BackdropFilter(
-          filter: backdrop(10, 2.1),
+          filter: backdrop(10, kFrostSat),
           child: Container(
             decoration: BoxDecoration(
               borderRadius: br,
@@ -350,7 +347,7 @@ class _Bubble extends StatelessWidget {
             ]),
             child: ClipOval(
               child: BackdropFilter(
-                filter: backdrop(1.5, 2.4, 1.12),
+                filter: backdrop(1.5, 1.25, 1.06),
                 child: Container(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,

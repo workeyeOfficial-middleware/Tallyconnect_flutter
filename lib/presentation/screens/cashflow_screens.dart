@@ -78,12 +78,18 @@ class FromToBar extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Text(label, style: ts(11.5, w: w600, c: p.ink3)),
+                    Text(
+                      label,
+                      style: ts(11.5, w: w600, c: p.ink3),
+                    ),
                     const SizedBox(height: 2),
                     FittedBox(
                       fit: BoxFit.scaleDown,
                       alignment: Alignment.centerLeft,
-                      child: Text(dmy(d), style: ts(15, w: w700, c: p.ink)),
+                      child: Text(
+                        dmy(d),
+                        style: ts(15, w: w700, c: p.ink),
+                      ),
                     ),
                   ],
                 ),
@@ -873,6 +879,7 @@ ShareDoc cashflowDoc(AppController c, CashForecast f) => ShareDoc(
   totals: <(String, String)>[
     ('Total in', inr(f.totalIn)),
     ('Total out', inr(f.totalOut)),
-    if (f.endBalance != null) ('Balance after ${f.weeks.length} weeks', inr(f.endBalance)),
+    if (f.endBalance != null)
+      ('Balance after ${f.weeks.length} weeks', inr(f.endBalance)),
   ],
 );

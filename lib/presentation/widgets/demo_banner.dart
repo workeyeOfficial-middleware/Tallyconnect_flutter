@@ -91,10 +91,7 @@ class DemoBanner extends ConsumerWidget {
               onTap: () => c.openOverlay('connectTally'),
               radius: 10,
               child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 8,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                 child: Text(
                   'Connect Tally',
                   style: ts(13, w: w800, c: p.acc),

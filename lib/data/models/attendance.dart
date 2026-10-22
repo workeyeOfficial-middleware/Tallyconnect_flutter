@@ -5,7 +5,8 @@ library;
 
 num _n(Object? v) => v is num ? v : num.tryParse('${v ?? ''}') ?? 0;
 String _s(Object? v) => v == null ? '' : '$v';
-DateTime? _t(Object? v) => v == null ? null : DateTime.tryParse('$v')?.toLocal();
+DateTime? _t(Object? v) =>
+    v == null ? null : DateTime.tryParse('$v')?.toLocal();
 DateTime? _d(Object? v) {
   final DateTime? x = DateTime.tryParse(_s(v));
   return x == null ? null : DateTime(x.year, x.month, x.day);
@@ -212,7 +213,8 @@ class AttTeam {
 
   int count(AttStatus s) =>
       members.where((AttMember m) => m.status == s).length;
-  int get checkedIn => members.where((AttMember m) => m.status.checkedIn).length;
+  int get checkedIn =>
+      members.where((AttMember m) => m.status.checkedIn).length;
 
   static AttTeam fromJson(Object? o) {
     final Map<Object?, Object?> m = _map(o);

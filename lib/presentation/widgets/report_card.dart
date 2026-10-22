@@ -74,16 +74,12 @@ class _RenderSquare extends RenderProxyBox {
   double _floor(double width) => width.isFinite ? width : 0;
 
   @override
-  double computeMinIntrinsicHeight(double width) => math.max(
-    _floor(width),
-    child?.getMinIntrinsicHeight(width) ?? 0,
-  );
+  double computeMinIntrinsicHeight(double width) =>
+      math.max(_floor(width), child?.getMinIntrinsicHeight(width) ?? 0);
 
   @override
-  double computeMaxIntrinsicHeight(double width) => math.max(
-    _floor(width),
-    child?.getMaxIntrinsicHeight(width) ?? 0,
-  );
+  double computeMaxIntrinsicHeight(double width) =>
+      math.max(_floor(width), child?.getMaxIntrinsicHeight(width) ?? 0);
 
   @override
   void performLayout() {

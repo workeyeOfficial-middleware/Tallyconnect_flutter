@@ -9,6 +9,7 @@ export 'assistant.dart';
 export 'attendance.dart';
 export 'cashflow.dart';
 export 'email_reminder.dart';
+export 'einvoice.dart';
 export 'financial.dart';
 export 'leave.dart';
 export 'sales_analytics.dart';

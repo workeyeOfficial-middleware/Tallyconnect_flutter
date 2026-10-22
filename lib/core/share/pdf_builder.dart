@@ -77,6 +77,50 @@ Future<Uint8List> buildPdf(
     ),
   );
 
+  // E-invoice (when Tally created one): the QR code and the IRN details.
+  pw.Widget einvoiceBlock(EinvoiceStamp e) => pw.Container(
+    margin: const pw.EdgeInsets.only(top: 10, bottom: 4),
+    padding: const pw.EdgeInsets.all(8),
+    decoration: pw.BoxDecoration(
+      border: pw.Border.all(color: _rule),
+      borderRadius: pw.BorderRadius.circular(8),
+    ),
+    child: pw.Row(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: <pw.Widget>[
+        if ((e.qr ?? '').isNotEmpty) ...<pw.Widget>[
+          pw.BarcodeWidget(
+            barcode: pw.Barcode.qrCode(),
+            data: e.qr!,
+            width: 96,
+            height: 96,
+          ),
+          pw.SizedBox(width: 12),
+        ],
+        pw.Expanded(
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: <pw.Widget>[
+              pw.Text(
+                'E-INVOICE',
+                style: st(9, f: fonts.bold, c: _mute),
+              ),
+              pw.Text('IRN', style: st(9, c: _mute)),
+              pw.Text(_safe(e.irn), style: st(9, f: fonts.bold)),
+              if ((e.ackNo ?? '').isNotEmpty)
+                pw.Text(
+                  _safe(
+                    'Ack No ${e.ackNo}${(e.ackDate ?? '').isEmpty ? '' : ' · Ack Date ${e.ackDate}'}',
+                  ),
+                  style: st(9),
+                ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
   final InvoiceSpec? iv = d.invoice;
   if (iv != null) {
     doc.addPage(
@@ -153,6 +197,7 @@ Future<Uint8List> buildPdf(
                   ],
                 ),
               ),
+              if (d.einvoice != null) einvoiceBlock(d.einvoice!),
               pw.Container(
                 height: 1.4,
                 color: acc,
@@ -419,6 +464,7 @@ Future<Uint8List> buildPdf(
             child: pw.Text(_safe(d.subtitle), style: st(11, c: _mute)),
           ),
         pw.SizedBox(height: 14),
+        if (d.einvoice != null) einvoiceBlock(d.einvoice!),
         if (d.facts.isNotEmpty)
           pw.Container(
             margin: const pw.EdgeInsets.only(bottom: 14),

@@ -446,7 +446,8 @@ class HelpScreen extends ConsumerWidget {
               Uri(
                 scheme: 'mailto',
                 path: TcSite.supportEmail,
-                query: 'subject=${Uri.encodeComponent('TallyConnect app support')}',
+                query:
+                    'subject=${Uri.encodeComponent('TallyConnect app support')}',
               ),
               'No email app found. Write to ${TcSite.supportEmail}',
             ),

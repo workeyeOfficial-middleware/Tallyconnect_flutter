@@ -658,7 +658,7 @@ class _PvCard extends StatelessWidget {
     child: ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: BackdropFilter(
-        filter: backdrop(8, 1.8),
+        filter: backdrop(8, kFrostSat),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(

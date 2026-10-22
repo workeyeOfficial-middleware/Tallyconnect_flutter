@@ -93,6 +93,12 @@ class LocalStorage {
   /// Cash flow forecast: weeks shown (1–26).
   static const String kCfWeeks = 'tc-cf-weeks';
 
+  /// Financial statements' graph: {type, sets: {kind: series}}.
+  static const String kFinChart = 'tc-fin-chart';
+
+  /// E-invoices report From / To: {from, to}.
+  static const String kEinvRange = 'tc-einv-range';
+
   /// My attendance history From / To: {from, to}.
   static const String kAttRange = 'tc-att-range';
 

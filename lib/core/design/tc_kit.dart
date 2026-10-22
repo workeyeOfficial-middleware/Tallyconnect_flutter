@@ -71,15 +71,21 @@ const FontWeight w800 = FontWeight.w800;
 
 // ------------------------------------------------------------------- glass
 
+/// Colour of frosted glass (a blurred background): natural — the
+/// background's own soft colours, as the cards on the dashboard show them.
+/// A strong boost (it was 1.7–2.4) turned the wallpaper's soft tints into
+/// vivid pink / purple blobs behind the sidebar, sheets and tab bar.
+const double kFrostSat = 1.1;
+
 /// Frosted cards (Settings → Look → Glass): a lighter blur than sheets, so
 /// a screen of cards stays smooth to scroll.
 final ui.ImageFilter _cardFilter = ui.ImageFilter.compose(
-  outer: ColorFilter.matrix(_saturate(1.5)),
+  outer: ColorFilter.matrix(_saturate(kFrostSat)),
   inner: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14, tileMode: TileMode.clamp),
 );
 
 final ui.ImageFilter _glassFilter = ui.ImageFilter.compose(
-  outer: ColorFilter.matrix(_saturate(1.85)),
+  outer: ColorFilter.matrix(_saturate(kFrostSat)),
   inner: ui.ImageFilter.blur(sigmaX: 26, sigmaY: 26, tileMode: TileMode.clamp),
 );
 

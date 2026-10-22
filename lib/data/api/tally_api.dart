@@ -77,6 +77,13 @@ class TallyApi {
     query: q,
   );
 
+  // ---------------------------------------------------- e-invoices
+  // Each sales invoice's e-invoice as Tally created it (read only).
+  Future<Object?> einvoiceList(Map<String, String> q) =>
+      http.get('/api/einvoice/list', query: q);
+  Future<Object?> einvoiceVoucher(String guid) =>
+      http.get('/api/einvoice/voucher/${Uri.encodeComponent(guid)}');
+
   // ------------------------------------------------- leave management
   // Every rule is the admin's Leave settings; the server checks balances,
   // overlaps and dates. Scoped by the server to the login's account.

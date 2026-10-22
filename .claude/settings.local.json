@@ -6,7 +6,9 @@
       "Bash(dart analyze *)",
       "Read(//c/Users/AVERLON/Downloads/Tallyconnect__Backend/tally-backend/routes/**)",
       "Read(//c/Users/AVERLON/Downloads/Tallyconnect__Backend/tally-backend/utils/**)",
-      "Read(//c/Users/AVERLON/Downloads/Tallyconnect__Backend/tally-backend/**)"
+      "Read(//c/Users/AVERLON/Downloads/Tallyconnect__Backend/tally-backend/**)",
+      "Bash(cd \"C:/Users/AVERLON/Downloads/tally-agent\" && grep -n \"createSettlementSink\" agent.cjs | head -3; ls lib; sed -n \"$\\(grep -n 'function createSettlementSink' lib/billSettlements.cjs | cut -d: -f1\\),+95p\" lib/billSettlements.cjs)",
+      "Read(//c/Users/AVERLON/Downloads/tally-agent/**)"
     ]
   }
 }

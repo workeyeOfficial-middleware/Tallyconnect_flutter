@@ -108,9 +108,7 @@ class _UsageMeter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
-    final Color bar = u.exhausted
-        ? p.neg
-        : (u.fraction >= .8 ? p.warn : p.acc);
+    final Color bar = u.exhausted ? p.neg : (u.fraction >= .8 ? p.warn : p.acc);
     return Container(
       key: const ValueKey<String>('aiUsage'),
       margin: const EdgeInsets.only(bottom: 10),
@@ -205,7 +203,9 @@ class AiLimitSheet extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           const SizedBox(height: 6),
-          Center(child: Ico('spark', size: IcoSize.sm, color: p.acc)),
+          Center(
+            child: Ico('spark', size: IcoSize.sm, color: p.acc),
+          ),
           const SizedBox(height: 14),
           Text(
             'Free AI access ended',
@@ -297,48 +297,48 @@ class _Chat extends StatelessWidget {
           // Type, or tap the mic and speak (the words fill the field; the
           // user checks them and taps Send).
           Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: <Widget>[
-            Expanded(
-              child: Inp(
-                key: const ValueKey<String>('aiQuestion'),
-                value: c.f('aiQ'),
-                onChanged: (String v) => c.setF('aiQ', v),
-                placeholder: c.aiVoiceOn
-                    ? 'Listening…'
-                    : 'Ask about outstanding, sales…',
-                maxLength: 1000,
-                capitalization: TextCapitalization.sentences,
-                trailing: Semantics(
-                  button: true,
-                  label: c.aiVoiceOn ? 'Stop voice input' : 'Ask by voice',
-                  child: GestureDetector(
-                    key: const ValueKey<String>('aiMic'),
-                    behavior: HitTestBehavior.opaque,
-                    onTap: c.aiBusy ? null : c.toggleAssistantVoice,
-                    child: SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: Center(
-                        child: Ic(
-                          c.aiVoiceOn ? 'micStop' : 'mic',
-                          color: c.aiVoiceOn ? p.acc : p.ink3,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              Expanded(
+                child: Inp(
+                  key: const ValueKey<String>('aiQuestion'),
+                  value: c.f('aiQ'),
+                  onChanged: (String v) => c.setF('aiQ', v),
+                  placeholder: c.aiVoiceOn
+                      ? 'Listening…'
+                      : 'Ask about outstanding, sales…',
+                  maxLength: 1000,
+                  capitalization: TextCapitalization.sentences,
+                  trailing: Semantics(
+                    button: true,
+                    label: c.aiVoiceOn ? 'Stop voice input' : 'Ask by voice',
+                    child: GestureDetector(
+                      key: const ValueKey<String>('aiMic'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: c.aiBusy ? null : c.toggleAssistantVoice,
+                      child: SizedBox(
+                        width: 44,
+                        height: 44,
+                        child: Center(
+                          child: Ic(
+                            c.aiVoiceOn ? 'micStop' : 'mic',
+                            color: c.aiVoiceOn ? p.acc : p.ink3,
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-            CBtn(
-              'send',
-              key: const ValueKey<String>('aiSend'),
-              color: p.acc,
-              onTap: c.aiBusy ? null : () => c.askAssistant(),
-            ),
-          ],
-        ),
+              const SizedBox(width: 8),
+              CBtn(
+                'send',
+                key: const ValueKey<String>('aiSend'),
+                color: p.acc,
+                onTap: c.aiBusy ? null : () => c.askAssistant(),
+              ),
+            ],
+          ),
         if (c.voiceNote != null)
           Padding(
             key: const ValueKey<String>('aiVoiceNote'),

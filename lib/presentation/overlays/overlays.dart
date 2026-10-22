@@ -27,6 +27,7 @@ import '../widgets/common.dart';
 import '../widgets/demo_banner.dart' show ConnectTallySheet;
 import '../screens/attendance_screens.dart'
     show CheckInPromptSheet, CheckOutSheet, ProfileSheet;
+import '../screens/einvoice_screens.dart' show EinvoiceRowSheet;
 import '../screens/leave_screens.dart'
     show LeaveApplySheet, LeaveHolidaySheet, LeaveReqSheet, LeaveTypeSheet;
 import '../widgets/voice_search.dart';
@@ -70,6 +71,7 @@ class OverlayLayer extends ConsumerWidget {
       'profile' => const ProfileSheet(),
       'attPrompt' => const CheckInPromptSheet(),
       'leaveApply' => const LeaveApplySheet(),
+      'einvRow' => const EinvoiceRowSheet(),
       'leaveReq' => const LeaveReqSheet(),
       'leaveType' => const LeaveTypeSheet(),
       'leaveHoliday' => const LeaveHolidaySheet(),
@@ -191,7 +193,8 @@ class SideMenu extends ConsumerWidget {
     const BorderRadius br = BorderRadius.horizontal(right: Radius.circular(32));
     return Stack(
       children: <Widget>[
-        Positioned.fill(child: Scrim(onTap: c.closeOv)),
+        // A light dim: the dashboard stays visible beside the sidebar.
+        Positioned.fill(child: Scrim(onTap: c.closeOv, alpha: .12)),
         Positioned(
           top: 0,
           bottom: 0,
@@ -204,12 +207,13 @@ class SideMenu extends ConsumerWidget {
               translation: Offset(-(1 - t) * 1.05, 0),
               child: ch,
             ),
-            // Liquid glass like the cards (see-through tint + light blur),
-            // not the milky sheet frosting.
+            // Liquid glass like the dashboard cards: their tint, the
+            // background's own colours (natural, not boosted) and a soft
+            // blur so the screen behind does not show through the text.
             child: ClipRRect(
               borderRadius: br,
               child: BackdropFilter(
-                filter: backdrop(12, 2.1, 1.04),
+                filter: backdrop(18, kFrostSat),
                 child: Glass(
                   borderRadius: br,
                   fill: p.glassFill,
@@ -1822,7 +1826,7 @@ class WaterGlass extends StatelessWidget {
     required this.radius,
     this.padding = EdgeInsets.zero,
     this.blurPx = 7,
-    this.sat = 2.3,
+    this.sat = 1.25,
     this.bright = 1.08,
     this.contrast = 1.03,
     this.g0 = .3,

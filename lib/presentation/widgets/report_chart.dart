@@ -1,4 +1,5 @@
-// Charts: Bar / Pie / Line views of the same rows a report lists, drawn with
+// Charts: Bar / Column / Line / Scatter / Pie views of the same rows a report
+// lists, drawn with
 // the theme colours. [TcChart] is the shared, interactive chart (tap a bar,
 // point, slice or legend row to read its value); [ReportChart] is the
 // Reports-screen card around it. Real report data only — nothing estimated.
@@ -70,6 +71,15 @@ class ReportChart extends StatelessWidget {
     ('bar', 'Bar'),
     ('pie', 'Pie'),
     ('line', 'Line'),
+  ];
+
+  /// Every chart type (the financial statements' graphs).
+  static const List<(String, String)> kAllTypes = <(String, String)>[
+    ('bar', 'Bar'),
+    ('column', 'Column'),
+    ('line', 'Line'),
+    ('scatter', 'Scatter'),
+    ('pie', 'Pie'),
   ];
 
   @override
@@ -151,10 +161,10 @@ class _TcChartState extends State<TcChart> {
           sel: sel,
           onPick: _pick,
         );
-      case 'line':
+      case 'line' || 'scatter' || 'column':
         body = _Plot(
           points: pts,
-          kind: 'line',
+          kind: type == 'column' ? 'bar' : type,
           height: widget.height,
           sel: sel,
           onPick: _pick,
@@ -189,14 +199,12 @@ class _TcChartState extends State<TcChart> {
             margin: const EdgeInsets.only(bottom: 10),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: sel == null
-                  ? navyA(.04)
-                  : mix(colorOf(sel), .12),
+              color: sel == null ? navyA(.04) : mix(colorOf(sel), .12),
               borderRadius: BorderRadius.circular(12),
             ),
             child: sel == null
                 ? Text(
-                    'Tap a ${type == 'pie' ? 'slice' : (type == 'line' ? 'point' : 'bar')} to see its value',
+                    'Tap a ${type == 'pie' ? 'slice' : (type == 'line' || type == 'scatter' ? 'point' : 'bar')} to see its value',
                     key: const ValueKey<String>('chartHint'),
                     style: ts(12.5, w: w600, c: p.ink3),
                   )
@@ -417,7 +425,7 @@ class _Plot extends StatelessWidget {
             Size(box.maxWidth, height),
             points.length,
             mx <= 0 ? 1 : mx,
-            kind == 'line',
+            kind != 'bar',
           );
           return GestureDetector(
             key: ValueKey<String>('chartPlot-$kind'),
@@ -507,6 +515,23 @@ class _PlotPainter extends CustomPainter {
             ).createShader(b),
         );
       }
+    } else if (kind == 'scatter') {
+      // Each value a dot at its height (no line between them).
+      for (int i = 0; i < n; i++) {
+        final Offset o = Offset(g.xOf(i), yOf(i));
+        final Color c = n <= 12 ? cols[i % 8] : p.acc;
+        final bool dim = sel != null && sel != i;
+        canvas.drawCircle(o, 9, Paint()..color = mix(c, dim ? .08 : .2));
+        canvas.drawCircle(o, 5.5, Paint()..color = dim ? mix(c, .45) : c);
+        canvas.drawCircle(
+          o,
+          5.5,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.6
+            ..color = Colors.white,
+        );
+      }
     } else {
       final Path line = Path()..moveTo(g.xOf(0), yOf(0));
       for (int i = 1; i < n; i++) {
@@ -565,7 +590,7 @@ class _PlotPainter extends CustomPainter {
           ..color = navyA(.25)
           ..strokeWidth = 1,
       );
-      if (kind == 'line') {
+      if (kind != 'bar') {
         final Offset o = Offset(x, yOf(s));
         canvas.drawCircle(o, 7, Paint()..color = mix(p.acc, .25));
         canvas.drawCircle(o, 4.5, Paint()..color = p.acc);

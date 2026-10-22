@@ -82,13 +82,27 @@ class SalesDash {
   bool get empty => invoices == 0 && returns == 0;
 
   static SalesDash fromJson(Object? o) {
-    final Map<Object?, Object?> root = o is Map ? o : const <Object?, Object?>{};
-    final Map<Object?, Object?> d = root['data'] is Map ? root['data']! as Map<Object?, Object?> : root;
-    final Map<Object?, Object?> k = d['kpis'] is Map ? d['kpis']! as Map<Object?, Object?> : const <Object?, Object?>{};
-    final Map<Object?, Object?> t = d['trend'] is Map ? d['trend']! as Map<Object?, Object?> : const <Object?, Object?>{};
-    final Map<Object?, Object?> cu = d['customers'] is Map ? d['customers']! as Map<Object?, Object?> : const <Object?, Object?>{};
-    SalesItem item(Map<Object?, Object?> x) =>
-        SalesItem(_s(x['item']), _n(x['amount']), _n(x['qty']), _n(x['invoices']).toInt());
+    final Map<Object?, Object?> root = o is Map
+        ? o
+        : const <Object?, Object?>{};
+    final Map<Object?, Object?> d = root['data'] is Map
+        ? root['data']! as Map<Object?, Object?>
+        : root;
+    final Map<Object?, Object?> k = d['kpis'] is Map
+        ? d['kpis']! as Map<Object?, Object?>
+        : const <Object?, Object?>{};
+    final Map<Object?, Object?> t = d['trend'] is Map
+        ? d['trend']! as Map<Object?, Object?>
+        : const <Object?, Object?>{};
+    final Map<Object?, Object?> cu = d['customers'] is Map
+        ? d['customers']! as Map<Object?, Object?>
+        : const <Object?, Object?>{};
+    SalesItem item(Map<Object?, Object?> x) => SalesItem(
+      _s(x['item']),
+      _n(x['amount']),
+      _n(x['qty']),
+      _n(x['invoices']).toInt(),
+    );
     return SalesDash(
       company: _s(d['company']),
       from: _s(d['from']),
@@ -108,12 +122,23 @@ class SalesDash {
       ],
       topCustomers: <SalesParty>[
         for (final Map<Object?, Object?> x in _list(d['top_customers']))
-          SalesParty(_s(x['party']), _n(x['sales']), _n(x['invoices']).toInt(), _n(x['share'])),
+          SalesParty(
+            _s(x['party']),
+            _n(x['sales']),
+            _n(x['invoices']).toInt(),
+            _n(x['share']),
+          ),
       ],
-      topItems: <SalesItem>[for (final Map<Object?, Object?> x in _list(d['top_items'])) item(x)],
-      topItemsQty: <SalesItem>[for (final Map<Object?, Object?> x in _list(d['top_items_qty'])) item(x)],
+      topItems: <SalesItem>[
+        for (final Map<Object?, Object?> x in _list(d['top_items'])) item(x),
+      ],
+      topItemsQty: <SalesItem>[
+        for (final Map<Object?, Object?> x in _list(d['top_items_qty']))
+          item(x),
+      ],
       groups: <(String, num)>[
-        for (final Map<Object?, Object?> x in _list(d['item_groups'])) (_s(x['group']), _n(x['amount'])),
+        for (final Map<Object?, Object?> x in _list(d['item_groups']))
+          (_s(x['group']), _n(x['amount'])),
       ],
       newCustomers: _n(cu['new']).toInt(),
       repeatCustomers: _n(cu['repeat']).toInt(),

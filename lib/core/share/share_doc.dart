@@ -130,6 +130,14 @@ class DocTable {
   final Set<int> right;
 }
 
+/// The e-invoice Tally created for an invoice (IRN, acknowledgement and the
+/// signed QR data printed as the QR code).
+class EinvoiceStamp {
+  const EinvoiceStamp({required this.irn, this.ackNo, this.ackDate, this.qr});
+  final String irn;
+  final String? ackNo, ackDate, qr;
+}
+
 class ShareDoc {
   const ShareDoc({
     required this.title,
@@ -141,6 +149,7 @@ class ShareDoc {
     this.invoice,
     this.fileStem,
     this.demo = false,
+    this.einvoice,
   });
 
   final String title, subtitle, company;
@@ -149,6 +158,24 @@ class ShareDoc {
   final List<(String, String)> totals;
   final InvoiceSpec? invoice;
   final String? fileStem;
+
+  /// E-invoice details printed on the document (QR + IRN), when Tally
+  /// created one for this invoice.
+  final EinvoiceStamp? einvoice;
+
+  /// The same document with its e-invoice details.
+  ShareDoc withEinvoice(EinvoiceStamp? s) => ShareDoc(
+    title: title,
+    company: company,
+    subtitle: subtitle,
+    facts: facts,
+    table: table,
+    totals: totals,
+    invoice: invoice,
+    fileStem: fileStem,
+    demo: demo,
+    einvoice: s,
+  );
 
   /// Made from demo (sample) data: labelled on the page, in the file name
   /// and in the shared text.
@@ -167,6 +194,7 @@ class ShareDoc {
           invoice: invoice,
           fileStem: fileStem,
           demo: true,
+          einvoice: einvoice,
         );
 
   /// Label printed on demo documents.

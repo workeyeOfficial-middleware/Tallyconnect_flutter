@@ -88,7 +88,11 @@ class SalesHomeCard extends ConsumerWidget {
 
     Widget note(String s, {Key? key}) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Text(s, key: key, style: ts(13.5, h: 1.35, c: p.ink3)),
+      child: Text(
+        s,
+        key: key,
+        style: ts(13.5, h: 1.35, c: p.ink3),
+      ),
     );
 
     Widget stat(String label, String value) => Expanded(
@@ -112,7 +116,10 @@ class SalesHomeCard extends ConsumerWidget {
             FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerLeft,
-              child: Text(value, style: ts(15, w: w800, c: p.ink, tab: true)),
+              child: Text(
+                value,
+                style: ts(15, w: w800, c: p.ink, tab: true),
+              ),
             ),
           ],
         ),
@@ -229,11 +236,7 @@ class SalesHomeCard extends ConsumerWidget {
           children: <Widget>[
             Row(
               children: <Widget>[
-                Ico(
-                  'chart',
-                  size: IcoSize.sm,
-                  color: p.cat('sales'),
-                ),
+                Ico('chart', size: IcoSize.sm, color: p.cat('sales')),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -324,8 +327,7 @@ class _Spark extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_Spark o) =>
-      !listEquals(o.v, v) || o.a != a || o.b != b;
+  bool shouldRepaint(_Spark o) => !listEquals(o.v, v) || o.a != a || o.b != b;
 }
 
 class SalesDashScreen extends ConsumerWidget {
@@ -490,7 +492,8 @@ class SalesDashScreen extends ConsumerWidget {
                     _ShareRow(
                       key: ValueKey<String>('salesItem-${x.item}'),
                       title: x.item,
-                      sub: 'Qty ${qty(x.qty)} · ${x.invoices} ${x.invoices == 1 ? 'invoice' : 'invoices'}',
+                      sub:
+                          'Qty ${qty(x.qty)} · ${x.invoices} ${x.invoices == 1 ? 'invoice' : 'invoices'}',
                       amount: inr(x.amount),
                       share: _shareOf(
                         c.salesItemsBy == 'qty' ? x.qty : x.amount,
@@ -552,28 +555,30 @@ class _Headline extends StatelessWidget {
   Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
     final num? g = d.growthPct;
-    Widget tile(String label, String value, {Color? color, Key? key}) =>
-        Glass(
-          key: key,
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: ts(12.5, w: w600, c: p.ink3),
-              ),
-              const SizedBox(height: 4),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(value, style: ts(17, w: w800, c: color ?? p.ink)),
-              ),
-            ],
+    Widget tile(String label, String value, {Color? color, Key? key}) => Glass(
+      key: key,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: ts(12.5, w: w600, c: p.ink3),
           ),
-        );
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: ts(17, w: w800, c: color ?? p.ink),
+            ),
+          ),
+        ],
+      ),
+    );
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: LayoutBuilder(
@@ -592,7 +597,10 @@ class _Headline extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      Text('Sales', style: ts(12.5, w: w600, c: p.ink3)),
+                      Text(
+                        'Sales',
+                        style: ts(12.5, w: w600, c: p.ink3),
+                      ),
                       const SizedBox(height: 4),
                       FittedBox(
                         fit: BoxFit.scaleDown,
@@ -620,8 +628,14 @@ class _Headline extends StatelessWidget {
                 ),
               ),
               SizedBox(width: w, child: tile('Invoices', grouped(d.invoices))),
-              SizedBox(width: w, child: tile('Average invoice', inr(d.avgInvoice))),
-              SizedBox(width: w, child: tile('Customers', grouped(d.customers))),
+              SizedBox(
+                width: w,
+                child: tile('Average invoice', inr(d.avgInvoice)),
+              ),
+              SizedBox(
+                width: w,
+                child: tile('Customers', grouped(d.customers)),
+              ),
               SizedBox(
                 width: w,
                 child: tile(
@@ -697,8 +711,7 @@ class _ShareRow extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: ts(14.5, w: w700, c: p.ink),
                     ),
-                    if (sub != null)
-                      Text(sub!, style: ts(12.5, c: p.ink3)),
+                    if (sub != null) Text(sub!, style: ts(12.5, c: p.ink3)),
                   ],
                 ),
               ),
@@ -717,7 +730,9 @@ class _ShareRow extends StatelessWidget {
                   FractionallySizedBox(
                     widthFactor: share,
                     heightFactor: 1,
-                    child: ColoredBox(color: (color ?? p.acc).withValues(alpha: .8)),
+                    child: ColoredBox(
+                      color: (color ?? p.acc).withValues(alpha: .8),
+                    ),
                   ),
                 ],
               ),
@@ -775,7 +790,10 @@ ShareDoc salesDoc(AppController c, SalesDash d) {
     facts: <(String, String)>[
       ('Period', c.salesPeriodLabel),
       ('Invoices', grouped(d.invoices)),
-      ('Customers', '${d.customers} (new ${d.newCustomers}, repeat ${d.repeatCustomers})'),
+      (
+        'Customers',
+        '${d.customers} (new ${d.newCustomers}, repeat ${d.repeatCustomers})',
+      ),
       (
         'Growth',
         d.growthPct == null

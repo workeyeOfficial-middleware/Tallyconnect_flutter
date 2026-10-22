@@ -163,6 +163,13 @@ class FakeBackend {
   /// The server's clock (the same fixed "today" as the repository's).
   DateTime Function() attNow = () => DateTime(2026, 10, 3, 11);
 
+  // ------------------------------------------- /api/einvoice/* (fake)
+  /// Rows as the server sends them (status / alerts worked out already);
+  /// server without the routes; every call.
+  final List<Map<String, Object?>> einvRows = <Map<String, Object?>>[];
+  bool einvMissing = false;
+  final List<Map<String, Object?>> einvCalls = <Map<String, Object?>>[];
+
   // --------------------------------------------- /api/leave/* (fake)
   /// Server without the routes; every call (path, method, query + body).
   bool leaveMissing = false;
@@ -325,6 +332,7 @@ class FakeBackend {
     if (p.startsWith('/api/financial')) return _financial(r, p);
     if (p.startsWith('/api/attendance')) return _attendance(r, p);
     if (p.startsWith('/api/leave')) return _leave(r, p);
+    if (p.startsWith('/api/einvoice')) return _einvoice(r, p);
     if (p == '/api/analytics/sales') return _sales(r);
     if (p.startsWith('/api/cashflow/')) return _cashflow(r, p);
     if (p.startsWith('/api/tally-reports/')) return _tallyReports(r, p);
@@ -885,6 +893,9 @@ class FakeBackend {
         } else if (p.startsWith('/users/') && r.method == 'DELETE') {
           deletedUsers.add(p.substring('/users/'.length));
           body = <String, Object?>{'success': true};
+        } else if (p.startsWith('/voucher-entry/') && r.method == 'GET') {
+          // One voucher's ledger lines (the invoice screen): none here.
+          body = <String, Object?>{'success': true, 'data': <Object?>[]};
         } else {
           return http.Response('{"message":"Unauthorized"}', 401);
         }
@@ -1295,6 +1306,79 @@ class FakeBackend {
           'repeat': salesEmpty ? 0 : 1,
         },
       },
+    });
+  }
+
+  /// The e-invoice API: the list (filtered by status / dates) and one
+  /// invoice with its signed QR.
+  http.Response _einvoice(http.Request r, String p) {
+    final Map<String, String> q = r.url.queryParameters;
+    einvCalls.add(<String, Object?>{'path': p, ...q});
+    if (einvMissing) return http.Response('Cannot GET $p', 404);
+    if (p == '/api/einvoice/list') {
+      final String st = q['status'] ?? 'all';
+      final String from = q['from'] ?? '0000', to = q['to'] ?? '9999';
+      final List<Map<String, Object?>> inRange = <Map<String, Object?>>[
+        for (final Map<String, Object?> x in einvRows)
+          if ('${x['date']}'.compareTo(from) >= 0 &&
+              '${x['date']}'.compareTo(to) <= 0)
+            x,
+      ];
+      int n(String s) =>
+          inRange.where((Map<String, Object?> x) => x['status'] == s).length;
+      int a(String s) => inRange
+          .where(
+            (Map<String, Object?> x) =>
+                (x['alerts']! as List<Object?>).contains(s),
+          )
+          .length;
+      return _json(200, <String, Object?>{
+        'success': true,
+        'company': 'Rajlaxmi Solutions',
+        'from': from,
+        'to': to,
+        'status': st,
+        'summary': <String, Object?>{
+          'total': inRange.length,
+          'done': n('done'),
+          'pending': n('pending'),
+          'cancelled': n('cancelled'),
+          'not_needed': n('not_needed'),
+          'overdue': a('overdue'),
+          'due_soon': a('due_soon'),
+          'late_report': a('late_report'),
+          'ack_before_invoice': a('ack_before_invoice'),
+        },
+        'rows': <Object?>[
+          for (final Map<String, Object?> x in inRange)
+            if (st == 'all' ||
+                (st == 'alerts'
+                    ? (x['alerts']! as List<Object?>).isNotEmpty
+                    : x['status'] == st))
+              <String, Object?>{...x}..remove('signed_qr'),
+        ],
+        'truncated': false,
+      });
+    }
+    if (p.startsWith('/api/einvoice/voucher/')) {
+      final String g = Uri.decodeComponent(
+        p.substring('/api/einvoice/voucher/'.length),
+      );
+      final Map<String, Object?>? x = einvRows
+          .where((Map<String, Object?> e) => e['voucher_guid'] == g)
+          .firstOrNull;
+      if (x == null) {
+        return _json(404, <String, Object?>{
+          'success': false,
+          'code': 'not_found',
+          'message': 'No e-invoice details for this voucher',
+        });
+      }
+      return _json(200, <String, Object?>{'success': true, 'invoice': x});
+    }
+    return _json(404, <String, Object?>{
+      'success': false,
+      'message': 'Not found',
     });
   }
 

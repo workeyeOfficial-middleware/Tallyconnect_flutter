@@ -20,6 +20,7 @@ import '../../data/repositories/tally_repository.dart'
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../widgets/bulk_bar.dart';
 import '../widgets/common.dart';
+import 'einvoice_screens.dart' show EinvoiceSection;
 
 /// `vsum` (2501): the four totals shared by Vouchers and Reports, for
 /// [period] (This month by default) from [AppController.periodAmount]
@@ -550,9 +551,7 @@ class _VList extends StatelessWidget {
                       : '$periodLabel · first ${vrows.length} loaded',
                   c.vPeriod == 'all'
                       ? 'All history'
-                      : (c.vPeriod == 'range'
-                            ? periodLabel
-                            : monthYear(today)),
+                      : (c.vPeriod == 'range' ? periodLabel : monthYear(today)),
                 ),
               ),
             ),
@@ -816,6 +815,8 @@ class EntryDetailScreen extends ConsumerWidget {
             ],
           ),
         ],
+        // E-invoice Tally created for this invoice (only when there is one).
+        EinvoiceSection(e),
         if (c.repo.isRemote && e.guid != null) ...<Widget>[
           const Sec('Accounts in this entry (Dr / Cr)'),
           if (lines == null)

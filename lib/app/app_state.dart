@@ -1232,6 +1232,38 @@ class AppController extends ChangeNotifier {
   /// Expanded groups (by path) in the open statement.
   final Set<String> finOpen = <String>{};
 
+  /// The statements' graph: chart type (bar, column, line, scatter, pie —
+  /// one choice for every statement) and each statement's series (e.g.
+  /// Balance Sheet: assets / liabilities). Saved on this phone; the report's
+  /// figures are not changed by it.
+  String finChartType = 'bar';
+  final Map<String, String> finChartSets = <String, String>{};
+
+  /// The graph is open (closed until the user opens it: the statement reads
+  /// first, as before).
+  bool finChartOpen = false;
+
+  void toggleFinChart() {
+    _set(() => finChartOpen = !finChartOpen);
+    _saveFinChart();
+  }
+
+  void setFinChartType(String t) {
+    _set(() => finChartType = t);
+    _saveFinChart();
+  }
+
+  void setFinChartSet(String kind, String set) {
+    _set(() => finChartSets[kind] = set);
+    _saveFinChart();
+  }
+
+  void _saveFinChart() => store.save(LocalStorage.kFinChart, <String, Object?>{
+    'type': finChartType,
+    'sets': Map<String, String>.of(finChartSets),
+    'open': finChartOpen,
+  });
+
   static const Map<String, String> kFinTitles = <String, String>{
     'pl': 'Profit & Loss',
     'bs': 'Balance Sheet',
@@ -1763,6 +1795,25 @@ class AppController extends ChangeNotifier {
     }
     final Object? cw = store.load<Object?>(LocalStorage.kCfWeeks, null);
     if (cw is num) cfWeeks = cw.toInt().clamp(1, kCfMaxWeeks);
+    final Object? fc = store.load<Object?>(LocalStorage.kFinChart, null);
+    if (fc is Map) {
+      if (fc['type'] is String) finChartType = fc['type']! as String;
+      finChartOpen = fc['open'] == true;
+      final Object? sets = fc['sets'];
+      if (sets is Map) {
+        for (final MapEntry<Object?, Object?> e in sets.entries) {
+          if (e.value is String) finChartSets['${e.key}'] = e.value! as String;
+        }
+      }
+    }
+    final Object? er = store.load<Object?>(LocalStorage.kEinvRange, null);
+    if (er is Map) {
+      final DateTime? a = _parseDay(er['from']), b = _parseDay(er['to']);
+      if (a != null && b != null && !b.isBefore(a)) {
+        einvFrom = a;
+        einvTo = b;
+      }
+    }
     final Object? ar = store.load<Object?>(LocalStorage.kAttRange, null);
     if (ar is Map) {
       final DateTime? a = _parseDay(ar['from']), b = _parseDay(ar['to']);
@@ -2859,6 +2910,153 @@ class AppController extends ChangeNotifier {
     } on ApiException {
       _set(() => attLeaveCal = null); // no leave on this server
     }
+  }
+
+  // ---------------------------------------------------- e-invoices
+  // Reports → E-invoices: each sales invoice's e-invoice as TallyPrime
+  // created it — e-invoiced, pending (needed, not done yet), cancelled, not
+  // needed — and the alerts (30-day limit, acknowledged before the invoice).
+  // Read only; same access as the financial reports.
+  EinvList? einvList;
+  bool einvBusy = false;
+  String? einvError;
+
+  /// `all`, `pending`, `alerts`, `done`, `cancelled` or `not_needed`.
+  String einvStatus = 'all';
+  DateTime? einvFrom, einvTo;
+  int _einvReq = 0;
+
+  static const List<(String, String)> kEinvStatuses = <(String, String)>[
+    ('all', 'All'),
+    ('pending', 'Pending'),
+    ('alerts', 'Alerts'),
+    ('done', 'E-invoiced'),
+    ('cancelled', 'Cancelled'),
+    ('not_needed', 'Not needed'),
+  ];
+
+  /// The report's From / To (default: this financial year to today).
+  (DateTime, DateTime) get einvRange {
+    final DateTime t = _day(today);
+    final DateTime fy = DateTime(t.month >= 4 ? t.year : t.year - 1, 4);
+    return (einvFrom ?? fy, einvTo ?? t);
+  }
+
+  String _einvErr(ApiException e) => switch (e.kind) {
+    // The route is not on the server (backend not updated).
+    ApiErrorKind.notFound when e.body is! Map =>
+      'E-invoice tracking is not available on the server yet. Ask your '
+          'admin to update the TallyConnect server.',
+    _ => e.userMessage,
+  };
+
+  void openEinvoices() {
+    einvList = null;
+    go('einvoices');
+  }
+
+  Future<void> loadEinvoices() async {
+    if (demo || !repo.isRemote) return;
+    final int req = ++_einvReq;
+    final (DateTime from, DateTime to) = einvRange;
+    final String status = einvStatus;
+    _set(() {
+      einvBusy = true;
+      einvError = null;
+    });
+    try {
+      final EinvList l = await repo.einvoiceList(
+        from: from,
+        to: to,
+        status: status,
+      );
+      if (req != _einvReq) return;
+      _set(() => einvList = l);
+    } on ApiException catch (e) {
+      if (req != _einvReq) return;
+      _set(() {
+        einvList = null;
+        einvError = _einvErr(e);
+      });
+    } finally {
+      if (req == _einvReq) _set(() => einvBusy = false);
+    }
+  }
+
+  void setEinvStatus(String k) {
+    if (k == einvStatus) return;
+    _set(() => einvStatus = k);
+    unawaited(loadEinvoices());
+  }
+
+  /// The report's From / To sheet.
+  void openEinvRange() => openRange('einv');
+
+  /// A report row: its invoice (when on the phone), else its e-invoice
+  /// details in a sheet.
+  void openEinvRow(EinvRow r) {
+    final Voucher? v = repo
+        .vouchers()
+        .where((Voucher x) => x.guid == r.voucherGuid)
+        .firstOrNull;
+    if (v != null) {
+      go('entryDetail', <String, Object?>{'entry': v});
+      return;
+    }
+    _set(() {
+      einvSel = r;
+      _einvSelFor = r.voucherGuid;
+    });
+    openOverlay('einvRow');
+  }
+
+  // The open invoice's e-invoice (invoice screen and its PDF).
+  EinvRow? einvSel;
+  String? _einvSelFor;
+
+  /// Loads [v]'s e-invoice quietly (none / no access / older server: none).
+  Future<void> loadEinvoiceFor(Voucher v) async {
+    final String? g = v.guid;
+    if (demo || !repo.isRemote || g == null || g.isEmpty) return;
+    if (finCanView != true) return;
+    _einvSelFor = g;
+    try {
+      final EinvRow? r = await repo.einvoiceFor(g);
+      if (_einvSelFor != g) return;
+      _set(() => einvSel = r);
+    } on ApiException {
+      // Nothing to show; the invoice screen is unchanged.
+    }
+  }
+
+  /// [v]'s e-invoice when loaded.
+  EinvRow? einvOf(Voucher v) =>
+      v.guid != null && einvSel?.voucherGuid == v.guid ? einvSel : null;
+
+  /// E-invoice details for [v]'s PDF (looked up when not loaded yet).
+  Future<EinvoiceStamp?> _einvStamp(Voucher v) async {
+    EinvRow? r = einvOf(v);
+    if (r == null &&
+        !demo &&
+        repo.isRemote &&
+        finCanView == true &&
+        (v.guid ?? '').isNotEmpty) {
+      try {
+        r = await repo.einvoiceFor(v.guid!);
+      } catch (_) {
+        r = null;
+      }
+    }
+    final String? irn = r?.irn;
+    if (r == null || irn == null || r.status == EinvStatus.cancelled) {
+      return null;
+    }
+    return EinvoiceStamp(
+      irn: irn,
+      ackNo: r.ackNo,
+      ackDate: r.ackDate == null ? null : dmy(r.ackDate),
+      qr: r.signedQr,
+    );
   }
 
   // ---------------------------------------------------- sales analytics
@@ -4097,6 +4295,12 @@ class AppController extends ChangeNotifier {
     if (s == 'leaveReqs') unawaited(loadLeaveRequests());
     if (s == 'leaveSettings') unawaited(loadLeaveSettings());
     if (s == 'leaveMember') unawaited(loadLeaveMember());
+    if (s == 'einvoices') unawaited(loadEinvoices());
+    // The open invoice's e-invoice (quiet: nothing shown when none).
+    if (s == 'entryDetail' && entry != null) {
+      einvSel = null;
+      unawaited(loadEinvoiceFor(entry!));
+    }
     if (s == 'teamSelect') {
       if (teamKind == 'ledger') repo.ensure(DataSet.ledgers);
       if (teamKind == 'inventory') repo.ensure(DataSet.items);
@@ -4386,6 +4590,7 @@ class AppController extends ChangeNotifier {
       'sales' => salesRange,
       'fin' => finTo == null ? null : DateRange(finFrom ?? finTo!, finTo!),
       'fcast' => DateRange(cfStart, cfEnd),
+      'einv' => DateRange(einvRange.$1, einvRange.$2),
       'att' => DateRange(attRange.$1, attRange.$2),
       _ => range,
     };
@@ -4592,6 +4797,20 @@ class AppController extends ChangeNotifier {
       });
       store.save(LocalStorage.kCfWeeks, cfWeeks);
       unawaited(loadCashflow());
+      return;
+    }
+    // E-invoices report: its own From / To, kept on the phone.
+    if (rangeFor == 'einv') {
+      _set(() {
+        einvFrom = r.from;
+        einvTo = r.to;
+        overlay = null;
+      });
+      store.save(LocalStorage.kEinvRange, <String, String>{
+        'from': ymd(r.from),
+        'to': ymd(r.to),
+      });
+      unawaited(loadEinvoices());
       return;
     }
     // Sales analytics keep their own range (other pages are not changed).
@@ -7684,7 +7903,7 @@ class AppController extends ChangeNotifier {
         // Shown without accounts; the detail screen shows the load error.
       }
     }
-    return docVoucher(
+    final ShareDoc d = docVoucher(
       e,
       companyName,
       lines: g == null ? null : repo.voucherLines(g),
@@ -7692,6 +7911,9 @@ class AppController extends ChangeNotifier {
           partyPool().where((Party x) => x.name == e.party).firstOrNull?.city ??
           '',
     );
+    // The e-invoice Tally created (QR + IRN), when there is one.
+    final EinvoiceStamp? st = await _einvStamp(e);
+    return st == null ? d : d.withEinvoice(st);
   }
 
   Future<void> openVoucherPdf(Voucher e) async {

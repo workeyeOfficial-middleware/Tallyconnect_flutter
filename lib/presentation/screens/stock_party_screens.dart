@@ -569,9 +569,7 @@ class PartyScreen extends ConsumerWidget {
                     width: 40,
                     height: 40,
                     child: Center(
-                      child: SelectBox(
-                        checked: c.pPicked.containsKey(x.name),
-                      ),
+                      child: SelectBox(checked: c.pPicked.containsKey(x.name)),
                     ),
                   )
                 else

@@ -962,7 +962,7 @@ class Foot extends StatelessWidget {
     final TcPalette p = Tc.of(context);
     return ClipRect(
       child: BackdropFilter(
-        filter: backdrop(22, 1.7),
+        filter: backdrop(22, kFrostSat),
         child: Container(
           padding: EdgeInsets.fromLTRB(
             16,
@@ -1384,7 +1384,7 @@ class Sheet extends ConsumerWidget {
     final Widget body = ClipRRect(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
       child: BackdropFilter(
-        filter: backdrop(26, 1.85),
+        filter: backdrop(26, kFrostSat),
         child: Glass(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
           fill: p.sheetFill,
@@ -1462,7 +1462,7 @@ class Grab extends StatelessWidget {
 
 /// `.scrim`: rgba(14,27,51,.3) fading in over .25 s.
 class Scrim extends StatelessWidget {
-  const Scrim({super.key, this.onTap, this.alpha = .3, this.ms = 250});
+  const Scrim({super.key, this.onTap, this.alpha = .2, this.ms = 250});
   final VoidCallback? onTap;
   final double alpha;
   final int ms;

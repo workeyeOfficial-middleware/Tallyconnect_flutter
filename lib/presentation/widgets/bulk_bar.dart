@@ -96,7 +96,10 @@ class BulkBar extends StatelessWidget {
       radius: 12,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-        child: Text(label, style: ts(13.5, w: w700, c: p.acc)),
+        child: Text(
+          label,
+          style: ts(13.5, w: w700, c: p.acc),
+        ),
       ),
     );
     return Glass(

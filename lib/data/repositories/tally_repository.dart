@@ -303,6 +303,23 @@ abstract class TallyRepository extends ChangeNotifier {
     required DateTime to,
   }) async => throw noAttendance;
 
+  // ---------------------------------------------------- e-invoices
+  static const ApiException noEinvoice = ApiException(
+    ApiErrorKind.forbidden,
+    'E-invoices need your TallyConnect account and a Tally company.',
+  );
+
+  /// Invoices of [from] … [to] with their e-invoice status ([status]: all,
+  /// pending, done, cancelled, not_needed, alerts).
+  Future<EinvList> einvoiceList({
+    required DateTime from,
+    required DateTime to,
+    String status = 'all',
+  }) async => throw noEinvoice;
+
+  /// One invoice's e-invoice (with the signed QR); null when none.
+  Future<EinvRow?> einvoiceFor(String voucherGuid) async => null;
+
   // ------------------------------------------------- leave management
   static const ApiException noLeave = ApiException(
     ApiErrorKind.forbidden,

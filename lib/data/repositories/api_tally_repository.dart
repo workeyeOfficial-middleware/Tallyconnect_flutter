@@ -1562,6 +1562,36 @@ class ApiTallyRepository extends TallyRepository {
     ),
   );
 
+  // ---------------------------------------------------- e-invoices
+  @override
+  Future<EinvList> einvoiceList({
+    required DateTime from,
+    required DateTime to,
+    String status = 'all',
+  }) => _rem(
+    () async => EinvList.fromJson(
+      await _api.einvoiceList(<String, String>{
+        'from': _ymd(from),
+        'to': _ymd(to),
+        'status': status,
+      }),
+    ),
+  );
+
+  /// Quiet: no e-invoice, no access or a server without the route → null.
+  @override
+  Future<EinvRow?> einvoiceFor(String voucherGuid) async {
+    try {
+      final Object? r = await _rem(() => _api.einvoiceVoucher(voucherGuid));
+      return r is Map && r['invoice'] is Map
+          ? EinvRow.fromJson(r['invoice'])
+          : null;
+    } on ApiException catch (e) {
+      if (e.kind == ApiErrorKind.unauthorized) rethrow;
+      return null;
+    }
+  }
+
   // ------------------------------------------------- leave management
   static LeaveRequest _leaveReq(Object? r) =>
       LeaveRequest.fromJson(r is Map ? r['request'] : null);

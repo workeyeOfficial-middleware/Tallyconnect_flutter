@@ -21,6 +21,8 @@ import '../../data/models/models.dart';
 import '../widgets/common.dart';
 import '../widgets/report_card.dart';
 import 'cashflow_screens.dart' show CashflowTile, FromToBar;
+import 'einvoice_screens.dart' show EinvoiceTile;
+import 'fin_charts.dart' show FinChartCard;
 
 /// Reports screen: the Financial statements section (only when allowed) —
 /// Balance Sheet, P&L, Trial Balance, Cash Flow, Cash Flow Forecast and
@@ -59,6 +61,7 @@ class FinancialTiles extends ConsumerWidget {
             tile('cf', 'Cash Flow', 'Cash and bank: money in and out', 'cash'),
             const CashflowTile(),
             tile('exp', 'Expenses', 'Where the money goes', 'out'),
+            const EinvoiceTile(),
           ],
         ),
         const SizedBox(height: 4),
@@ -203,6 +206,8 @@ class FinancialReportScreen extends ConsumerWidget {
         _Kpi('Revenue', r.n('total_revenue')),
         _Kpi('Expenses', r.n('total_expenses')),
       ]),
+      // Graph of the same figures (chart type / series switchable).
+      FinChartCard(r),
       // Tally's Profit & Loss A/c: each group on the side its balance is on
       // (an income group with a debit balance shows on the debit side).
       ..._plTally(c, r),
@@ -379,6 +384,8 @@ class FinancialReportScreen extends ConsumerWidget {
     }
 
     return <Widget>[
+      // Graph of the same figures (chart type / series switchable).
+      FinChartCard(r),
       _Card(
         title: 'Liabilities',
         table: grand,
@@ -451,6 +458,8 @@ class FinancialReportScreen extends ConsumerWidget {
     ]);
     rows.add(_TTotal('Grand Total', grandDr, b: grandCr, two: true));
     return <Widget>[
+      // Graph of the same figures (chart type / series switchable).
+      FinChartCard(r),
       Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: Glass(
@@ -841,6 +850,32 @@ void _nodeRows(
   }
 }
 
+/// A Trial Balance row's Debit and Credit: a group's debit balances and
+/// credit balances apart (plus what its ledgers don't explain — Stock-in-
+/// Hand's value — on its side); a ledger's balance in its column. Shared by
+/// the table and its graph, so both show the same figures.
+(num, num) tbDrCr(FinNode n) {
+  if (!n.isGroup) return n.amount >= 0 ? (n.amount, 0) : (0, -n.amount);
+  final List<num> ds = <num>[], cs = <num>[];
+  void walk(FinNode x) {
+    if (!x.isGroup) {
+      (x.amount >= 0 ? ds : cs).add(x.amount.abs());
+      return;
+    }
+    for (final FinNode ch in x.children) {
+      walk(ch);
+    }
+  }
+
+  walk(n);
+  num dr = sumRupees(ds);
+  num cr = sumRupees(cs);
+  final num rest = paise(n.amount - (dr - cr));
+  if (rest > 0) dr = sumRupees(<num>[dr, rest]);
+  if (rest < 0) cr = sumRupees(<num>[cr, -rest]);
+  return (dr, cr);
+}
+
 /// Trial Balance rows: a group shows its debit balances and its credit
 /// balances apart; a ledger its balance in the Debit or Credit column.
 void _tbRows(
@@ -853,31 +888,7 @@ void _tbRows(
   final String key = '$at/${n.name}';
   final bool expandable = n.isGroup && n.children.isNotEmpty;
   final bool open = expandable && c.finOpen.contains(key);
-  num dr = 0, cr = 0;
-  if (n.isGroup) {
-    final List<num> ds = <num>[], cs = <num>[];
-    void walk(FinNode x) {
-      if (!x.isGroup) {
-        (x.amount >= 0 ? ds : cs).add(x.amount.abs());
-        return;
-      }
-      for (final FinNode ch in x.children) {
-        walk(ch);
-      }
-    }
-
-    walk(n);
-    dr = sumRupees(ds);
-    cr = sumRupees(cs);
-    // What the ledgers don't explain (Stock-in-Hand's value) — on its side.
-    final num rest = paise(n.amount - (dr - cr));
-    if (rest > 0) dr = sumRupees(<num>[dr, rest]);
-    if (rest < 0) cr = sumRupees(<num>[cr, -rest]);
-  } else if (n.amount >= 0) {
-    dr = n.amount;
-  } else {
-    cr = -n.amount;
-  }
+  final (num dr, num cr) = tbDrCr(n);
   out.add(
     _TRow(
       n.name,

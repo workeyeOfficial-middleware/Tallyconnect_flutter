@@ -60,6 +60,7 @@ const Map<String, String> kTitles = <String, String>{
   'attTeam': 'Team attendance',
   'attMember': 'Team attendance',
   'leave': 'Leave',
+  'einvoices': 'E-invoices',
   'leaveReqs': 'Leave requests',
   'leaveSettings': 'Leave settings',
   'leaveMember': 'Leave',
