@@ -127,29 +127,60 @@ class LedgerRow {
     this.closing,
     this.lastDate,
     this.search = '',
+    this.state,
+    this.pincode,
+    this.address,
   });
   final String guid, name, group;
 
-  /// Lower-case `name group`, built once (in the parsing isolate).
+  /// Lower-case `name group` (and location), built once (in the parsing
+  /// isolate).
   final String search;
   final String? email, phone;
   final num? opening, closing;
   final DateTime? lastDate;
+
+  /// Location as saved in Tally (null: not synced / none).
+  final String? state, pincode, address;
 }
 
-LedgerRow ledgerFrom(Map<String, Object?> m) => LedgerRow(
-  guid: str(m['ledger_guid']),
-  name: str(m['name']),
-  group: str(m['parent_group']),
-  email: str(m['email']).isEmpty ? null : str(m['email']),
-  phone: str(m['phone']).isEmpty ? null : str(m['phone']),
-  opening: toNum(m['opening_balance']),
-  closing: toNum(m['closing_balance']),
-  lastDate: dateOnly(m['date']),
-  search: '${str(m['name'])} ${str(m['parent_group'])}'.toLowerCase(),
-);
+LedgerRow ledgerFrom(Map<String, Object?> m) {
+  String? opt(Object? v) => str(v).trim().isEmpty ? null : str(v).trim();
+  final String? state = opt(m['state']),
+      pin = opt(m['pincode']),
+      address = opt(m['address']);
+  return LedgerRow(
+    guid: str(m['ledger_guid']),
+    name: str(m['name']),
+    group: str(m['parent_group']),
+    email: opt(m['email']),
+    phone: opt(m['phone']),
+    opening: toNum(m['opening_balance']),
+    closing: toNum(m['closing_balance']),
+    lastDate: dateOnly(m['date']),
+    // Location too: searching "Mumbai" finds the ledgers there.
+    search: <String>[
+      str(m['name']),
+      str(m['parent_group']),
+      ?state,
+      ?pin,
+      ?address,
+    ].join(' ').toLowerCase(),
+    state: state,
+    pincode: pin,
+    address: address,
+  );
+}
 
 // ---------------------------------------------------------------- bills
+
+/// Tally's credit period of a bill: days from the bill date to its due date
+/// ("None" when due on the bill date, "—" when either date is missing).
+String creditPeriod(DateTime? billDate, DateTime? due) {
+  if (due == null || billDate == null) return '—';
+  final int d = dayDiff(billDate, due);
+  return d <= 0 ? 'None' : (d == 1 ? '1 day' : '$d days');
+}
 
 /// A `GET /bill` row → [Bill]. Returns null for settled / zero rows.
 Bill? billFrom(Map<String, Object?> m, DateTime today) {
@@ -159,9 +190,7 @@ Bill? billFrom(Map<String, Object?> m, DateTime today) {
   final DateTime? billDate = dateOnly(m['bill_date']);
   final ({String st, String txt}) s = billStatus(due, today);
   final bool pay = str(m['bill_type']).toUpperCase() == 'PAYABLE';
-  final String credit = (due != null && billDate != null)
-      ? '${dayDiff(billDate, due)} days'
-      : '—';
+  final String credit = creditPeriod(billDate, due);
   final String guid = str(m['bill_guid']);
   return Bill(
     str(m['ledger_name']),
@@ -203,7 +232,7 @@ Bill? settledBillFrom(Map<String, Object?> m) {
     str(m['bill_name']),
     dmy(billDate),
     dmy(due),
-    (due != null && billDate != null) ? '${dayDiff(billDate, due)} days' : '—',
+    creditPeriod(billDate, due),
     0,
     'settled',
     'Settled',
@@ -256,6 +285,8 @@ Voucher? voucherFrom(Map<String, Object?> m) {
     guid: str(m['voucher_guid']),
     date: d,
     type: type,
+    // Sent once the server stores Tally's voucher status (older: absent).
+    cancelled: m['is_cancelled'] == true,
     items: <VoucherItem>[
       if (m['items'] is List)
         for (final Object? e in m['items']! as List)
@@ -443,7 +474,7 @@ Act actFrom(Map<String, Object?> m, DateTime now) {
             toNum(e['amount']) ?? 0,
           ),
   ];
-  return Act(
+  return QueueAct(
     'q${str(m['id'])}',
     kind,
     str(p['voucher_no']).isEmpty ? '#${str(m['id'])}' : str(p['voucher_no']),
@@ -454,6 +485,15 @@ Act actFrom(Map<String, Object?> m, DateTime now) {
     str(m['error']),
     rowsOut,
     itemsOut,
+    queueId: toNum(m['id'])?.toInt() ?? 0,
+    action: str(m['action']).toUpperCase() == 'ALTER' ? 'ALTER' : 'CREATE',
+    payload: <String, Object?>{
+      for (final MapEntry<Object?, Object?> e in p.entries) '${e.key}': e.value,
+    },
+    tallyGuid: str(m['tally_guid']).isNotEmpty
+        ? str(m['tally_guid'])
+        : str(m['target_guid']),
+    retries: toNum(m['retry_count'])?.toInt() ?? 0,
   );
 }
 

@@ -87,7 +87,9 @@ class FlowScreen extends ConsumerWidget {
           Expanded(
             flex: 17,
             child: Btn(
-              label: c.busy ? 'Saving…' : 'Save',
+              label: c.busy
+                  ? 'Saving…'
+                  : (c.editing == null ? 'Save' : 'Save changes'),
               icon: 'check',
               kind: BtnKind.a,
               enabled: !c.busy,
@@ -109,6 +111,18 @@ class FlowScreen extends ConsumerWidget {
         ),
         const SizedBox(height: 6),
         _Steps(steps: cfg.steps, cur: step),
+        if (c.editing != null)
+          Banner2(
+            key: const Key('flowEditing'),
+            c.editing!.inTally
+                ? 'Editing ${c.editing!.label} — saving changes this voucher '
+                      'in Tally (no new voucher). Its narration and bill '
+                      'references become what is entered here.'
+                : 'Editing ${c.editing!.label} — saving changes this entry '
+                      'before it is sent (no new entry).',
+            ok: true,
+            icon: 'edit',
+          ),
         KeyedSubtree(key: ValueKey<String>('${c.flowType}-$step'), child: body),
       ],
     );

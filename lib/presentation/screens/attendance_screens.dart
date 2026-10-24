@@ -15,6 +15,7 @@ import '../../core/design/tc_palette.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
+import '../widgets/report_loader.dart';
 import 'cashflow_screens.dart' show FromToBar;
 import 'leave_screens.dart' show leaveDates, leaveTodayNote;
 
@@ -23,9 +24,24 @@ Color attColor(TcPalette p, AttStatus s) => switch (s) {
   AttStatus.idle => p.warn,
   AttStatus.checkedOut => p.acc,
   AttStatus.absent => p.ink3,
+  AttStatus.exempt => p.navy2,
 };
 
 String _t(DateTime? d) => d == null ? '—' : clock(d);
+
+/// Why this login does not check in.
+String attOffText(AttMe me) {
+  if (me.isAdmin) {
+    return 'Check-in is for your team members. See who is in under '
+        'Team attendance.';
+  }
+  if (me.exempt) {
+    return 'You do not need to check in'
+        '${me.position == null ? '' : ' as ${me.position}'}: your admin '
+        'set check-in rules for your team.';
+  }
+  return 'Check-in is not available for this login.';
+}
 
 /// Home top bar (before Feedback): the profile — a dot while checked in.
 /// Opens the profile sheet with Check in / Check out for team members.
@@ -118,7 +134,8 @@ class ProfileSheet extends ConsumerWidget {
                     Text('Loading check-in…', style: ts(14, c: p.ink3))
                   else if (!me.enabled)
                     Text(
-                      'Check-in is not available for this login.',
+                      attOffText(me),
+                      key: const ValueKey<String>('profileAttOff'),
                       style: ts(14, c: p.ink2),
                     )
                   else ...<Widget>[
@@ -247,7 +264,10 @@ class ProfileSheet extends ConsumerWidget {
 
 /// Team page (admin): today's check-ins at a glance; opens Team attendance.
 class TeamAttCard extends ConsumerWidget {
-  const TeamAttCard({super.key});
+  const TeamAttCard({super.key, this.list = 'teamCards'});
+
+  /// The card list it is shown in (`teamCards` on Sales Team, `home`).
+  final String list;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -269,7 +289,9 @@ class TeamAttCard extends ConsumerWidget {
       padding: const EdgeInsets.only(top: 12),
       child: Tap(
         key: const ValueKey<String>('teamAttCard'),
-        onTap: c.openAttTeam,
+        onTap: () {
+          if (c.guardTap(list, 'attToday')) c.openAttTeam();
+        },
         child: Glass(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
           child: Column(
@@ -363,7 +385,7 @@ class AttStatusLine extends ConsumerWidget {
       AttStatus.active || AttStatus.idle =>
         ' · in ${_t(m.sessions.where((AttSession s) => s.open).firstOrNull?.checkIn ?? m.firstIn)}',
       AttStatus.checkedOut => ' · ${_t(m.firstIn)} – ${_t(m.lastOut)}',
-      AttStatus.absent => '',
+      AttStatus.absent || AttStatus.exempt => '',
     };
     return Padding(
       key: ValueKey<String>('teamAtt-$userId'),
@@ -578,12 +600,31 @@ List<Widget> _history(AppController c, BuildContext context) {
   final int leaveDaysShown = off
       .where(((DateTime, _OffDayCard) x) => x.$2.title == 'On leave')
       .length;
+  // Calendar: one month, every day coloured; tap a day for its details.
+  if (c.attView == 'calendar') {
+    return <Widget>[
+      AttViewSeg(c: c),
+      if (c.attHistError != null)
+        InfoBox(c.attHistError!, icon: 'info')
+      else ...<Widget>[
+        if (c.attHistBusy)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 10),
+            child: LinearProgressIndicator(minHeight: 2),
+          ),
+        AttCalendar(c: c),
+      ],
+    ];
+  }
   return <Widget>[
+    AttViewSeg(c: c),
     FromToBar(from: from, to: to, onTap: c.attHistBusy ? null : c.openAttRange),
     if (c.attHistError != null)
       InfoBox(c.attHistError!, icon: 'info')
     else if (h == null)
-      EmptyBox(c.attHistBusy ? 'Loading…' : 'No history yet.')
+      (c.attHistBusy
+          ? const ReportLoader(text: 'Loading attendance…')
+          : EmptyBox('No history yet.'))
     else ...<Widget>[
       if (c.attHistBusy)
         const Padding(
@@ -647,13 +688,13 @@ class AttendanceScreen extends ConsumerWidget {
             ),
           ),
         ] else if (me == null)
-          EmptyBox(c.attLoading ? 'Loading…' : 'Not loaded yet.')
+          (c.attLoading
+              ? const ReportLoader(text: 'Loading attendance…')
+              : const EmptyBox('Not loaded yet.'))
         else if (!me.enabled)
           InfoBox(
-            me.isAdmin
-                ? 'Check-in is for your team members. See who is in under '
-                      'Team attendance.'
-                : 'Check-in is not available for this login.',
+            attOffText(me),
+            key: const ValueKey<String>('attOff'),
             icon: 'info',
           )
         else ...<Widget>[
@@ -736,7 +777,9 @@ class AttendanceScreen extends ConsumerWidget {
   }
 }
 
-/// Admin: the sales team's day.
+/// Admin: the sales team's day — date chips (Today / Yesterday / any day),
+/// status counts (tap to filter) and the members as cards, a table or a
+/// board of columns by status.
 class AttTeamScreen extends ConsumerWidget {
   const AttTeamScreen({super.key});
 
@@ -746,7 +789,10 @@ class AttTeamScreen extends ConsumerWidget {
     final TcPalette p = Tc.of(context);
     final AttTeam? t = c.attTeam;
     final DateTime d = c.attDay;
-    final bool isToday = ymd(d) == ymd(c.today);
+    final DateTime today = DateTime(c.today.year, c.today.month, c.today.day);
+    final bool isToday = ymd(d) == ymd(today);
+    final bool isYesterday =
+        ymd(d) == ymd(today.subtract(const Duration(days: 1)));
     final List<(String, String, int, Color)> stats =
         <(String, String, int, Color)>[
           ('active', 'Active', t?.count(AttStatus.active) ?? 0, p.pos),
@@ -760,6 +806,18 @@ class AttTeamScreen extends ConsumerWidget {
           ('absent', 'Not in', t?.count(AttStatus.absent) ?? 0, p.ink3),
         ];
     final List<AttMember> rows = c.attTeamRows;
+    final String view = c.attTeamView;
+    final int exempt = t?.count(AttStatus.exempt) ?? 0;
+    Future<void> pick() async {
+      final DateTime? x = await showDatePicker(
+        context: context,
+        initialDate: d,
+        firstDate: DateTime(today.year - 2),
+        lastDate: today,
+      );
+      if (x != null) c.pickAttDay(x);
+    }
+
     return Scr(
       children: <Widget>[
         BackNav(
@@ -771,8 +829,42 @@ class AttTeamScreen extends ConsumerWidget {
         Sub(
           <String>[
             if ((t?.company ?? '').isNotEmpty) t!.company else c.companyName,
-            if (t != null) '${t.checkedIn} of ${t.members.length} checked in',
+            if (t != null)
+              '${t.checkedIn} of ${t.members.length - exempt} checked in',
+            if (exempt > 0) '$exempt not tracked',
           ].join(' · '),
+        ),
+        // The day: quick chips, any day, one day back / forward.
+        Chips(
+          margin: const EdgeInsets.only(bottom: 8),
+          children: <Widget>[
+            ChipBtn(
+              'Today',
+              key: const ValueKey<String>('attDayToday'),
+              height: 38,
+              fontSize: 13.5,
+              on: isToday,
+              onTap: () => c.pickAttDay(today),
+            ),
+            ChipBtn(
+              'Yesterday',
+              key: const ValueKey<String>('attDayYesterday'),
+              height: 38,
+              fontSize: 13.5,
+              on: isYesterday,
+              onTap: () =>
+                  c.pickAttDay(today.subtract(const Duration(days: 1))),
+            ),
+            ChipBtn(
+              isToday || isYesterday ? 'Pick a day' : dmy(d),
+              key: const ValueKey<String>('attDayPick'),
+              icon: 'calendar',
+              height: 38,
+              fontSize: 13.5,
+              on: !isToday && !isYesterday,
+              onTap: pick,
+            ),
+          ],
         ),
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
@@ -787,11 +879,20 @@ class AttTeamScreen extends ConsumerWidget {
                   onTap: () => c.shiftAttDay(-1),
                 ),
                 Expanded(
-                  child: Text(
-                    isToday ? 'Today · ${dmy(d)}' : dmy(d),
-                    key: const ValueKey<String>('attDate'),
-                    textAlign: TextAlign.center,
-                    style: rtStyle(context, 15.5),
+                  child: Column(
+                    children: <Widget>[
+                      Text(
+                        kWeekdayNames[d.weekday - 1],
+                        key: const ValueKey<String>('attWeekday'),
+                        style: ts(12.5, w: w700, c: p.ink3),
+                      ),
+                      Text(
+                        isToday ? 'Today · ${dmy(d)}' : dmy(d),
+                        key: const ValueKey<String>('attDate'),
+                        textAlign: TextAlign.center,
+                        style: rtStyle(context, 15.5),
+                      ),
+                    ],
                   ),
                 ),
                 CBtn(
@@ -842,10 +943,23 @@ class AttTeamScreen extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 12),
+        Seg(
+          key: const ValueKey<String>('attTeamView'),
+          items: const <String>['Cards', 'Table', 'Board'],
+          selected: switch (view) {
+            'table' => 1,
+            'board' => 2,
+            _ => 0,
+          },
+          onPick: (int i) =>
+              c.setAttTeamView(const <String>['cards', 'table', 'board'][i]),
+        ),
         if (c.attTeamError != null)
           InfoBox(c.attTeamError!, icon: 'info')
         else if (t == null)
-          EmptyBox(c.attTeamBusy ? 'Loading…' : 'Not loaded yet.')
+          (c.attTeamBusy
+              ? const ReportLoader(text: 'Loading attendance…')
+              : const EmptyBox('Not loaded yet.'))
         else ...<Widget>[
           if (c.attTeamBusy)
             const Padding(
@@ -858,20 +972,22 @@ class AttTeamScreen extends ConsumerWidget {
               'check in from their profile on Home.',
               icon: 'info',
             )
+          else if (view == 'board')
+            _AttBoard(c: c, day: d, members: rows)
           else if (rows.isEmpty)
             const EmptyBox('No one in this list.')
+          else if (view == 'table')
+            _AttTable(c: c, day: d, members: rows)
           else
-            GlassList(
-              margin: const EdgeInsets.only(bottom: 12),
-              children: <Widget>[for (final AttMember m in rows) _MemberRow(m)],
-            ),
+            _AttCards(c: c, day: d, members: rows),
         ],
         Padding(
           padding: const EdgeInsets.only(top: 4),
           child: Text(
             'Active: checked in and the app was open in the last 15 '
             'minutes. Idle: checked in, app not open since. Check-ins left '
-            'open close at 11:59 PM.',
+            'open close at 11:59 PM. Long-press a card to pin, hide, share '
+            'or drag it.',
             style: ts(12.5, h: 1.4, c: p.ink3),
           ),
         ),
@@ -880,77 +996,418 @@ class AttTeamScreen extends ConsumerWidget {
   }
 }
 
-class _MemberRow extends ConsumerWidget {
-  const _MemberRow(this.m);
+/// Monday … Sunday.
+const List<String> kWeekdayNames = <String>[
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+  'Sunday',
+];
+
+/// A member's day in words: "In 9:30 AM · Out 6:00 PM" etc.
+(String, String) _inOut(AttMember m) {
+  final DateTime? inAt =
+      m.sessions.where((AttSession s) => s.open).firstOrNull?.checkIn ??
+      m.firstIn;
+  final String inT = inAt == null ? '—' : _t(inAt);
+  final String outT = m.status.checkedIn
+      ? 'Still in'
+      : (m.lastOut == null ? '—' : _t(m.lastOut));
+  return (inT, outT);
+}
+
+/// Members as cards (two columns on wider phones); each one a card of the
+/// card system (long-press: pin, drag, hide, share).
+class _AttCards extends StatelessWidget {
+  const _AttCards({required this.c, required this.day, required this.members});
+  final AppController c;
+  final DateTime day;
+  final List<AttMember> members;
+
+  @override
+  Widget build(BuildContext context) {
+    final ({List<AttMember> rows, int hidden, VoidCallback unhide}) v = c
+        .listView<AttMember>('attCards', members, (AttMember m) => m.userId);
+    final bool two = MediaQuery.sizeOf(context).width >= 380;
+    final List<Widget> cards = <Widget>[
+      for (final AttMember m in v.rows)
+        LRow(
+          list: 'attCards',
+          lk: m.userId,
+          radius: 22,
+          pinCorner: true,
+          child: _AttCard(c: c, day: day, m: m),
+        ),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        if (two)
+          Grid(cols: 2, gap: 10, children: cards)
+        else
+          for (final Widget w in cards)
+            Padding(padding: const EdgeInsets.only(bottom: 10), child: w),
+        if (v.hidden > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: HidRow(
+              '${v.hidden} hidden · Unhide',
+              onTap: v.unhide,
+              inGrid: two,
+            ),
+          ),
+        const SizedBox(height: 12),
+      ],
+    );
+  }
+}
+
+/// One employee's day: name, position, weekday and date, check-in /
+/// check-out, hours and status.
+class _AttCard extends StatelessWidget {
+  const _AttCard({required this.c, required this.day, required this.m});
+  final AppController c;
+  final DateTime day;
   final AttMember m;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final AppController c = ref.watch(appProvider);
+  Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
     final String name = c.attName(m.userId, m.username);
-    final String line = switch (m.status) {
-      AttStatus.active || AttStatus.idle =>
-        'In since ${_t(m.sessions.where((AttSession s) => s.open).firstOrNull?.checkIn ?? m.firstIn)}'
-            '${m.status == AttStatus.idle && m.lastSeen != null ? ' · seen ${_t(m.lastSeen)}' : ''}',
-      AttStatus.checkedOut => 'In ${_t(m.firstIn)} · Out ${_t(m.lastOut)}',
-      AttStatus.absent => 'Not checked in',
-    };
-    // Approved leave on the day shown (today only: the Team page loads it).
-    final LeaveRequest? leave = ymd(c.attDay) == ymd(c.today)
+    final (String inT, String outT) = _inOut(m);
+    final Color col = attColor(p, m.status);
+    final LeaveRequest? leave = ymd(day) == ymd(c.today)
         ? c.leaveTodayOf(m.userId)
         : null;
-    return RowX(
+    Widget time(String label, String v) => Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            label,
+            style: ts(11.5, w: w700, c: p.ink3),
+          ),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              v,
+              maxLines: 1,
+              style: ts(15, w: w800, c: p.ink),
+            ),
+          ),
+        ],
+      ),
+    );
+    return Tap(
       key: ValueKey<String>('attMember-${m.userId}'),
-      onTap: () => c.openAttMember(m),
-      children: <Widget>[
-        Av(initials(name)),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: ts(15.5, w: w700, c: p.ink),
-              ),
-              Row(
-                children: <Widget>[
-                  _Dot(attColor(p, m.status)),
+      onTap: () {
+        if (c.guardTap('attCards', m.userId)) c.openAttMember(m);
+      },
+      child: Glass(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Av(initials(name), size: Av.sm),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: rtStyle(context, 15.5),
+                      ),
+                      Text(
+                        '${m.position == null ? '' : '${m.position} · '}'
+                        '${kWeekdayNames[day.weekday - 1].substring(0, 3)}, ${dmy(day)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: ts(12, c: p.ink3),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: <Widget>[
+                time('Check-in', inT),
+                time('Check-out', outT),
+                time(
+                  'Hours',
+                  m.totalMinutes == 0 ? '—' : hoursMinutes(m.totalMinutes),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: <Widget>[
+                Flexible(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: col.withValues(alpha: .14),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        _Dot(col),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            m.status.label,
+                            key: ValueKey<String>('attCardStatus-${m.userId}'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: ts(12.5, w: w800, c: col),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (leave != null) ...<Widget>[
                   const SizedBox(width: 6),
                   Flexible(
                     child: Text(
-                      m.status.label,
+                      'On leave',
+                      key: ValueKey<String>('attOnLeave-${m.userId}'),
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: ts(12.5, w: w700, c: attColor(p, m.status)),
+                      style: ts(12.5, w: w700, c: p.navy2),
                     ),
                   ),
                 ],
-              ),
-              if (leave != null)
-                Text(
-                  'On leave · ${leave.typeName}',
-                  key: ValueKey<String>('attOnLeave-${m.userId}'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: ts(12.5, w: w700, c: p.navy2),
+                if (m.autoClosed) ...<Widget>[
+                  const SizedBox(width: 6),
+                  Text(
+                    'Auto out',
+                    style: ts(12, w: w700, c: p.warn),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Members as a table: name, status, in, out, hours (scrolls sideways on
+/// narrow phones).
+class _AttTable extends StatelessWidget {
+  const _AttTable({required this.c, required this.day, required this.members});
+  final AppController c;
+  final DateTime day;
+  final List<AttMember> members;
+
+  @override
+  Widget build(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    TextStyle head = ts(12, w: w800, c: p.ink3);
+    Widget cell(String s, {TextStyle? st, double w = 86}) => SizedBox(
+      width: w,
+      child: Text(
+        s,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: st ?? ts(13.5, w: w600, c: p.ink),
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Glass(
+        key: const ValueKey<String>('attTable'),
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(
+                  children: <Widget>[
+                    cell('Employee', st: head, w: 140),
+                    cell('Status', st: head, w: 112),
+                    cell('In', st: head),
+                    cell('Out', st: head),
+                    cell('Hours', st: head, w: 72),
+                  ],
                 ),
-              Text(
-                '$line${m.autoClosed ? ' · auto check-out' : ''}',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: ts(12.5, c: p.ink3),
               ),
+              for (final AttMember m in members)
+                Tap(
+                  key: ValueKey<String>('attRow-${m.userId}'),
+                  onTap: () => c.openAttMember(m),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      border: Border(top: BorderSide(color: navyA(.08))),
+                    ),
+                    child: Row(
+                      children: <Widget>[
+                        cell(
+                          c.attName(m.userId, m.username),
+                          st: ts(14, w: w700, c: p.ink),
+                          w: 140,
+                        ),
+                        SizedBox(
+                          width: 112,
+                          child: Row(
+                            children: <Widget>[
+                              _Dot(attColor(p, m.status)),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  m.status.label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: ts(
+                                    12.5,
+                                    w: w700,
+                                    c: attColor(p, m.status),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        cell(_inOut(m).$1),
+                        cell(_inOut(m).$2),
+                        cell(
+                          m.totalMinutes == 0
+                              ? '—'
+                              : hoursMinutes(m.totalMinutes),
+                          w: 72,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
-        Text(
-          m.totalMinutes == 0 ? '—' : hoursMinutes(m.totalMinutes),
-          style: amtStyle(context, size: 14),
+      ),
+    );
+  }
+}
+
+/// Members as a board: one column per status (scrolls sideways).
+class _AttBoard extends StatelessWidget {
+  const _AttBoard({required this.c, required this.day, required this.members});
+  final AppController c;
+  final DateTime day;
+  final List<AttMember> members;
+
+  @override
+  Widget build(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    final List<(String, List<AttStatus>)> cols = <(String, List<AttStatus>)>[
+      ('Checked in', <AttStatus>[AttStatus.active, AttStatus.idle]),
+      ('Checked out', <AttStatus>[AttStatus.checkedOut]),
+      ('Not in', <AttStatus>[AttStatus.absent]),
+      ('Not tracked', <AttStatus>[AttStatus.exempt]),
+    ];
+    final double w = (MediaQuery.sizeOf(context).width * .72).clamp(220, 280);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: SingleChildScrollView(
+        key: const ValueKey<String>('attBoard'),
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            for (final (String, List<AttStatus>) col in cols)
+              () {
+                final List<AttMember> l = members
+                    .where((AttMember m) => col.$2.contains(m.status))
+                    .toList();
+                return Container(
+                  width: w,
+                  margin: const EdgeInsets.only(right: 10),
+                  child: Glass(
+                    padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        Row(
+                          children: <Widget>[
+                            _Dot(attColor(p, col.$2.first)),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                col.$1,
+                                style: rtStyle(context, 14.5),
+                              ),
+                            ),
+                            Text(
+                              '${l.length}',
+                              key: ValueKey<String>('attBoardN-${col.$1}'),
+                              style: ts(14, w: w800, c: p.ink2),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        if (l.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Text('No one', style: ts(13, c: p.ink3)),
+                          ),
+                        for (final AttMember m in l)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Tap(
+                              onTap: () => c.openAttMember(m),
+                              child: Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: whiteA(.45),
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    Text(
+                                      c.attName(m.userId, m.username),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: ts(14, w: w800, c: p.ink),
+                                    ),
+                                    Text(
+                                      'In ${_inOut(m).$1} · Out ${_inOut(m).$2}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: ts(12, c: p.ink3),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              }(),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
@@ -973,7 +1430,14 @@ class AttMemberScreen extends ConsumerWidget {
           c.attMemberName.isEmpty ? 'Team member' : c.attMemberName,
           afterNav: true,
         ),
-        const Sub('Attendance history'),
+        Sub(
+          <String>[
+            if (c.attMemberPosition != null) c.attMemberPosition!,
+            c.attPersonTracked
+                ? 'Attendance and leave'
+                : 'Not tracked (check-in rules)',
+          ].join(' · '),
+        ),
         GlassList(
           margin: const EdgeInsets.only(bottom: 12),
           children: <Widget>[
@@ -1115,4 +1579,299 @@ class CheckOutSheet extends ConsumerWidget {
       ),
     );
   }
+}
+
+// ------------------------------------------------------------ calendar
+/// What one day was for a person: worked (with hours), approved leave,
+/// holiday, weekly off, absent (a working day gone by with no check-in),
+/// ahead, or nothing to show.
+enum AttDayKind { worked, leave, holiday, weeklyOff, absent, ahead, none }
+
+/// [d] for the person on screen (own history, or the admin's member view).
+(AttDayKind, AttDay?, LeaveRequest?, LeaveHoliday?) attDayOf(
+  AppController c,
+  DateTime d,
+) {
+  final DateTime t = DateTime(c.today.year, c.today.month, c.today.day);
+  final AttDay? day = c.attHist?.days
+      .where((AttDay x) => x.date != null && ymd(x.date!) == ymd(d))
+      .firstOrNull;
+  final LeaveCalendar? cal = c.attLeaveCal;
+  final String? who = c.screen == 'attMember' ? c.attMemberId : null;
+  final LeaveRequest? l = cal?.leaveOn(d, userId: who);
+  final LeaveHoliday? h = cal?.holidayOn(d);
+  if (day != null) return (AttDayKind.worked, day, l, h);
+  if (d.isAfter(t)) return (AttDayKind.ahead, null, l, h);
+  if (l != null) return (AttDayKind.leave, null, l, h);
+  if (h != null) return (AttDayKind.holiday, null, l, h);
+  if (cal?.weeklyOffOn(d) ?? d.weekday == DateTime.sunday) {
+    return (AttDayKind.weeklyOff, null, l, h);
+  }
+  // Not expected to check in (exempt), or today (not over): never absent.
+  if (!c.attPersonTracked || !d.isBefore(t)) {
+    return (AttDayKind.none, null, l, h);
+  }
+  return (AttDayKind.absent, null, l, h);
+}
+
+/// A month: every day coloured by what it was; tap a day for its details.
+class AttCalendar extends StatelessWidget {
+  const AttCalendar({super.key, required this.c});
+  final AppController c;
+
+  @override
+  Widget build(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    final DateTime t = DateTime(c.today.year, c.today.month, c.today.day);
+    final DateTime m = c.attMonth ?? DateTime(t.year, t.month);
+    final bool thisMonth = m.year == t.year && m.month == t.month;
+    final int days = DateTime(m.year, m.month + 1, 0).day;
+    // Weeks start on Monday.
+    final int lead = (DateTime(m.year, m.month).weekday + 6) % 7;
+    final List<(AttDayKind, AttDay?, LeaveRequest?, LeaveHoliday?)> month =
+        <(AttDayKind, AttDay?, LeaveRequest?, LeaveHoliday?)>[
+          for (int i = 1; i <= days; i++)
+            attDayOf(c, DateTime(m.year, m.month, i)),
+        ];
+    Color? tint(AttDayKind k) => switch (k) {
+      AttDayKind.worked => p.pos,
+      AttDayKind.leave => p.navy2,
+      AttDayKind.holiday => p.acc,
+      AttDayKind.absent => p.neg,
+      _ => null,
+    };
+    // What the day was, in words (screen readers; not drawn in the cell).
+    String tag(AttDayKind k, AttDay? d, LeaveRequest? l) => switch (k) {
+      AttDayKind.worked => 'Present, ${hoursShort(d!.totalMinutes)}',
+      AttDayKind.leave => l?.halfDay == null ? 'Leave' : '½ Leave',
+      AttDayKind.holiday => 'Holiday',
+      AttDayKind.weeklyOff => 'Off',
+      AttDayKind.absent => 'Absent',
+      _ => '',
+    };
+    int n(AttDayKind k) => month
+        .where(
+          ((AttDayKind, AttDay?, LeaveRequest?, LeaveHoliday?) x) => x.$1 == k,
+        )
+        .length;
+    final DateTime? sel = c.attCalDay;
+    const List<String> week = <String>['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Glass(
+          key: const ValueKey<String>('attCalendar'),
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  CBtn(
+                    'chevL',
+                    key: const ValueKey<String>('attMonthPrev'),
+                    small: true,
+                    onTap: c.attHistBusy ? null : () => c.shiftAttMonth(-1),
+                  ),
+                  Expanded(
+                    child: Text(
+                      '${kMonthsLong[m.month - 1]} ${m.year}',
+                      key: const ValueKey<String>('attMonth'),
+                      textAlign: TextAlign.center,
+                      style: rtStyle(context, 16),
+                    ),
+                  ),
+                  CBtn(
+                    'chevR',
+                    key: const ValueKey<String>('attMonthNext'),
+                    small: true,
+                    onTap: thisMonth || c.attHistBusy
+                        ? null
+                        : () => c.shiftAttMonth(1),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: <Widget>[
+                  for (final String w in week)
+                    Expanded(
+                      child: Text(
+                        w,
+                        textAlign: TextAlign.center,
+                        style: ts(12, w: w700, c: p.ink3),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              for (int row = 0; row * 7 < lead + days; row++)
+                Row(
+                  children: <Widget>[
+                    for (int col = 0; col < 7; col++)
+                      Expanded(
+                        child: _cell(
+                          context,
+                          p,
+                          row * 7 + col - lead + 1,
+                          days,
+                          m,
+                          t,
+                          sel,
+                          month,
+                          tint,
+                          tag,
+                        ),
+                      ),
+                  ],
+                ),
+              const SizedBox(height: 8),
+              // The month in numbers (days so far).
+              Wrap(
+                key: const ValueKey<String>('attCalTotals'),
+                spacing: 10,
+                runSpacing: 6,
+                alignment: WrapAlignment.center,
+                children: <Widget>[
+                  for (final (AttDayKind, String, Color) x
+                      in <(AttDayKind, String, Color)>[
+                        (AttDayKind.worked, 'Present', p.pos),
+                        (AttDayKind.leave, 'Leave', p.navy2),
+                        (AttDayKind.holiday, 'Holiday', p.acc),
+                        (AttDayKind.absent, 'Absent', p.neg),
+                      ])
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        _Dot(x.$3),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${x.$2} ${n(x.$1)}',
+                          key: ValueKey<String>('attCalN-${x.$1.name}'),
+                          style: ts(12.5, w: w700, c: p.ink2),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        if (sel != null) _CalDayDetail(c: c, d: sel),
+      ],
+    );
+  }
+
+  Widget _cell(
+    BuildContext context,
+    TcPalette p,
+    int i,
+    int days,
+    DateTime m,
+    DateTime t,
+    DateTime? sel,
+    List<(AttDayKind, AttDay?, LeaveRequest?, LeaveHoliday?)> month,
+    Color? Function(AttDayKind) tint,
+    String Function(AttDayKind, AttDay?, LeaveRequest?) tag,
+  ) {
+    if (i < 1 || i > days) return const SizedBox(height: 46);
+    final DateTime d = DateTime(m.year, m.month, i);
+    final (AttDayKind k, AttDay? day, LeaveRequest? l, LeaveHoliday? _) =
+        month[i - 1];
+    final bool isToday = ymd(d) == ymd(t);
+    final bool picked = sel != null && ymd(sel) == ymd(d);
+    final Color? col = tint(k);
+    // Only the date in the cell: its colour (as in the legend below) says
+    // what the day was; the words are for screen readers and the day's
+    // details (tap).
+    final String what = tag(k, day, l);
+    return Semantics(
+      label: what.isEmpty ? '$i' : '$i, $what',
+      button: true,
+      excludeSemantics: true,
+      child: Tap(
+        key: ValueKey<String>('attCal-${ymd(d)}'),
+        onTap: () => c.pickAttCalDay(d),
+        radius: 10,
+        child: Container(
+          height: 46,
+          margin: const EdgeInsets.all(1.5),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: col?.withValues(alpha: .18),
+            borderRadius: BorderRadius.circular(10),
+            border: picked || isToday
+                ? Border.all(color: picked ? p.ink : p.acc, width: 1.6)
+                : null,
+          ),
+          child: Text(
+            '$i',
+            style: ts(
+              14.5,
+              w: w800,
+              c:
+                  col ??
+                  (k == AttDayKind.ahead || k == AttDayKind.weeklyOff
+                      ? p.ink3
+                      : p.ink),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The tapped day: its sessions, or what it was (leave / holiday / …).
+class _CalDayDetail extends StatelessWidget {
+  const _CalDayDetail({required this.c, required this.d});
+  final AppController c;
+  final DateTime d;
+
+  @override
+  Widget build(BuildContext context) {
+    final (AttDayKind k, AttDay? day, LeaveRequest? l, LeaveHoliday? h) =
+        attDayOf(c, d);
+    if (k == AttDayKind.worked) return _DayCard(day!);
+    final String sub = switch (k) {
+      AttDayKind.leave =>
+        '${l!.typeName}${l.halfLabel == null ? '' : ' · ${l.halfLabel}'} · ${leaveDates(l)}',
+      AttDayKind.holiday => h!.name,
+      AttDayKind.weeklyOff => 'Weekly off',
+      AttDayKind.absent => 'A working day with no check-in',
+      AttDayKind.ahead => 'Not yet',
+      _ => 'No check-in',
+    };
+    final String title = switch (k) {
+      AttDayKind.leave => 'On leave',
+      AttDayKind.holiday => 'Holiday',
+      AttDayKind.weeklyOff => 'Off',
+      AttDayKind.absent => 'Absent',
+      _ => '—',
+    };
+    return _OffDayCard(d, title, sub);
+  }
+}
+
+/// "7h" / "7h30" / "45m" (a calendar cell).
+String hoursShort(int minutes) {
+  final int h = minutes ~/ 60, m = minutes % 60;
+  if (h == 0) return '${m}m';
+  return m == 0 ? '${h}h' : '${h}h${m.toString().padLeft(2, '0')}';
+}
+
+/// List / Calendar switch above a history.
+class AttViewSeg extends StatelessWidget {
+  const AttViewSeg({super.key, required this.c});
+  final AppController c;
+
+  @override
+  Widget build(BuildContext context) => Seg(
+    key: const ValueKey<String>('attView'),
+    margin: const EdgeInsets.only(bottom: 12),
+    items: const <String>['List', 'Calendar'],
+    selected: c.attView == 'calendar' ? 1 : 0,
+    onPick: (int i) => c.setAttView(i == 1 ? 'calendar' : 'list'),
+  );
 }

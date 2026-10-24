@@ -136,7 +136,7 @@ export function historyDays(sessions, now) {
 
 /** Counts per status for the admin dashboard. */
 export function statusCounts(members) {
-  const c = { active: 0, idle: 0, checked_out: 0, absent: 0, checked_in: 0, total: members.length };
+  const c = { active: 0, idle: 0, checked_out: 0, absent: 0, exempt: 0, checked_in: 0, total: members.length };
   for (const m of members) {
     c[m.status] += 1;
     if (m.status === "active" || m.status === "idle") c.checked_in += 1;

@@ -18,13 +18,15 @@ Map<Object?, Object?> _map(Object? v) =>
 
 /// A person's state for a day: `active` (checked in, app seen in the last
 /// 15 minutes), `idle` (checked in, not seen since), `checked_out` (worked,
-/// nothing open) or `absent` (no check-in).
-enum AttStatus { active, idle, checkedOut, absent }
+/// nothing open), `absent` (no check-in) or `exempt` (not tracked: the
+/// admin exempted their position / them, and they did not check in).
+enum AttStatus { active, idle, checkedOut, absent, exempt }
 
 AttStatus attStatusOf(Object? v) => switch ('$v') {
   'active' => AttStatus.active,
   'idle' => AttStatus.idle,
   'checked_out' => AttStatus.checkedOut,
+  'exempt' => AttStatus.exempt,
   _ => AttStatus.absent,
 };
 
@@ -34,6 +36,7 @@ extension AttStatusLabel on AttStatus {
     AttStatus.idle => 'Checked in · idle',
     AttStatus.checkedOut => 'Checked out',
     AttStatus.absent => 'Not checked in',
+    AttStatus.exempt => 'Not tracked',
   };
   bool get checkedIn => this == AttStatus.active || this == AttStatus.idle;
 }
@@ -90,6 +93,8 @@ class AttMe {
   const AttMe({
     required this.enabled,
     required this.isAdmin,
+    this.exempt = false,
+    this.position,
     required this.status,
     required this.date,
     required this.sessions,
@@ -97,6 +102,10 @@ class AttMe {
     this.serverTime,
   });
   final bool enabled, isAdmin;
+
+  /// The admin exempted this login from check-in (its [position] or them).
+  final bool exempt;
+  final String? position;
   final AttStatus status;
   final DateTime? date, serverTime;
   final List<AttSession> sessions;
@@ -110,6 +119,8 @@ class AttMe {
     return AttMe(
       enabled: m['enabled'] == true,
       isAdmin: m['is_admin'] == true,
+      exempt: m['exempt'] == true,
+      position: _s(m['position']).trim().isEmpty ? null : _s(m['position']),
       status: attStatusOf(m['status']),
       date: _d(m['date']),
       serverTime: _t(m['server_time']),
@@ -191,9 +202,15 @@ class AttMember {
     required this.totalMinutes,
     required this.autoClosed,
     required this.sessions,
+    this.position,
+    this.required = true,
   });
   final String userId, username, email;
   final bool onTeam, autoClosed;
+
+  /// Position set by the admin; [required]: must check in.
+  final String? position;
+  final bool required;
   final AttStatus status;
   final DateTime? firstIn, lastOut, lastSeen;
   final int totalMinutes;
@@ -235,6 +252,150 @@ class AttTeam {
             totalMinutes: _n(_map(x)['total_minutes']).toInt(),
             autoClosed: _map(x)['auto_closed'] == true,
             sessions: AttSession.list(_map(x)['sessions']),
+            position: _opt(_map(x)['position']),
+            required: _map(x)['required'] != false,
+          ),
+      ],
+    );
+  }
+}
+
+String? _opt(Object? v) => _s(v).trim().isEmpty ? null : _s(v).trim();
+
+/// One team member in Check-in rules: position, rule (`auto` = by
+/// position, `required`, `exempt`) and the result.
+class AttRuleMember {
+  const AttRuleMember({
+    required this.userId,
+    required this.username,
+    required this.email,
+    this.position,
+    this.rule = 'auto',
+    this.required = true,
+    this.reason = 'default',
+  });
+  final String userId, username, email;
+  final String? position;
+  final String rule;
+  final bool required;
+
+  /// `rule` (the admin's choice), `position` (an exempt position) or
+  /// `default`.
+  final String reason;
+}
+
+/// `GET /api/attendance/settings`: who checks in.
+class AttRules {
+  const AttRules({
+    this.ready = true,
+    this.exemptPositions = const <String>[],
+    this.positions = const <String>[],
+    this.members = const <AttRuleMember>[],
+  });
+
+  /// False: the server has no tables for it yet (everyone checks in).
+  final bool ready;
+  final List<String> exemptPositions, positions;
+  final List<AttRuleMember> members;
+
+  bool exemptPosition(String? p) =>
+      p != null &&
+      exemptPositions.any(
+        (String x) => x.trim().toLowerCase() == p.trim().toLowerCase(),
+      );
+
+  static AttRules fromJson(Object? o) {
+    final Map<Object?, Object?> m = _map(o);
+    List<String> strs(Object? v) => <String>[
+      for (final Object? x in _list(v))
+        if (_opt(x) != null) _opt(x)!,
+    ];
+    return AttRules(
+      ready: m['ready'] != false,
+      exemptPositions: strs(m['exempt_positions']),
+      positions: strs(m['positions']),
+      members: <AttRuleMember>[
+        for (final Object? x in _list(m['members']))
+          AttRuleMember(
+            userId: _s(_map(x)['user_id']),
+            username: _s(_map(x)['username']),
+            email: _s(_map(x)['email']),
+            position: _opt(_map(x)['position']),
+            rule: _opt(_map(x)['rule']) ?? 'auto',
+            required: _map(x)['required'] != false,
+            reason: _s(_map(x)['reason']),
+          ),
+      ],
+    );
+  }
+}
+
+/// One member's From–To (`GET /api/attendance/summary`).
+class AttSumRow {
+  const AttSumRow({
+    required this.userId,
+    required this.username,
+    required this.email,
+    this.position,
+    this.required = true,
+    this.presentDays = 0,
+    this.workingDays = 0,
+    this.leaveDays = 0,
+    this.absentDays = 0,
+    this.holidays = 0,
+    this.weeklyOff = 0,
+    this.totalMinutes = 0,
+    this.avgMinutes = 0,
+    this.avgIn,
+    this.avgOut,
+  });
+  final String userId, username, email;
+  final String? position;
+  final bool required;
+  final int presentDays, workingDays, absentDays, holidays, weeklyOff;
+  final num leaveDays;
+  final int totalMinutes, avgMinutes;
+
+  /// Average first check-in / last check-out, "09:40" (India time).
+  final String? avgIn, avgOut;
+}
+
+/// `GET /api/attendance/summary?from=&to=`: every member's figures.
+class AttSummary {
+  const AttSummary({
+    this.from,
+    this.to,
+    this.company = '',
+    this.members = const <AttSumRow>[],
+  });
+  final DateTime? from, to;
+  final String company;
+  final List<AttSumRow> members;
+
+  static AttSummary fromJson(Object? o) {
+    final Map<Object?, Object?> m = _map(o);
+    return AttSummary(
+      from: _d(m['from']),
+      to: _d(m['to']),
+      company: _s(m['company']),
+      members: <AttSumRow>[
+        for (final Object? x in _list(m['members']))
+          AttSumRow(
+            userId: _s(_map(x)['user_id']),
+            username: _s(_map(x)['username']),
+            email: _s(_map(x)['email']),
+            position: _opt(_map(x)['position']),
+            required: _map(x)['required'] != false,
+            presentDays: _n(_map(x)['present_days']).toInt(),
+            workingDays: _n(_map(x)['working_days']).toInt(),
+            leaveDays: _n(_map(x)['leave_days']),
+            absentDays: _n(_map(x)['absent_days']).toInt(),
+            holidays: _n(_map(x)['holidays']).toInt(),
+            weeklyOff: _n(_map(x)['weekly_off']).toInt(),
+            totalMinutes: _n(_map(x)['total_minutes']).toInt(),
+            avgMinutes: _n(_map(x)['avg_minutes']).toInt(),
+            avgIn: _opt(_map(x)['avg_in']),
+            avgOut: _opt(_map(x)['avg_out']),
           ),
       ],
     );

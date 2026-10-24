@@ -8,7 +8,29 @@
       "Read(//c/Users/AVERLON/Downloads/Tallyconnect__Backend/tally-backend/utils/**)",
       "Read(//c/Users/AVERLON/Downloads/Tallyconnect__Backend/tally-backend/**)",
       "Bash(cd \"C:/Users/AVERLON/Downloads/tally-agent\" && grep -n \"createSettlementSink\" agent.cjs | head -3; ls lib; sed -n \"$\\(grep -n 'function createSettlementSink' lib/billSettlements.cjs | cut -d: -f1\\),+95p\" lib/billSettlements.cjs)",
-      "Read(//c/Users/AVERLON/Downloads/tally-agent/**)"
+      "Read(//c/Users/AVERLON/Downloads/tally-agent/**)",
+      "Bash(timeout 250 flutter test test/bills_reminders_test.dart --plain-name screens --reporter expanded)",
+      "Bash(grep -vE \"^\\\\s*$\")",
+      "Bash(awk 'NR>=820 && NR<=960' lib/presentation/screens/stock_party_screens.dart)",
+      "PowerShell(flutter test test/email_reminder_test.dart 2>&1)",
+      "Bash(flutter test *)",
+      "Bash(grep -n -i -B3 -A8 \"courier\" \"/c/Users/AVERLON/Downloads/2026-10-23-125545-artifact-content-authored-by-others.txt\" | head -60; grep -rn -i \"courier\\\\|Unicode support\" test lib | head)",
+      "Bash(python -c \"from PIL import Image; im=Image.open\\('assets/images/splash_logo.png'\\); print\\(im.size, im.mode\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(cp -r android/app/src/main/res/mipmap-* C:/Users/AVERLON/AppData/Local/Temp/claude/D--Tallyconnect-UI/cb87c58b-d3ee-4e1b-b93c-f4d80590836f/scratchpad/icon_backup/)",
+      "Bash(python -I C:/Users/AVERLON/AppData/Local/Temp/claude/D--Tallyconnect-UI/cb87c58b-d3ee-4e1b-b93c-f4d80590836f/scratchpad/make_icons.py D:/Tallyconnect_UI)",
+      "Bash(python C:/Users/AVERLON/AppData/Local/Temp/claude/D--Tallyconnect-UI/cb87c58b-d3ee-4e1b-b93c-f4d80590836f/scratchpad/make_icons.py D:/Tallyconnect_UI)",
+      "Bash(xargs wc -l)",
+      "Bash(python \"C:/Users/AVERLON/AppData/Local/Temp/claude/D--Tallyconnect-UI/cb87c58b-d3ee-4e1b-b93c-f4d80590836f/scratchpad/make_logo.py\" \"D:/Tallyconnect_UI\")",
+      "Bash(OUT=\"C:/Users/AVERLON/AppData/Local/Temp/claude/D--Tallyconnect-UI/cb87c58b-d3ee-4e1b-b93c-f4d80590836f/scratchpad/ledgers.pdf\" flutter test test/zz_tmp_pdf_test.dart)",
+      "Bash(grep -v \"^\\\\s*//\")",
+      "Bash(grep -v \"///\\\\|// \")",
+      "Bash(sed -i \"s/  subtitle: 'Your stock from Tally',/  subtitle: 'Your stock',/; s/  subtitle: 'Item · stock from Tally',/  subtitle: 'Item · stock',/\" lib/core/share/share_doc.dart)",
+      "Bash(sed -i 's/    subtitle: '\\\\''$period · from Tally'\\\\'',/    subtitle: period,/' lib/presentation/screens/tally_report_screens.dart)",
+      "Bash(sed -i \"s/SearchEntry\\('Items', 'Stock from Tally',/SearchEntry\\('Items', 'Stock and prices',/\" lib/data/mock/mock_data.dart)",
+      "Bash(sed -i \"s/c.say\\('Company list refreshed from Tally'\\)/c.say\\('Company list refreshed'\\)/\" lib/presentation/overlays/overlays.dart lib/presentation/screens/account_screens.dart)",
+      "Bash(sed -i \"s/          EmptyBox\\(c.attLoading ? 'Loading…' : 'Not loaded yet.'\\)/          \\(c.attLoading\\\\n              ? const ReportLoader\\(text: 'Loading attendance…'\\)\\\\n              : const EmptyBox\\('Not loaded yet.'\\)\\)/\" lib/presentation/screens/attendance_screens.dart)",
+      "Bash(grep -n \"^class \\\\|'search'\\\\|CBtn\\(\\\\s*$\" lib/presentation/screens/dues_screens.dart)"
     ]
   }
 }

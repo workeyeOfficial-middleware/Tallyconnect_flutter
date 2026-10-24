@@ -18,6 +18,7 @@ import 'screens/auth_screens.dart';
 import 'screens/cashflow_screens.dart' show CashflowScreen, CashflowWeekScreen;
 import 'screens/tally_report_screens.dart' show TallyReportScreen;
 import 'screens/dues_screens.dart';
+import 'screens/att_admin_screens.dart' show AttEmployeesScreen, AttRulesScreen;
 import 'screens/attendance_screens.dart'
     show AttMemberScreen, AttTeamScreen, AttendanceScreen;
 import 'screens/einvoice_screens.dart' show EinvoicesScreen;
@@ -65,6 +66,8 @@ Widget screenFor(String s) => switch (s) {
   'attendance' => const AttendanceScreen(),
   'attTeam' => const AttTeamScreen(),
   'attMember' => const AttMemberScreen(),
+  'attEmployees' => const AttEmployeesScreen(),
+  'attRules' => const AttRulesScreen(),
   'leave' => const LeaveScreen(),
   'einvoices' => const EinvoicesScreen(),
   'leaveReqs' => const LeaveReqsScreen(),

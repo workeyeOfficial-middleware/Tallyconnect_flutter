@@ -138,12 +138,16 @@ class AiUsage {
     required this.used,
     this.planCode = 'free',
     this.planName = 'Free',
+    this.unlimited = false,
   });
   final int limit, used;
   final String planCode, planName;
 
+  /// No allowance (a testing account set on the server).
+  final bool unlimited;
+
   int get remaining => used >= limit ? 0 : limit - used;
-  bool get exhausted => used >= limit;
+  bool get exhausted => !unlimited && used >= limit;
 
   /// Share of the allowance used (0…1).
   double get fraction => limit <= 0 ? 1 : (used / limit).clamp(0, 1).toDouble();
@@ -160,6 +164,7 @@ class AiUsage {
       used: u.toInt(),
       planCode: p is Map ? '${p['code'] ?? 'free'}' : 'free',
       planName: p is Map ? '${p['name'] ?? 'Free'}' : 'Free',
+      unlimited: o['unlimited'] == true,
     );
   }
 }

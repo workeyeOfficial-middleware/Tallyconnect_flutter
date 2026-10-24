@@ -141,6 +141,8 @@ class FakeDb {
   aiPlans = { free: { name: "Free", token_limit: "10000", period: "lifetime", is_active: true } };
   aiUsage = new Map();
   aiLog = [];
+  // users.email by users.id (what the server trusts, not the request).
+  userEmails = { 7: "ravi@x.in", 21: "asha@x.in", 8: "z@x.in", 30: "Workk72002@gmail.com", 31: "workk72002+x@gmail.com" };
 
   usageQuery(s, p) {
     if (s.startsWith("INSERT INTO ai_usage (")) {
@@ -158,7 +160,15 @@ class FakeDb {
       const pl = this.aiPlans[u.plan_code];
       const on = pl && pl.is_active;
       return {
-        rows: [{ ...u, plan_name: on ? pl.name : null, plan_limit: on ? pl.token_limit : null, plan_period: on ? pl.period : null }],
+        rows: [
+          {
+            ...u,
+            plan_name: on ? pl.name : null,
+            plan_limit: on ? pl.token_limit : null,
+            plan_period: on ? pl.period : null,
+            account_email: this.userEmails[p[0]] ?? null,
+          },
+        ],
       };
     }
     if (s.startsWith("UPDATE ai_usage SET tokens_used = 0")) {
@@ -268,6 +278,10 @@ const stubAuth = (req, res, next) => {
 const ADMIN = { id: 7, adminId: 7, role: "ADMIN", email: "ravi@x.in" };
 const USER = { id: 21, adminId: 7, role: "USER", email: "asha@x.in" };
 const OTHER = { id: 8, adminId: 8, role: "ADMIN", email: "z@x.in" };
+// The testing account (users.email = workk72002@gmail.com) and a
+// look-alike whose request claims that email but whose saved email differs.
+const TESTER = { id: 30, adminId: 7, role: "USER", email: "workk72002@gmail.com" };
+const SPOOF = { id: 31, adminId: 7, role: "USER", email: "workk72002@gmail.com" };
 
 /* ---------------------------------------------------------- routes */
 // The server's own key (from .env). APP_KEY = a key an older app may still
@@ -484,6 +498,48 @@ describe("routes", () => {
     env.AI_FREE_TOKENS = "2000";
     delete db.aiPlans.free;
     assert.equal((await get("/api/assistant/status", USER)).body.usage.limit, 2000);
+  });
+
+  test("testing account: unlimited tokens, decided from users.email only", async () => {
+    await get("/api/assistant/status", TESTER);
+    db.aiUsage.get(30).tokens_used = "250000"; // far past the free 10,000
+    const st = (await get("/api/assistant/status", TESTER)).body.usage;
+    assert.deepEqual(
+      [st.unlimited, st.exhausted, st.plan.code, st.used, st.remaining],
+      [true, false, "unlimited", 250000, 1000000000]
+    );
+    assert.ok(st.limit > st.used); // older apps never see it as used up
+    const r = await ask(TESTER, "Sales?");
+    assert.equal(r.status, 200);
+    // Still counted and logged.
+    assert.equal(r.body.usage.used, 250000 + TOKENS);
+    assert.equal(db.aiLog.at(-1).user_id, 30);
+    // A request claiming the email does not make another login unlimited.
+    await get("/api/assistant/status", SPOOF);
+    db.aiUsage.get(31).tokens_used = "10000";
+    const s2 = await ask(SPOOF, "Sales?");
+    assert.equal(s2.status, 402);
+    assert.equal(s2.body.code, "ai_quota_exhausted");
+    // Everyone else: the same allowance as before.
+    await get("/api/assistant/status", ADMIN);
+    db.aiUsage.get(7).tokens_used = "10000";
+    assert.equal((await ask(ADMIN, "Sales?")).status, 402);
+    const a = (await get("/api/assistant/status", USER)).body.usage;
+    assert.deepEqual([a.limit, a.unlimited, a.plan.code], [10000, undefined, "free"]);
+    // Login still needed.
+    assert.equal((await get("/api/assistant/status", null)).status, 401);
+  });
+
+  test("AI_UNLIMITED_EMAILS: replaces the list; empty turns it off", async () => {
+    await get("/api/assistant/status", TESTER);
+    db.aiUsage.get(30).tokens_used = "10000";
+    env.AI_UNLIMITED_EMAILS = "";
+    assert.equal((await ask(TESTER, "Sales?")).status, 402);
+    env.AI_UNLIMITED_EMAILS = " ASHA@x.in , not-an-email ";
+    assert.equal((await ask(TESTER, "Sales?")).status, 402);
+    await get("/api/assistant/status", USER);
+    db.aiUsage.get(21).tokens_used = "10000";
+    assert.equal((await ask(USER, "Sales?")).status, 200);
   });
 
   test("one question at a time per user (no double spending from two devices)", async () => {

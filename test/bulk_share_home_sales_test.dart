@@ -184,7 +184,10 @@ void main() {
       final Party first = c.partyPool().firstWhere(
         (Party x) => find.byKey(ValueKey<String>('pPick-${x.name}')).evaluate().isNotEmpty,
       );
-      await t.tap(find.byKey(ValueKey<String>('pPick-${first.name}')));
+      final Finder row = find.byKey(ValueKey<String>('pPick-${first.name}'));
+      await t.ensureVisible(row);
+      await settle(t);
+      await t.tap(row);
       await settle(t);
       expect(c.pPicked.keys, <String>[first.name]);
       expect(c.screen, 'party'); // a tap ticks, it does not open the party

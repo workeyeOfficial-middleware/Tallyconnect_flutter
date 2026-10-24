@@ -20,6 +20,7 @@ import {
   plOpeningAt,
   profitLoss,
 } from "./financialCore.js";
+import { checkVoucherStatusColumns, IN_BOOKS } from "./voucherStatus.js";
 
 /** Tally's cash / bank groups (their sub-groups count too). */
 const CASH_GROUPS = new Set(["cash-in-hand", "bank accounts", "bank od a/c", "bank occ a/c"]);
@@ -57,8 +58,25 @@ const COUNTED = `ve.admin_id = $1 AND ve.company_guid = $2
           AND ve.voucher_date > $3::date AND ve.voucher_date <= $4::date
           AND COALESCE(ve.is_active, TRUE) = TRUE
           AND COALESCE(ve.voucher_type, '') !~* '${NON_ACCOUNTING}'`;
+/**
+ * COUNTED, and — once the database has the voucher status columns — not a
+ * cancelled, optional or order / note / stock voucher (NULL = not known yet =
+ * counted as before; see voucherStatus.js).
+ */
+const countedWhere = (status) => (status ? `${COUNTED}
+          AND ${IN_BOOKS("ve")}` : COUNTED);
 
 export function createFinancialData(db, now = () => new Date()) {
+  // The voucher status columns (vouchers / voucher_entries.is_accounting);
+  // looked up again every 10 minutes so reports work before and after.
+  let vsCols = null;
+  async function counted() {
+    if (!vsCols || Date.now() - vsCols.at >= 10 * 60 * 1000) {
+      vsCols = { at: Date.now(), on: await checkVoucherStatusColumns(db) };
+    }
+    return countedWhere(vsCols.on);
+  }
+
   /**
    * Everything needed for one company: groups, anchors per financial year,
    * stock values, today's stock, ledger masters.
@@ -262,11 +280,12 @@ export function createFinancialData(db, now = () => new Date()) {
 
   /** Net voucher movements per ledger in (after, upto] (Cr +, Dr −). */
   async function movements(s, after, upto) {
+    const where = await counted();
     const r = await db.query(
       `SELECT ve.ledger_name AS name,
               SUM(${SIGNED}) AS net
          FROM voucher_entries ve
-        WHERE ${COUNTED}
+        WHERE ${where}
         GROUP BY ve.ledger_name`,
       [s.adminId, s.company, after, upto]
     );
@@ -277,11 +296,12 @@ export function createFinancialData(db, now = () => new Date()) {
 
   /** Month-by-month movements per ledger in (after, upto]. */
   async function monthlyMovements(s, after, upto) {
+    const where = await counted();
     const r = await db.query(
       `SELECT ve.ledger_name AS name, TO_CHAR(ve.voucher_date, 'YYYY-MM') AS month,
               SUM(${SIGNED}) AS net
          FROM voucher_entries ve
-        WHERE ${COUNTED}
+        WHERE ${where}
         GROUP BY ve.ledger_name, TO_CHAR(ve.voucher_date, 'YYYY-MM')`,
       [s.adminId, s.company, after, upto]
     );
@@ -293,11 +313,12 @@ export function createFinancialData(db, now = () => new Date()) {
    * makes the Balance Sheet differ by its gap; normally none.
    */
   async function unbalanced(s, after, upto) {
+    const where = await counted();
     const r = await db.query(
       `SELECT COUNT(*)::int AS n, COALESCE(SUM(gap), 0) AS gap FROM (
          SELECT ABS(SUM(${SIGNED})) AS gap
            FROM voucher_entries ve
-          WHERE ${COUNTED}
+          WHERE ${where}
           GROUP BY ve.voucher_guid
          HAVING ABS(SUM(${SIGNED})) >= 0.01) x`,
       [s.adminId, s.company, after, upto]
@@ -529,6 +550,7 @@ export function createFinancialData(db, now = () => new Date()) {
       return (m && m.parent) || "Other ledgers";
     };
     const flagged = await cashFlowColumns();
+    const where = await counted();
     const [before, after, lines] = await Promise.all([
       rawRows(s, ctx, prev),
       rawRows(s, ctx, to),
@@ -540,7 +562,7 @@ export function createFinancialData(db, now = () => new Date()) {
                FROM voucher_entries ve
                LEFT JOIN vouchers v
                  ON v.admin_id = ve.admin_id AND v.company_guid = ve.company_guid AND v.voucher_guid = ve.voucher_guid
-              WHERE ${COUNTED}
+              WHERE ${where}
                 AND ve.voucher_guid IN (
                   SELECT c.voucher_guid FROM voucher_entries c
                    WHERE c.admin_id = $1 AND c.company_guid = $2
@@ -654,11 +676,12 @@ export function createFinancialData(db, now = () => new Date()) {
     const info = master ? idx.info(master.parent) : null;
     const rev = !!info && (info.nature === "income" || info.nature === "expense");
     const openFrom = rev ? addDaysIso(fyStartFor(ctx, f), -1) : addDaysIso(ctx.books.from, -1);
+    const where = await counted();
     const [openMv, rows] = await Promise.all([
       prev > openFrom
         ? db.query(
             `SELECT COALESCE(SUM(${SIGNED}), 0) AS net FROM voucher_entries ve
-              WHERE ${COUNTED} AND ${NAME_KEY("ve.ledger_name")} = $5`,
+              WHERE ${where} AND ${NAME_KEY("ve.ledger_name")} = $5`,
             [s.adminId, s.company, openFrom, prev, key]
           )
         : { rows: [{ net: 0 }] },
@@ -666,7 +689,7 @@ export function createFinancialData(db, now = () => new Date()) {
         `SELECT ve.voucher_guid AS guid, MIN(ve.voucher_date)::text AS d, MAX(COALESCE(ve.voucher_type, '')) AS type,
                 MAX(COALESCE(ve.reference_no, '')) AS ref, SUM(${SIGNED}) AS net
            FROM voucher_entries ve
-          WHERE ${COUNTED} AND ${NAME_KEY("ve.ledger_name")} = $5
+          WHERE ${where} AND ${NAME_KEY("ve.ledger_name")} = $5
           GROUP BY ve.voucher_guid
           ORDER BY MIN(ve.voucher_date), ve.voucher_guid
           LIMIT ${Number(limit) + 1}`,

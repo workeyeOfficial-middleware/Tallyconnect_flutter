@@ -16,6 +16,7 @@ import '../../data/accounting.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
 import '../../core/share/report_data.dart';
+import '../widgets/bulk_bar.dart';
 import '../widgets/common.dart';
 import '../widgets/voice_search.dart';
 import '../widgets/report_chart.dart';
@@ -64,6 +65,24 @@ class OutHubScreen extends ConsumerWidget {
           ),
         ];
     final List<Bill> soon = dueSoon(recv, payb, c.today);
+    // Long-press a card to pin, hide, share or drag it.
+    final ({
+      List<(String, String, String, String, num, String, String, num, String)>
+      rows,
+      int hidden,
+      VoidCallback unhide,
+    })
+    oc = c
+        .listView<
+          (String, String, String, String, num, String, String, num, String)
+        >(
+          'outCards',
+          cards,
+          (
+            (String, String, String, String, num, String, String, num, String)
+            o,
+          ) => o.$9,
+        );
     return Scr(
       children: <Widget>[
         // Compact action icons (as in every header with several actions).
@@ -99,6 +118,14 @@ class OutHubScreen extends ConsumerWidget {
                 key: const ValueKey<String>('outSearchBtn'),
                 onTap: c.toggleOutSearch,
               ),
+              // Payment reminder settings: before / after the due date,
+              // Automatic / Manual (the admin edits; others see them).
+              if (c.emBlocked == null)
+                CBtn(
+                  'gear',
+                  key: const ValueKey<String>('outRemSettingsBtn'),
+                  onTap: c.openReminderSettings,
+                ),
               // All active reminders (dot: one is due now).
               CBtn(
                 'bell',
@@ -161,67 +188,80 @@ class OutHubScreen extends ConsumerWidget {
               String,
             )
             o
-            in cards)
+            in oc.rows)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: Tap(
-              onTap: () => c.go('outList', <String, Object?>{
-                'outKind': o.$9,
-                'outFilter': 'all',
-              }),
-              child: Glass(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    Row(
-                      children: <Widget>[
-                        Ico(o.$3, color: p.cat(o.$4), icon: IcSize.l),
-                        const SizedBox(width: 12),
-                        Expanded(child: RTx(o.$1, o.$2, titleSize: 20)),
-                        const SizedBox(width: 12),
-                        const Ic('chevR', color: kChev),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: <Widget>[
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: <Widget>[
-                              Text('Total', style: rsStyle(context)),
-                              const SizedBox(height: 2),
-                              // Directly under "Total", left-aligned with it.
-                              AmtText(
-                                inr(o.$5),
-                                align: Alignment.centerLeft,
-                                style: amtStyle(context, cls: o.$6),
-                              ),
-                            ],
+            child: LRow(
+              list: 'outCards',
+              lk: o.$9,
+              radius: 22,
+              child: Tap(
+                onTap: () {
+                  if (!c.guardTap('outCards', o.$9)) return;
+                  c.go('outList', <String, Object?>{
+                    'outKind': o.$9,
+                    'outFilter': 'all',
+                  });
+                },
+                child: Glass(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          Ico(o.$3, color: p.cat(o.$4), icon: IcSize.l),
+                          const SizedBox(width: 12),
+                          Expanded(child: RTx(o.$1, o.$2, titleSize: 20)),
+                          const SizedBox(width: 12),
+                          const Ic('chevR', color: kChev),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: <Widget>[
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: <Widget>[
+                                Text('Total', style: rsStyle(context)),
+                                const SizedBox(height: 2),
+                                // Directly under "Total", left-aligned with it.
+                                AmtText(
+                                  inr(o.$5),
+                                  align: Alignment.centerLeft,
+                                  style: amtStyle(context, cls: o.$6),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 10),
-                        ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: MediaQuery.sizeOf(context).width * .38,
+                          const SizedBox(width: 10),
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: MediaQuery.sizeOf(context).width * .38,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: <Widget>[
+                                Bdg(o.$7),
+                                const SizedBox(height: 4),
+                                Bdg('${inr(o.$8)} late', kind: BadgeKind.bad),
+                              ],
+                            ),
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: <Widget>[
-                              Bdg(o.$7),
-                              const SizedBox(height: 4),
-                              Bdg('${inr(o.$8)} late', kind: BadgeKind.bad),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
+          ),
+        if (oc.hidden > 0)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: HidRow('${oc.hidden} hidden · Unhide', onTap: oc.unhide),
           ),
         const H2Row('Due in the next 7 days', top: 10),
         if (soon.isEmpty)
@@ -363,21 +403,21 @@ class OutListScreen extends ConsumerWidget {
       ('settled', 'Settled (${grouped(settled.length)})'),
     ];
     final List<(String, num, int, Color)> ageing = <(String, num, int, Color)>[
-      ('On time (not due yet)', sm.ageing[0], pct(sm.ageing[0]), p.pos),
+      ('Not due', sm.ageing[0], pct(sm.ageing[0]), p.pos),
       (
-        '1–30 days late',
+        'Overdue 1–30 days',
         sm.ageing[1],
         sm.ageing[1] > 0 ? pct(sm.ageing[1]).clamp(2, 100) : 0,
         p.warn,
       ),
       (
-        '31–60 days late',
+        'Overdue 31–60 days',
         sm.ageing[2],
         sm.ageing[2] > 0 ? pct(sm.ageing[2]).clamp(2, 100) : 0,
         p.neg,
       ),
       (
-        'More than 60 days late',
+        'Overdue above 60 days',
         sm.ageing[3],
         sm.ageing[3] > 0 ? pct(sm.ageing[3]).clamp(2, 100) : 0,
         p.acc3,
@@ -401,7 +441,9 @@ class OutListScreen extends ConsumerWidget {
         (Bill b) => b.key,
       ),
     );
+    final bool selecting = c.bSelecting;
     return Scr(
+      bottomBar: selecting ? _BillSelectBar(c: c, rows: v.rows) : null,
       children: <Widget>[
         BackNav(
           actions: <Widget>[
@@ -555,13 +597,30 @@ class OutListScreen extends ConsumerWidget {
                 child: RTx(
                   'Payment alerts',
                   c.autoRemind
-                      ? 'Alert me 3 days before due'
+                      ? 'Alert me ${c.remRuleText(c.remSettings)}'
                       : 'Alerts are off',
                 ),
               ),
               Sw(c.autoRemind),
             ],
           ),
+        // What bill PDFs show: logo, fields, address — saved for this user
+        // and company; a share can change it once.
+        GlassRow(
+          key: const ValueKey<String>('outBillLayoutRow'),
+          margin: const EdgeInsets.only(top: 12),
+          onTap: c.openBillLayout,
+          children: <Widget>[
+            Ico('file', size: IcoSize.xs, color: p.navy, icon: IcSize.s),
+            const Expanded(
+              child: RTx(
+                'Bill PDF layout',
+                'Logo, fields and address on shared bills',
+              ),
+            ),
+            const Ic('chevR', color: kChev),
+          ],
+        ),
         Seg(
           margin: const EdgeInsets.only(top: 12, bottom: 0),
           items: const <String>['List', 'Graph'],
@@ -579,7 +638,7 @@ class OutListScreen extends ConsumerWidget {
                 children: <Widget>[
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
-                    child: Text('How late?', style: rtStyle(context, 17)),
+                    child: Text('Ageing', style: rtStyle(context, 17)),
                   ),
                   for (final (String, num, int, Color) a in ageing) ...<Widget>[
                     Row(
@@ -616,6 +675,15 @@ class OutListScreen extends ConsumerWidget {
         Chips(
           margin: const EdgeInsets.only(top: 14, bottom: 14),
           children: <Widget>[
+            // Select several bills to share them together.
+            if (c.outView == 'list')
+              ChipBtn(
+                selecting ? 'Done' : 'Select',
+                key: const ValueKey<String>('bSelect'),
+                icon: selecting ? 'close' : 'check',
+                on: selecting,
+                onTap: selecting ? c.endBillSelect : c.startBillSelect,
+              ),
             for (final (String, String) x in of)
               ChipBtn(
                 x.$2,
@@ -645,13 +713,27 @@ class OutListScreen extends ConsumerWidget {
               list: 'bills',
               lk: b.key,
               child: RowX(
+                key: selecting ? ValueKey<String>('bPick-${b.key}') : null,
                 onTap: () {
+                  if (selecting) {
+                    c.toggleBillPicked(b);
+                    return;
+                  }
                   if (c.guardTap('bills', b.key)) {
                     c.go('billDetail', <String, Object?>{'bill': b});
                   }
                 },
                 children: <Widget>[
-                  Av(initials(b.party), size: Av.sm),
+                  if (selecting)
+                    SizedBox(
+                      width: 34,
+                      height: 34,
+                      child: Center(
+                        child: SelectBox(checked: c.bPicked.containsKey(b.key)),
+                      ),
+                    )
+                  else
+                    Av(initials(b.party), size: Av.sm),
                   Expanded(
                     child: RTx(
                       b.party,
@@ -694,6 +776,58 @@ class OutListScreen extends ConsumerWidget {
                       ? 'No settled bills yet.'
                       : c.emptyText(DataSet.bills, 'No pending bills.')),
           ),
+      ],
+    );
+  }
+}
+
+/// Selecting bills (floating): how many / how much, Select all / Clear,
+/// WhatsApp (one message), one list PDF or one PDF per bill.
+class _BillSelectBar extends StatelessWidget {
+  const _BillSelectBar({required this.c, required this.rows});
+  final AppController c;
+  final List<Bill> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final int n = c.bPicked.length;
+    final bool all =
+        rows.isNotEmpty &&
+        n >= rows.length &&
+        rows.every((Bill b) => c.bPicked.containsKey(b.key));
+    final Party? party = c.pickedBillParty;
+    return BulkBar(
+      key: const ValueKey<String>('bSelectBarFloat'),
+      keyPrefix: 'bSelect',
+      count: n,
+      detail:
+          '${inr(c.pickedBillsTotal)}${party != null ? ' · ${party.name}' : ''}',
+      allSelected: all,
+      selectAllLabel: 'Select all (${rows.length})',
+      emptyText: 'Tap bills to select them',
+      onSelectAll: () => c.selectAllBills(rows),
+      onClear: c.clearBillPicked,
+      onWhatsApp: c.whatsAppPickedBills,
+      actions: <BulkAction>[
+        BulkAction(
+          'List',
+          'file',
+          c.sharePickedBillsList,
+          key: const ValueKey<String>('bShareList'),
+        ),
+        BulkAction(
+          'PDFs',
+          'share',
+          c.sharePickedBillsEach,
+          key: const ValueKey<String>('bShareEach'),
+        ),
+        // One PDF each with a layout changed for this share only.
+        BulkAction(
+          'Layout',
+          'edit',
+          c.customizePickedBills,
+          key: const ValueKey<String>('bShareCustom'),
+        ),
       ],
     );
   }
@@ -788,17 +922,7 @@ class BillDetailScreen extends ConsumerWidget {
     final bool r = b.kind == 'recv';
     // Paid / settled in Tally: nothing to collect, pay or remind.
     final bool settled = b.st == 'settled';
-    final PdfInfo info = PdfInfo(
-      party: b.party,
-      no: b.no,
-      date: b.bill,
-      due: b.due,
-      total: b.billAmt ?? b.amt,
-      kind: r ? 'Sales bill' : 'Purchase bill',
-      city: b.city,
-      recv: r,
-      lines: b.lines.isNotEmpty ? b.lines : c.repo.billLines(b.key),
-    );
+    final PdfInfo info = c.billPdfInfo(b);
     final ShareDoc invoice = docInvoice(info, c.companyName);
     final Reminder? rem = c.reminderFor(b);
     void share() => c.shareDoc(invoice);
@@ -863,7 +987,7 @@ class BillDetailScreen extends ConsumerWidget {
       children: <Widget>[
         BackNav(actions: <Widget>[CBtn('share', onTap: share)]),
         const H1('Bill details', afterNav: true),
-        Sub('${b.no} · ${r ? 'Sales bill' : 'Purchase bill'}'),
+        Sub('${b.no} · ${r ? 'Sales' : 'Purchase'}'),
         Glass(
           padding: const EdgeInsets.all(18),
           child: Column(
@@ -973,10 +1097,10 @@ class BillDetailScreen extends ConsumerWidget {
         const Sec('Bill information'),
         KvList(<(String, String, bool)>[
           ('Bill number', b.no, false),
-          ('Bill type', r ? 'Sales bill' : 'Purchase bill', false),
+          ('Bill type', r ? 'Sales' : 'Purchase', false),
           ('Bill date', b.bill, false),
-          ('Pay by', b.due, false),
-          ('Credit time', b.credit, false),
+          ('Due date', b.due, false),
+          ('Credit period', b.credit, false),
           if (!settled && b.billAmt != null && b.billAmt != b.amt)
             ('Bill amount', inr(b.billAmt), false),
           ('Status', b.txt, false),
@@ -1002,10 +1126,10 @@ class _OutGraph extends ConsumerWidget {
     final List<ChartPoint> pts;
     if (byAge) {
       const List<String> labels = <String>[
-        'On time',
+        'Not due',
         '1–30 days',
         '31–60 days',
-        '60+ days',
+        'Above 60 days',
       ];
       pts = <ChartPoint>[
         for (int i = 0; i < 4; i++) ChartPoint(labels[i], sm.ageing[i]),
@@ -1035,7 +1159,7 @@ class _OutGraph extends ConsumerWidget {
       report: Report(
         key,
         'accounts',
-        byAge ? 'How late?' : 'By party',
+        byAge ? 'Ageing' : 'By Party',
         recv ? 'Receivable' : 'Payable',
         'chart',
         recv ? 'receipt' : 'payment',
@@ -1056,7 +1180,7 @@ class _OutGraph extends ConsumerWidget {
       children: <Widget>[
         Seg(
           margin: const EdgeInsets.only(bottom: 12),
-          items: const <String>['By age', 'By party'],
+          items: const <String>['By Ageing', 'By Party'],
           selected: byAge ? 0 : 1,
           onPick: (int i) =>
               c.update(() => c.outChart = i == 0 ? 'age' : 'party'),
@@ -1078,7 +1202,7 @@ class _OutGraph extends ConsumerWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(6, 10, 6, 0),
               child: Text(
-                'Days late are counted from each bill\'s due date.',
+                'Overdue days are counted from each bill\'s due date.',
                 style: ts(12.5, c: p.ink3),
               ),
             ),

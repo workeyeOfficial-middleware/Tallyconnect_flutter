@@ -27,14 +27,17 @@ import '../core/design/tc_palette.dart';
 import '../core/storage/assistant_key_store.dart';
 import '../core/storage/local_storage.dart';
 import '../core/utils/format.dart';
+import '../core/utils/periods.dart';
 import '../data/accounting.dart' show voucherKind;
 import '../data/api/adapters.dart' show kNotifTarget;
+import '../data/ledger_location.dart';
 import '../data/mock/mock_data.dart';
 import '../data/models/models.dart';
 import '../data/repositories/api_tally_repository.dart' show DataSet;
 import '../data/repositories/demo_repository.dart';
 import '../data/repositories/tally_repository.dart';
 import '../data/repositories/team_admin.dart';
+import '../core/share/bill_layout.dart';
 import '../core/share/doc_exporter.dart';
 import '../core/share/links.dart';
 import '../core/share/report_data.dart';
@@ -277,7 +280,7 @@ const List<NotifPref> kNotifPrefs = <NotifPref>[
   NotifPref(
     'phone.due',
     'Payment due reminders',
-    '3 days before a bill is due (on this phone)',
+    'Before / after a bill is due, as set in Payment reminders (on this phone)',
     'Bills and payments',
     'calendar',
     'payment',
@@ -714,19 +717,9 @@ class AppController extends ChangeNotifier {
   }
 
   void _load() {
-    final Object? pg = store.load<Object?>(LocalStorage.kPages, null);
-    if (pg is Map) {
-      pg.forEach((Object? k, Object? v) {
-        if (k is String && v is List) {
-          pagesByWs[k] = v
-              .map(
-                (Object? e) =>
-                    e is List ? e.whereType<String>().toList() : <String>[],
-              )
-              .toList();
-        }
-      });
-    }
+    pagesByWs.addAll(
+      _pagesFrom(store.load<Object?>(LocalStorage.kPages, null)),
+    );
     _addSalesCardOnce();
     page = (store.load<Object?>(LocalStorage.kPage, 0) as num?)?.toInt() ?? 0;
     tabOrder = store.loadTabOrder();
@@ -738,17 +731,9 @@ class AppController extends ChangeNotifier {
         if (k is String) listPrefs[k] = ListPref.fromJson(v);
       });
     }
-    final Object? hw = store.load<Object?>(LocalStorage.kHidden, null);
-    if (hw is Map) {
-      hw.forEach((Object? k, Object? v) {
-        if (k is String && v is List) {
-          hiddenW[k] = v
-              .map(HiddenCard.fromJson)
-              .whereType<HiddenCard>()
-              .toList();
-        }
-      });
-    }
+    hiddenW.addAll(
+      _hiddenFrom(store.load<Object?>(LocalStorage.kHidden, null)),
+    );
     preset = store.load<String>(LocalStorage.kPreset, 'aurora');
     if (!kLookDefs.containsKey(preset)) preset = 'aurora';
     accent = store.load<String>(LocalStorage.kAccent, 'look');
@@ -805,6 +790,8 @@ class AppController extends ChangeNotifier {
         ? rm.map(Reminder.fromJson).whereType<Reminder>().toList()
         : <Reminder>[];
     prefs['due'] = store.load<Object?>(LocalStorage.kAutoRemind, true) != false;
+    final Object? rs = store.load<Object?>(LocalStorage.kRemSettings, null);
+    if (rs is Map) remSettings = ReminderSettings.fromJson(rs);
     prefs['lowStock'] =
         store.load<Object?>(LocalStorage.kLowStockOn, true) != false;
     final Object? mi = store.load<Object?>(LocalStorage.kMemberInfo, null);
@@ -1513,6 +1500,7 @@ class AppController extends ChangeNotifier {
         DateTime(t.year, t.month, 0),
       ),
       'lastFy' => (DateTime(fy.year - 1, 4), DateTime(fy.year, 4, 0)),
+      'today' || 'yesterday' || 'week' || 'next' => stdPeriodRange(k, t)!,
       _ => (fy, t),
     };
   }
@@ -1524,11 +1512,16 @@ class AppController extends ChangeNotifier {
     final FinPeriods? p = finPeriods;
     if (_finCalendar) {
       final DateTime t = _day(today);
+      // Any dates: the standard periods (Tally's financial year terms).
       return <(String, String)>[
-        ('fy', 'This year'),
+        ('today', 'Today'),
+        ('yesterday', 'Yesterday'),
+        ('week', 'Last 7 days'),
         ('month', 'This month'),
         ('lastMonth', _mShort(DateTime(t.year, t.month - 1))),
-        ('lastFy', 'Last year'),
+        ('next', 'Next month'),
+        ('fy', 'Current financial year'),
+        ('lastFy', 'Previous financial year'),
       ];
     }
     final FinSnapshot? l = p?.latest;
@@ -1543,9 +1536,11 @@ class AppController extends ChangeNotifier {
       if (p.has(prevMonthEnd)) {
         out.add(('lastMonth', 'End of ${_mShort(prevMonthEnd)}'));
       }
-      if (p.has(lastFyEnd)) out.add(('lastFy', 'Last year end'));
+      if (p.has(lastFyEnd)) {
+        out.add(('lastFy', 'Previous financial year end'));
+      }
     } else {
-      out.add(('fy', 'This year'));
+      out.add(('fy', 'Current financial year'));
       if (_finValid(_monthStart(l.asOn), l.asOn)) {
         out.add(('month', 'This month'));
       }
@@ -1555,7 +1550,7 @@ class AppController extends ChangeNotifier {
       final FinSnapshot? lastFy = p.snapshots
           .where((FinSnapshot s) => _day(s.asOn) == _day(lastFyEnd))
           .firstOrNull;
-      if (lastFy != null) out.add(('lastFy', 'Last year'));
+      if (lastFy != null) out.add(('lastFy', 'Previous financial year'));
     }
     if (p.snapshots.where((FinSnapshot s) => s.monthEnd).length > 1) {
       out.add(('pick', 'Pick month'));
@@ -1788,8 +1783,11 @@ class AppController extends ChangeNotifier {
           salesPreset = 'custom';
         }
       } else if (kSalesPresets.any(
-        ((String, String) p) => p.$1 == sp['preset'],
-      )) {
+            ((String, String) p) => p.$1 == sp['preset'],
+          ) ||
+          // Periods chosen before the standard list (still worked out).
+          sp['preset'] == 'lastMonth' ||
+          sp['preset'] == 'last12') {
         salesPreset = sp['preset']! as String;
       }
     }
@@ -2002,6 +2000,10 @@ class AppController extends ChangeNotifier {
     ApiErrorKind.notFound when e.body is! Map =>
       'Check-in is not available on the server yet. Ask your admin to '
           'update the TallyConnect server.',
+    // The server says what is missing (e.g. check-in rules not set up).
+    ApiErrorKind.server
+        when e.body is Map && (e.body! as Map)['code'] == 'not_ready' =>
+      e.userMessage,
     // e.g. the attendance tables were not created on the database.
     ApiErrorKind.server =>
       'Check-in is not set up on the server yet (server error). Ask your '
@@ -2200,6 +2202,8 @@ class AppController extends ChangeNotifier {
 
   void openAttendance() {
     attHist = null;
+    attView = 'list';
+    attCalDay = null;
     go('attendance');
   }
 
@@ -2257,6 +2261,31 @@ class AppController extends ChangeNotifier {
 
   void setAttTeamFilter(String k) => _set(() => attTeamFilter = k);
 
+  /// Team attendance view: `cards`, `table` or `board` (columns by
+  /// status); kept on the phone.
+  String get attTeamView {
+    final Object? v = store.load<Object?>(LocalStorage.kAttTeamView, null);
+    return v is String && <String>['cards', 'table', 'board'].contains(v)
+        ? v
+        : 'cards';
+  }
+
+  void setAttTeamView(String v) {
+    store.save(LocalStorage.kAttTeamView, v);
+    _set();
+  }
+
+  /// Team attendance on [d] (never after today).
+  void pickAttDay(DateTime d) {
+    final DateTime t = _day(today);
+    final DateTime x = _day(d);
+    _set(() {
+      attTeamDate = x.isAfter(t) ? t : x;
+      attTeam = null;
+    });
+    unawaited(loadAttTeam());
+  }
+
   List<AttMember> get attTeamRows {
     final List<AttMember> all = attTeam?.members ?? const <AttMember>[];
     return switch (attTeamFilter) {
@@ -2280,6 +2309,8 @@ class AppController extends ChangeNotifier {
     attMemberId = m.userId;
     attMemberName = attName(m.userId, m.username);
     attHist = null;
+    attView = 'list';
+    attCalDay = null;
     final DateTime d = attDay;
     attFrom = d.subtract(const Duration(days: 6));
     attTo = d;
@@ -2298,6 +2329,276 @@ class AppController extends ChangeNotifier {
       ymd(attTeam?.date ?? DateTime(0)) == ymd(_day(today))
       ? attTeam?.members.where((AttMember m) => m.userId == userId).firstOrNull
       : null;
+
+  // ------------------------------------------- who checks in (admin)
+  // Sales Team → Check-in rules: each member's position, the positions
+  // that do not check in (Manager, Director…) and, per person, "always"
+  // or "exempt". The server applies them: exempt members are not asked to
+  // check in and never count as absent.
+
+  AttRules? attRules;
+  bool attRulesBusy = false;
+  String? attRulesError;
+
+  /// The member being edited (sheet `attRuleMember`).
+  AttRuleMember? attRuleEdit;
+
+  void openAttRules() {
+    if (!isAdmin) return;
+    go('attRules');
+    unawaited(loadAttRules());
+  }
+
+  Future<void> loadAttRules() async {
+    if (!isAdmin || demo || !repo.isRemote) return;
+    _set(() {
+      attRulesBusy = true;
+      attRulesError = null;
+    });
+    try {
+      final AttRules r = await repo.attendanceRules();
+      _set(() => attRules = r);
+    } on ApiException catch (e) {
+      _set(() => attRulesError = _attErr(e));
+    } finally {
+      _set(() => attRulesBusy = false);
+    }
+  }
+
+  Future<void> _saveRules(Future<AttRules> Function() call, String done) async {
+    if (attRulesBusy) return;
+    _set(() {
+      attRulesBusy = true;
+      attRulesError = null;
+    });
+    try {
+      final AttRules r = await call();
+      _set(() => attRules = r);
+      say(done);
+      // The team views show the new rules.
+      unawaited(loadAttTeam());
+    } on ApiException catch (e) {
+      _set(() => attRulesError = _attErr(e));
+      say(_attErr(e));
+    } finally {
+      _set(() => attRulesBusy = false);
+    }
+  }
+
+  /// A position does / does not check in (the whole list is saved).
+  Future<void> toggleExemptPosition(String position) {
+    final List<String> cur = List<String>.of(
+      attRules?.exemptPositions ?? const <String>[],
+    );
+    final bool on = attRules?.exemptPosition(position) ?? false;
+    if (on) {
+      cur.removeWhere(
+        (String x) => x.toLowerCase() == position.trim().toLowerCase(),
+      );
+    } else {
+      cur.add(position.trim());
+    }
+    return _saveRules(
+      () => repo.saveExemptPositions(cur),
+      on ? '$position checks in' : '$position does not check in',
+    );
+  }
+
+  void editAttRuleMember(AttRuleMember m) {
+    form['arPosition'] = m.position ?? '';
+    form['arRule'] = m.rule;
+    _set(() {
+      attRuleEdit = m;
+      overlay = 'attRuleMember';
+    });
+  }
+
+  /// Saves the edited member's position and rule.
+  Future<void> saveAttRuleMember(String rule) async {
+    final AttRuleMember? m = attRuleEdit;
+    if (m == null) return;
+    final String pos = f('arPosition').trim();
+    await _saveRules(
+      () => repo.saveAttendanceMember(
+        m.userId,
+        position: pos.isEmpty ? null : pos,
+        clearPosition: pos.isEmpty,
+        rule: rule,
+      ),
+      'Saved for ${attName(m.userId, m.username)}',
+    );
+    if (attRulesError == null) _set(() => overlay = null);
+  }
+
+  // ------------------------------------- employee attendance (admin)
+  // Sales Team → Employee attendance: each member's days present, hours,
+  // leave and absences in From–To (at most 92 days), one card each.
+
+  AttSummary? attSum;
+  bool attSumBusy = false;
+  String? attSumError;
+  DateTime? attSumFrom, attSumTo;
+
+  /// `today` | `yesterday` | `week` | `month` | `lastMonth` | `range`.
+  String attSumPreset = 'month';
+  int _attSumReq = 0;
+
+  static const List<(String, String)> kAttSumPresets = <(String, String)>[
+    ('today', 'Today'),
+    ('yesterday', 'Yesterday'),
+    ('week', 'Last 7 days'),
+    ('month', 'This month'),
+    ('lastMonth', 'Last month'),
+  ];
+
+  (DateTime, DateTime) get attSumRange {
+    final DateTime t = _day(today);
+    if (attSumPreset == 'range' && attSumFrom != null && attSumTo != null) {
+      return (attSumFrom!, attSumTo!);
+    }
+    if (attSumPreset == 'lastMonth') {
+      return (DateTime(t.year, t.month - 1), DateTime(t.year, t.month, 0));
+    }
+    return stdPeriodRange(attSumPreset, t) ?? (DateTime(t.year, t.month), t);
+  }
+
+  void openAttEmployees() {
+    if (!isAdmin) return;
+    go('attEmployees');
+    unawaited(loadAttSummary());
+  }
+
+  void setAttSumPreset(String k) {
+    if (k == 'range') {
+      openRange('attsum');
+      return;
+    }
+    _set(() => attSumPreset = k);
+    unawaited(loadAttSummary());
+  }
+
+  Future<void> loadAttSummary() async {
+    if (!isAdmin || demo || !repo.isRemote) return;
+    final (DateTime from, DateTime to) = attSumRange;
+    final int req = ++_attSumReq;
+    _set(() {
+      attSumBusy = true;
+      attSumError = null;
+    });
+    try {
+      final AttSummary s = await repo.attendanceSummary(from: from, to: to);
+      if (req != _attSumReq) return;
+      _set(() => attSum = s);
+    } on ApiException catch (e) {
+      if (req != _attSumReq) return;
+      _set(() {
+        attSum = null;
+        attSumError = _attErr(e);
+      });
+    } finally {
+      if (req == _attSumReq) _set(() => attSumBusy = false);
+    }
+  }
+
+  /// An employee card → their attendance (same From–To) and leave.
+  void openAttSumMember(AttSumRow r) {
+    final (DateTime from, DateTime to) = attSumRange;
+    attMemberId = r.userId;
+    attMemberName = attName(r.userId, r.username);
+    attHist = null;
+    attFrom = from;
+    attTo = to;
+    attView = 'list';
+    go('attMember');
+  }
+
+  // ----------------------------------------- history: list / calendar
+  /// `list` (days, newest first) or `calendar` (a month).
+  String attView = 'list';
+
+  /// The month the calendar shows (its first day).
+  DateTime? attMonth;
+
+  /// The day tapped on the calendar (its details below it).
+  DateTime? attCalDay;
+
+  void setAttView(String v) {
+    if (v == attView) return;
+    if (v == 'calendar') {
+      final DateTime t = _day(today);
+      final DateTime m =
+          attMonth ?? DateTime(attRange.$2.year, attRange.$2.month);
+      _showMonth(
+        DateTime(m.year, m.month).isAfter(t) ? DateTime(t.year, t.month) : m,
+      );
+    } else {
+      _set(() => attView = 'list');
+    }
+  }
+
+  void _showMonth(DateTime m) {
+    final DateTime t = _day(today);
+    final DateTime end = DateTime(m.year, m.month + 1, 0);
+    _set(() {
+      attView = 'calendar';
+      attMonth = DateTime(m.year, m.month);
+      attFrom = attMonth;
+      attTo = end.isAfter(t) ? t : end;
+      attCalDay = null;
+      attHist = null;
+    });
+    unawaited(loadAttHistory());
+  }
+
+  /// The month before / after (never after this month).
+  void shiftAttMonth(int n) {
+    final DateTime t = _day(today);
+    final DateTime m0 = attMonth ?? DateTime(t.year, t.month);
+    final DateTime m = DateTime(m0.year, m0.month + n);
+    if (m.isAfter(DateTime(t.year, t.month))) return;
+    _showMonth(m);
+  }
+
+  /// The person whose history is on screen must check in (exempt people
+  /// are never shown as absent): own login, or the admin's member view.
+  bool get attPersonTracked {
+    if (screen != 'attMember') return !(attMe?.exempt ?? false);
+    final String? id = attMemberId;
+    final bool? fromRules = attRules?.members
+        .where((AttRuleMember m) => m.userId == id)
+        .firstOrNull
+        ?.required;
+    final bool? fromSum = attSum?.members
+        .where((AttSumRow m) => m.userId == id)
+        .firstOrNull
+        ?.required;
+    final bool? fromDay = attTeam?.members
+        .where((AttMember m) => m.userId == id)
+        .firstOrNull
+        ?.required;
+    return fromRules ?? fromSum ?? fromDay ?? true;
+  }
+
+  /// The admin's member view: that person's position (when known).
+  String? get attMemberPosition {
+    final String? id = attMemberId;
+    return attRules?.members
+            .where((AttRuleMember m) => m.userId == id)
+            .firstOrNull
+            ?.position ??
+        attSum?.members
+            .where((AttSumRow m) => m.userId == id)
+            .firstOrNull
+            ?.position ??
+        attTeam?.members
+            .where((AttMember m) => m.userId == id)
+            .firstOrNull
+            ?.position;
+  }
+
+  void pickAttCalDay(DateTime d) => _set(
+    () => attCalDay = attCalDay != null && ymd(attCalDay!) == ymd(d) ? null : d,
+  );
 
   /// Home → profile: name, today's check-in, Check in / Check out.
   void openProfile() {
@@ -3063,11 +3364,11 @@ class AppController extends ChangeNotifier {
   // Reports → Sales analytics: one dashboard per period, worked out on the
   // server from the synced vouchers (team users: only their vouchers).
 
-  static const List<(String, String)> kSalesPresets = <(String, String)>[
-    ('month', 'This month'),
-    ('lastMonth', 'Last month'),
-    ('fy', 'This FY'),
-    ('last12', '12 months'),
+  /// The standard periods (All time is not offered: the dashboard covers
+  /// at most 5 years) and a custom range.
+  static final List<(String, String)> kSalesPresets = <(String, String)>[
+    for (final (String, String) p in kStdPeriods)
+      if (p.$1 != 'all') p,
   ];
 
   /// A preset id from [kSalesPresets] or `custom` ([salesCustom]).
@@ -3084,6 +3385,10 @@ class AppController extends ChangeNotifier {
   /// The dates the dashboard shows (both included; FY from 1 April).
   DateRange get salesRange {
     final DateTime t = DateTime(today.year, today.month, today.day);
+    final (DateTime, DateTime)? std = salesPreset == 'month'
+        ? null
+        : stdPeriodRange(salesPreset, t);
+    if (std != null) return DateRange(std.$1, std.$2);
     return switch (salesPreset) {
       'lastMonth' => DateRange(
         DateTime(t.year, t.month - 1),
@@ -3591,6 +3896,8 @@ class AppController extends ChangeNotifier {
     });
     if (party != null) pickEmailParty(party);
     unawaited(_loadEmTemplates());
+    // Customers due for a reminder today by the settings (listed first).
+    unawaited(loadDueToday());
   }
 
   Future<void> _loadEmTemplates() async {
@@ -3622,7 +3929,9 @@ class AppController extends ChangeNotifier {
     return (g ?? '').isEmpty ? null : g;
   }
 
-  void pickEmailParty(String party) {
+  /// [only]: the bills to tick (those due for a reminder today); all
+  /// pending bills when null.
+  void pickEmailParty(String party, {Set<String>? only}) {
     final List<Bill> bills =
         repo
             .receivables()
@@ -3638,7 +3947,14 @@ class AppController extends ChangeNotifier {
       emParty = party;
       emLedger = ledger;
       emBills = bills;
-      emPicked = <String>{for (final Bill b in bills) b.no};
+      emPicked = <String>{
+        for (final Bill b in bills)
+          if (only == null || only.contains(b.no)) b.no,
+      };
+      // None of them on the phone yet (not synced): all, as before.
+      if (emPicked.isEmpty) {
+        emPicked = <String>{for (final Bill b in bills) b.no};
+      }
       emPreview = null;
       emResult = null;
       emStep = 'bills';
@@ -3826,6 +4142,122 @@ class AppController extends ChangeNotifier {
     _set(() => _remRetrying.remove(l.id));
     say(r.message);
     await loadReminderHistory(l.ledgerGuid, force: true);
+  }
+
+  // -------------------------------------- payment reminder settings
+  // When payment reminders are due — before / after / both the due date,
+  // how many days, at what hour — and how they go out: Automatic (the
+  // server emails each party at that hour) or Manual (the team sends them
+  // from the parties due today). Set by the admin per company; the phone's
+  // due-date alerts follow the same days and hour.
+
+  /// The settings in use (last ones read; defaults before the first read).
+  ReminderSettings remSettings = const ReminderSettings();
+
+  /// Being edited in the sheet (admin), null when not editing.
+  ReminderSettings? remDraft;
+  bool remSetBusy = false;
+  String? remSetError;
+
+  /// Parties due for a reminder today by the settings (null: not loaded).
+  List<DueReminder>? dueToday;
+
+  Future<void> loadReminderSettings({bool quiet = false}) async {
+    if (emBlocked != null) return;
+    try {
+      final ReminderSettings s = await repo.reminderSettings();
+      _set(() {
+        remSettings = s;
+        remSetError = null;
+      });
+      store.save(LocalStorage.kRemSettings, s.toJson());
+      _dueSig = '';
+      _armDueAlerts();
+    } on ApiException catch (x) {
+      if (!quiet) _set(() => remSetError = _remError(x));
+    }
+  }
+
+  /// Settings → Payment reminders (everyone sees them; the admin edits).
+  void openReminderSettings() {
+    final String? why = emBlocked;
+    if (why != null) {
+      say(why);
+      return;
+    }
+    _set(() {
+      remSetError = null;
+      remDraft = remSettings;
+      overlay = 'remSettings';
+    });
+    unawaited(
+      loadReminderSettings().then((_) {
+        if (overlay == 'remSettings' && !remSetBusy) {
+          _set(() => remDraft = remSettings);
+        }
+      }),
+    );
+  }
+
+  void editRemDraft(ReminderSettings Function(ReminderSettings) fn) {
+    final ReminderSettings? d = remDraft;
+    if (d == null || !remSettings.canEdit) return;
+    _set(() => remDraft = fn(d));
+  }
+
+  Future<void> saveReminderSettings() async {
+    final ReminderSettings? d = remDraft;
+    if (d == null || remSetBusy || !remSettings.canEdit) return;
+    _set(() {
+      remSetBusy = true;
+      remSetError = null;
+    });
+    try {
+      final ReminderSettings s = await repo.saveReminderSettings(d);
+      store.save(LocalStorage.kRemSettings, s.toJson());
+      _set(() {
+        remSetBusy = false;
+        remSettings = s;
+        remDraft = null;
+        overlay = null;
+      });
+      _dueSig = '';
+      _armDueAlerts();
+      say(
+        s.automatic
+            ? 'Saved · reminders are emailed automatically'
+            : 'Saved · reminders are sent by your team',
+      );
+    } on ApiException catch (x) {
+      _set(() {
+        remSetBusy = false;
+        remSetError = _remError(x);
+      });
+    }
+  }
+
+  /// `3 days before and 1 day after the due date, at 10:00 AM`.
+  String remRuleText(ReminderSettings s) {
+    String d(int n) => n == 1 ? '1 day' : '$n days';
+    final List<String> parts = <String>[
+      if (s.before) '${d(s.beforeDays)} before',
+      if (s.after)
+        '${d(s.afterDays)} after'
+            '${s.repeatDays > 0 ? ' (then every ${d(s.repeatDays)})' : ''}',
+    ];
+    return '${parts.join(' and ')} the due date, at '
+        '${clock(DateTime(2000, 1, 1, s.sendHour))}';
+  }
+
+  /// Loads the parties due for a reminder today (manual sending).
+  Future<void> loadDueToday() async {
+    if (emBlocked != null) return;
+    try {
+      final List<DueReminder> l = await repo.dueReminders();
+      _set(() => dueToday = l);
+    } on ApiException {
+      _set(() => dueToday = const <DueReminder>[]);
+    }
   }
 
   // ------------------------------------------ reminder templates (admin)
@@ -4592,6 +5024,7 @@ class AppController extends ChangeNotifier {
       'fcast' => DateRange(cfStart, cfEnd),
       'einv' => DateRange(einvRange.$1, einvRange.$2),
       'att' => DateRange(attRange.$1, attRange.$2),
+      'attsum' => DateRange(attSumRange.$1, attSumRange.$2),
       _ => range,
     };
     form['drFrom'] = ymd(cur?.from ?? DateTime(t.year, t.month));
@@ -4600,14 +5033,9 @@ class AppController extends ChangeNotifier {
   }
 
   // ------------------------------------------------ one-row period bar
-  /// The period row shown on Vouchers, Reports and Outstanding (plus its
-  /// "Date range" option).
-  static const List<(String, String)> kPeriodBar = <(String, String)>[
-    ('all', 'All time'),
-    ('month', 'This month'),
-    ('week', 'Last 7 days'),
-    ('today', 'Today'),
-  ];
+  /// The period row shown on Vouchers, Reports and Outstanding: the
+  /// standard periods (plus its "Custom date range" option).
+  static const List<(String, String)> kPeriodBar = kStdPeriods;
 
   /// Quick periods applied as a date range on pages whose filter is a range
   /// (Reports: Last 7 days / Today; Outstanding: all but All time).
@@ -4615,12 +5043,9 @@ class AppController extends ChangeNotifier {
 
   /// The range a quick period stands for (both days included).
   DateRange quickRange(String k) {
-    final DateTime t = DateTime(today.year, today.month, today.day);
-    return switch (k) {
-      'today' => DateRange(t, t),
-      'week' => DateRange(t.subtract(const Duration(days: 6)), t),
-      _ => DateRange(DateTime(t.year, t.month), t),
-    };
+    final (DateTime, DateTime) r =
+        stdPeriodRange(k, today) ?? stdPeriodRange('month', today)!;
+    return DateRange(r.$1, r.$2);
   }
 
   bool _sameRange(DateRange? a, DateRange b) =>
@@ -4641,7 +5066,7 @@ class AppController extends ChangeNotifier {
             ? fromRange(true)
             : (repPeriod == 'all' ? 'all' : 'month'),
       'out' => fromRange(outRange),
-      _ => vPeriod,
+      _ => vPeriod == 'range' ? fromRange(true) : vPeriod,
     };
   }
 
@@ -4651,7 +5076,14 @@ class AppController extends ChangeNotifier {
   void pickPeriod(String target, String k) {
     switch (target) {
       case 'v':
-        update(() => vPeriod = k);
+        // All time / This month / Last 7 days / Today natively; the other
+        // standard periods as their date range.
+        if (const <String>['all', 'month', 'week', 'today'].contains(k)) {
+          _quickPeriod.remove('v');
+          update(() => vPeriod = k);
+          return;
+        }
+        _applyQuick('v', k);
       case 'rep':
         if (k == 'all' || k == 'month') {
           _quickPeriod.remove('rep');
@@ -4676,6 +5108,7 @@ class AppController extends ChangeNotifier {
       range = r;
       if (target == 'rep') repPeriod = 'range';
       if (target == 'out') outRange = true;
+      if (target == 'v') vPeriod = 'range';
     });
     store.save(LocalStorage.kDateRange, <String, String>{
       'from': ymd(r.from),
@@ -4735,7 +5168,7 @@ class AppController extends ChangeNotifier {
     switch (rangeFor) {
       case 'fin':
         return _finRangeError(a, b);
-      case 'att':
+      case 'att' || 'attsum':
         if (b.difference(a).inDays >= kAttMaxDays) {
           return 'Choose at most $kAttMaxDays days';
         }
@@ -4786,6 +5219,17 @@ class AppController extends ChangeNotifier {
         });
       }
       unawaited(loadAttHistory());
+      return;
+    }
+    // Employee attendance: its own From–To.
+    if (rangeFor == 'attsum') {
+      _set(() {
+        attSumPreset = 'range';
+        attSumFrom = r.from;
+        attSumTo = r.to;
+        overlay = null;
+      });
+      unawaited(loadAttSummary());
       return;
     }
     // Cash flow forecast: this week to the To date's week.
@@ -5304,6 +5748,7 @@ class AppController extends ChangeNotifier {
 
   // ------------------------------------------------------------------ flow
   void startFlow(String type, [Map<String, String>? patch]) {
+    editing = null;
     if (patch != null) _set(() => form.addAll(patch));
     go('flow', <String, Object?>{'flowType': type, 'flowStep': 0});
   }
@@ -5513,8 +5958,15 @@ class AppController extends ChangeNotifier {
       return;
     }
     final EntryDraft d = draftOf();
+    final EditTarget? edit = editing;
     _set(() => busy = true);
-    final SubmitResult r = await repo.submitEntry(d);
+    final SubmitResult r = edit == null
+        ? await repo.submitEntry(d)
+        : await repo.submitEdit(
+            d,
+            queueId: edit.queueId,
+            voucherGuid: edit.guid,
+          );
     _set(() => busy = false);
     if (!r.ok) {
       say(r.message.isEmpty ? 'Could not save. Try again.' : r.message);
@@ -5522,6 +5974,7 @@ class AppController extends ChangeNotifier {
     }
     final String pf = kFlowTypes[d.type]!.p;
     _set(() {
+      editing = null;
       form = <String, String>{
         ...form,
         for (final String k in <String>[
@@ -5540,15 +5993,294 @@ class AppController extends ChangeNotifier {
       if (d.type == 'sales' || d.type == 'purchase') lines[d.type] = <Line>[];
       if (d.type == 'journal') jl = <JLine>[];
     });
-    selectTab(0);
+    if (edit == null) {
+      selectTab(0);
+    } else {
+      // Back to where the edit started (Activity / the voucher).
+      back();
+    }
     say(r.message.isEmpty ? 'Saved! It will reach Tally by itself' : r.message);
   }
 
+  // ------------------------------------------------------------ edit entries
+  /// The entry / Tally voucher the open form changes (null: a new entry).
+  EditTarget? editing;
+
+  /// Form fields an edit fills in (the rest keep the user's defaults).
+  static const List<String> _kEditKeys = <String>[
+    'Date',
+    'No',
+    'Party',
+    'Due',
+    'Note',
+    'Amt',
+    'Ref',
+    'Bank',
+    'Utr',
+    'Acc',
+    'PayNote',
+  ];
+
+  /// Why [a] cannot be edited here, or null.
+  String? actEditBlocker(Act a) {
+    if (demo) return kDemoWriteBlocked;
+    if (!repo.isRemote || a is! QueueAct || a.queueId <= 0) {
+      return 'Only entries saved to the server can be edited';
+    }
+    if (!kFlowTypes.containsKey(a.voucherType.toLowerCase())) {
+      return 'This entry type cannot be edited here';
+    }
+    return null;
+  }
+
+  /// Opens an entry made here in its form, filled in as it was sent.
+  /// Waiting / failed entries are changed in place on the server; one
+  /// Tally already has is changed there (one ALTER, never a new voucher).
+  void editAct(Act a) {
+    final String? why = actEditBlocker(a);
+    if (why != null) {
+      say(why);
+      return;
+    }
+    final QueueAct q = a as QueueAct;
+    final Map<String, Object?> pl = q.payload;
+    final String type = q.voucherType.toLowerCase();
+    Map<Object?, Object?> m(Object? o) =>
+        o is Map ? o : const <Object?, Object?>{};
+    String s(Object? o) => o == null ? '' : '$o'.trim();
+    String n(Object? o) {
+      final num? v = o is num ? o : num.tryParse(s(o));
+      return v == null || v == 0 ? '' : _plainNum(v);
+    }
+
+    final Map<Object?, Object?> pay = m(pl['payment']);
+    final Map<Object?, Object?> tr = m(pl['transfer']);
+    String ref() {
+      final String r = s(pl['reference_no']);
+      return r.toUpperCase().startsWith('MOBILE-') ? '' : r; // made by server
+    }
+
+    final Map<String, String> f = <String, String>{
+      'Date': _ymd(pl['voucher_date']),
+      'No': s(pl['voucher_no']),
+      'Note': s(pl['narration']),
+    };
+    List<Line>? items;
+    List<JLine>? journal;
+    String? mode;
+    switch (type) {
+      case 'sales' || 'purchase':
+        f['Party'] = s(pl['party_name']);
+        f['Due'] = _ymd(pl['due_date']);
+        f['Amt'] = n(pay['amount_received']);
+        mode = s(pay['payment_mode']);
+        items = <Line>[
+          for (final Object? it
+              in pl['items'] is List
+                  ? pl['items']! as List<Object?>
+                  : const <Object?>[])
+            if (it is Map)
+              Line(
+                s(it['item_name']),
+                numOf(s(it['rate'])),
+                numOf(s(it['quantity'])).round(),
+                s(it['unit']),
+                numOf(s(it['gst_rate'])),
+                guid: s(it['item_guid']).isEmpty ? null : s(it['item_guid']),
+                hsn: s(it['hsn_code']).isEmpty ? null : s(it['hsn_code']),
+                group: s(it['group']).isEmpty ? null : s(it['group']),
+              ),
+        ];
+      case 'receipt':
+        f['Party'] = s(pl['party_name']);
+        f['Amt'] = n(pl['amount_received']);
+        f['Ref'] = ref();
+        f['Acc'] = s(pay['deposit_account']);
+        f['Bank'] = s(pay['bank_name']);
+        f['Utr'] = s(pay['upi_ref']).isNotEmpty
+            ? s(pay['upi_ref'])
+            : s(pay['cheque_number']).isNotEmpty
+            ? s(pay['cheque_number'])
+            : s(pay['other_ref']);
+        mode = s(pay['payment_mode']);
+      case 'payment':
+        f['Party'] = s(pl['party_name']);
+        f['Amt'] = n(pl['amount_paid']);
+        f['Ref'] = ref();
+        f['Acc'] = s(pay['bank_account']);
+        f['Utr'] = s(pay['transaction_instrument_no']);
+        f['Bank'] = s(pay['remarks']);
+        mode = s(pay['payment_mode']);
+      case 'contra':
+        f['Party'] = s(tr['from_account']);
+        f['Acc'] = s(tr['to_account']);
+        f['Amt'] = n(tr['amount']);
+        f['Utr'] = s(tr['instrument_no']);
+      case 'journal':
+        journal = <JLine>[
+          for (final Object? e
+              in pl['ledger_entries'] is List
+                  ? pl['ledger_entries']! as List<Object?>
+                  : const <Object?>[])
+            if (e is Map)
+              JLine(
+                e['is_debit'] == true ? 'Dr' : 'Cr',
+                s(e['ledger_name']),
+                '',
+                numOf(s(e['amount'])).abs(),
+              ),
+        ];
+    }
+    // A party this entry created, not in Tally yet, is sent with it again.
+    final Map<Object?, Object?> np = m(pl['new_party']);
+    if (s(np['name']).isNotEmpty) {
+      newParties[s(np['name']).toLowerCase()] = NewParty(
+        name: s(np['name']),
+        type: s(np['type']) == 'supplier' ? 's' : 'c',
+        phone: s(np['phone']),
+        city: s(np['city']),
+      );
+    }
+    _openEdit(
+      type,
+      f,
+      items: items,
+      journal: journal,
+      mode: mode,
+      target: EditTarget(
+        queueId: q.queueId,
+        label: q.no,
+        inTally: q.status == 'ok',
+      ),
+    );
+  }
+
+  /// Why the Tally voucher [v] cannot be edited here, or null. Sales and
+  /// purchase bills made in Tally are not: the server keeps no tax / unit
+  /// detail of their items, and an edit would replace them.
+  String? voucherEditBlocker(Voucher v) {
+    if (demo) return kDemoWriteBlocked;
+    if (!repo.isRemote || v.guid == null || v.cancelled) {
+      return 'This voucher cannot be edited here';
+    }
+    final String t = (v.type ?? '').trim().toLowerCase();
+    if (t == 'sales' || t == 'purchase') {
+      return 'Sales and purchase bills made in Tally are edited in Tally '
+          '(their tax and unit details are not on the server)';
+    }
+    if (!<String>{'receipt', 'payment', 'journal', 'contra'}.contains(t)) {
+      return '${v.type ?? 'This'} vouchers cannot be edited here';
+    }
+    return null;
+  }
+
+  /// Opens a Receipt / Payment / Journal / Contra voucher from Tally in its
+  /// form, filled in from its ledger lines; saving queues one ALTER.
+  Future<void> editVoucher(Voucher v) async {
+    final String? why = voucherEditBlocker(v);
+    if (why != null) {
+      say(why);
+      return;
+    }
+    final String guid = v.guid!;
+    List<LedgerLine>? ls = repo.voucherLines(guid);
+    if (ls == null) {
+      await repo.loadVoucherLines(guid);
+      if (_disposed) return;
+      ls = repo.voucherLines(guid);
+    }
+    if (ls == null || ls.isEmpty) {
+      say('Could not load this voucher. Try again.');
+      return;
+    }
+    final String type = v.type!.trim().toLowerCase();
+    final List<LedgerLine> dr = ls.where((LedgerLine l) => l.debit).toList();
+    final List<LedgerLine> cr = ls.where((LedgerLine l) => !l.debit).toList();
+    String amt(num a) => _plainNum(a.abs());
+    String modeOf(String acc) =>
+        acc.toLowerCase().contains('cash') ? 'cash' : 'bank';
+    final Map<String, String> f = <String, String>{
+      'Date': v.date == null ? '' : _ymd(v.date!.toIso8601String()),
+      'No': v.no,
+    };
+    List<JLine>? journal;
+    String? mode;
+    if (type == 'journal') {
+      journal = <JLine>[
+        for (final LedgerLine l in ls)
+          JLine(l.debit ? 'Dr' : 'Cr', l.ledger, '', l.amt.abs()),
+      ];
+    } else {
+      // One account on each side; anything more is changed in Tally.
+      if (dr.length != 1 || cr.length != 1) {
+        say('This voucher has more than two accounts — change it in Tally');
+        return;
+      }
+      final (LedgerLine party, LedgerLine acc) = switch (type) {
+        'receipt' => (cr.first, dr.first), // party Cr, cash / bank Dr
+        'payment' => (dr.first, cr.first), // party Dr, cash / bank Cr
+        _ => (cr.first, dr.first), // contra: from Cr, to Dr
+      };
+      f['Party'] = party.ledger;
+      f['Acc'] = acc.ledger;
+      f['Amt'] = amt(acc.amt);
+      if (type != 'contra') mode = modeOf(acc.ledger);
+    }
+    _openEdit(
+      type,
+      f,
+      journal: journal,
+      mode: mode,
+      target: EditTarget(guid: guid, label: v.no, inTally: true),
+    );
+  }
+
+  void _openEdit(
+    String type,
+    Map<String, String> fields, {
+    required EditTarget target,
+    List<Line>? items,
+    List<JLine>? journal,
+    String? mode,
+  }) {
+    final String pf = kFlowTypes[type]!.p;
+    _set(() {
+      form = <String, String>{
+        ...form,
+        for (final String k in _kEditKeys) '$pf$k': '',
+        if (type == 'purchase') 'pSupInv': '',
+        for (final MapEntry<String, String> e in fields.entries)
+          '$pf${e.key}': e.value,
+      };
+      if (items != null) lines[type] = items;
+      if (journal != null) jl = journal;
+      if (mode != null && mode.isNotEmpty) modes[type] = mode;
+      editing = target;
+    });
+    go('flow', <String, Object?>{'flowType': type, 'flowStep': 0});
+  }
+
+  /// Leaves the edit without saving.
+  void cancelEdit() {
+    _set(() => editing = null);
+    back();
+  }
+
+  /// A form amount: 1500, 1499.5 → "1499.50".
+  static String _plainNum(num v) =>
+      v == v.roundToDouble() ? '${v.toInt()}' : v.toStringAsFixed(2);
+
+  static String _ymd(Object? v) {
+    final String s = v == null ? '' : '$v'.trim();
+    return RegExp(r'^\d{4}-\d{2}-\d{2}').hasMatch(s) ? s.substring(0, 10) : '';
+  }
+
+  /// Entries being sent again (button busy).
+  final Set<String> resending = <String>{};
+
   void retry(String id) {
     if (repo.isRemote) {
-      say(
-        'Sending again is not available yet — the server has no retry option',
-      );
+      unawaited(_retryRemote(id));
       return;
     }
     _set(
@@ -5569,6 +6301,40 @@ class AppController extends ChangeNotifier {
       );
       say('Sent to Tally');
     });
+  }
+
+  /// Sends a failed server entry again. The server refuses an entry Tally
+  /// already has (no second voucher) or one being sent right now.
+  Future<void> _retryRemote(String id) async {
+    if (demo) {
+      say(kDemoWriteBlocked);
+      return;
+    }
+    final Act? a = acts.where((Act x) => x.id == id).firstOrNull;
+    if (a is! QueueAct || a.queueId <= 0) {
+      say('This entry cannot be sent again');
+      return;
+    }
+    if (!resending.add(id)) return; // already sending
+    _set(() {});
+    say('Sending again…');
+    final SubmitResult r = await repo.retryEntry(a.queueId);
+    if (_disposed) return;
+    resending.remove(id);
+    _set(() {
+      acts = repo.activity();
+      if (r.ok) {
+        // Shown as waiting until the Agent reports back.
+        acts = acts
+            .map(
+              (Act x) => x.id == id && x.status == 'fail'
+                  ? x.copyWith(status: 'wait', note: '')
+                  : x,
+            )
+            .toList();
+      }
+    });
+    say(r.message.isEmpty ? 'Could not send again. Try again.' : r.message);
   }
 
   void syncAll() {
@@ -6004,7 +6770,10 @@ class AppController extends ChangeNotifier {
 
   /// Cards that take a whole row on Home.
   static bool isWideCard(String id) =>
-      id == 'newEntry' || id == 'money' || id == kSalesCard;
+      id == 'newEntry' ||
+      id == 'money' ||
+      id == kSalesCard ||
+      kTeamHomeCards.contains(id);
 
   /// Layouts saved before the Sales analytics card existed get it once,
   /// right after New Entry.
@@ -6063,20 +6832,89 @@ class AppController extends ChangeNotifier {
     return (out, h);
   }
 
-  void _savePages() => store.save(LocalStorage.kPages, pagesByWs);
+  void _savePages() => store.save(_userKey(LocalStorage.kPages), pagesByWs);
 
   void saveHid(List<HiddenCard> hid) {
     hiddenW = Map<String, List<HiddenCard>>.of(hiddenW)..[curWs.id] = hid;
-    store.save(
-      LocalStorage.kHidden,
-      hiddenW.map(
-        (String k, List<HiddenCard> v) => MapEntry<String, Object?>(
-          k,
-          v.map((HiddenCard h) => h.toJson()).toList(),
-        ),
-      ),
-    );
+    _saveHidden();
     _set();
+  }
+
+  void _saveHidden() => store.save(
+    _userKey(LocalStorage.kHidden),
+    hiddenW.map(
+      (String k, List<HiddenCard> v) => MapEntry<String, Object?>(
+        k,
+        v.map((HiddenCard h) => h.toJson()).toList(),
+      ),
+    ),
+  );
+
+  /// Saved Home pages (`{workspace: [[card ids]]}`).
+  static Map<String, List<List<String>>> _pagesFrom(Object? pg) {
+    final Map<String, List<List<String>>> out = <String, List<List<String>>>{};
+    if (pg is Map) {
+      pg.forEach((Object? k, Object? v) {
+        if (k is String && v is List) {
+          out[k] = v
+              .map(
+                (Object? e) =>
+                    e is List ? e.whereType<String>().toList() : <String>[],
+              )
+              .toList();
+        }
+      });
+    }
+    return out;
+  }
+
+  /// Saved hidden Home cards (`{workspace: [card]}`).
+  static Map<String, List<HiddenCard>> _hiddenFrom(Object? hw) {
+    final Map<String, List<HiddenCard>> out = <String, List<HiddenCard>>{};
+    if (hw is Map) {
+      hw.forEach((Object? k, Object? v) {
+        if (k is String && v is List) {
+          out[k] = v.map(HiddenCard.fromJson).whereType<HiddenCard>().toList();
+        }
+      });
+    }
+    return out;
+  }
+
+  /// Sales Team cards that can also go on Home (admin, real data).
+  static const List<String> kTeamHomeCards = <String>['attToday', 'attRules'];
+
+  bool get teamHomeCardsAvailable => isAdmin && repo.isRemote && !demo;
+
+  bool onHome(String id) => curPages().any((List<String> p) => p.contains(id));
+
+  /// Card menu → Show on Home / Remove from Home (a Sales Team card).
+  void toggleOnHome(String id) {
+    List<List<String>> pages = curPages();
+    if (onHome(id)) {
+      for (final List<String> p in pages) {
+        p.remove(id);
+      }
+      pages = cleanPages(pages).$1;
+      persistPages(pages, () => cmenu = null);
+      say('Removed from Home');
+      return;
+    }
+    if (pages.isEmpty) pages.add(<String>[]);
+    final List<String> first = pages.first;
+    // Right after New Entry / Sales analytics.
+    int at = 0;
+    for (final String k in <String>['newEntry', kSalesCard]) {
+      final int i = first.indexOf(k);
+      if (i >= 0) at = i + 1;
+    }
+    first.insert(at, id);
+    saveHid(hidList().where((HiddenCard h) => h.id != id).toList());
+    persistPages(pages, () {
+      cmenu = null;
+      page = 0;
+    });
+    say('Added to Home');
   }
 
   void persistPages(List<List<String>> pages, [VoidCallback? extra]) {
@@ -6322,8 +7160,107 @@ class AppController extends ChangeNotifier {
         return m == null
             ? null
             : CardInfo(m.name, 'person', 'team', () => openMember(m));
+      case 'fin':
+        // Reports → Financial statements tiles.
+        return switch (key) {
+          'cfcast' => CardInfo(
+            'Cash Flow Forecast',
+            'calendar',
+            'acc',
+            () => unawaited(openCashflow()),
+          ),
+          'einv' => CardInfo('E-invoices', 'receipt', 'sales', openEinvoices),
+          _ =>
+            kFinTitles[key] == null
+                ? null
+                : CardInfo(
+                    kFinTitles[key]!,
+                    'chart',
+                    'acc',
+                    () => unawaited(openStatement(key)),
+                  ),
+        };
+      case 'vtypes':
+        // Vouchers hub: one card per voucher type.
+        // Other Tally types: `type:<name>`.
+        final String t = key == 'all'
+            ? 'All vouchers'
+            : (kKinds[key]?.long ??
+                  (key.startsWith('type:') ? key.substring(5) : key));
+        return CardInfo(
+          t,
+          key == 'all' ? 'receipt' : (kKinds[key]?.ic ?? 'receipt'),
+          key == 'all' ? 'vouchers' : (kKinds[key]?.c ?? 'vouchers'),
+          () => go('vList', <String, Object?>{'vFilter': key}),
+        );
+      case 'teamCards':
+        // Sales Team: Today's check-ins, Employee attendance, Check-in
+        // rules, Leave.
+        return switch (key) {
+          'attToday' => CardInfo(
+            "Today's check-ins",
+            'clock',
+            'acc',
+            openAttTeam,
+          ),
+          'attEmployees' => CardInfo(
+            'Employee attendance',
+            'calendar',
+            'acc',
+            openAttEmployees,
+          ),
+          'attRules' => CardInfo(
+            'Check-in rules',
+            'shield',
+            'team',
+            openAttRules,
+          ),
+          'leave' => CardInfo(
+            'Leave requests',
+            'calendar',
+            'team',
+            openLeaveRequests,
+          ),
+          _ => null,
+        };
+      case 'attCards':
+        // Team attendance: one employee's day.
+        final AttMember? am = attTeam?.members
+            .where((AttMember m) => m.userId == key)
+            .firstOrNull;
+        return am == null
+            ? null
+            : CardInfo(
+                attName(am.userId, am.username),
+                'person',
+                'team',
+                () => openAttMember(am),
+              );
+      case 'outCards':
+        final bool r = key == 'recv';
+        return CardInfo(
+          r ? 'Receivable' : 'Payable',
+          r ? 'in' : 'out',
+          r ? 'receipt' : 'payment',
+          () => go('outList', <String, Object?>{
+            'outKind': key,
+            'outFilter': 'all',
+          }),
+        );
     }
     return null;
+  }
+
+  /// A card shared from its menu whose document needs its screen's data
+  /// first (a financial statement, the forecast): that screen opens and
+  /// shares it once loaded. Null when nothing waits.
+  String? pendingShare;
+
+  /// The screen of [key] takes the waiting share (once).
+  bool takePendingShare(String key) {
+    if (pendingShare != key) return false;
+    pendingShare = null;
+    return true;
   }
 
   /// `W(id)` label/icon/colour for a Home card.
@@ -6337,6 +7274,15 @@ class AppController extends ChangeNotifier {
       if (!salesHomeAvailable) return null;
       return (label: 'Sales analytics', ic: 'chart', c: 'sales');
     }
+    // Sales Team cards placed on Home (admin, real data).
+    if (id == 'attToday') {
+      if (!teamHomeCardsAvailable) return null;
+      return (label: "Today's check-ins", ic: 'clock', c: 'acc');
+    }
+    if (id == 'attRules') {
+      if (!teamHomeCardsAvailable) return null;
+      return (label: 'Check-in rules', ic: 'shield', c: 'team');
+    }
     final Shortcut? t = kShortcuts[id];
     if (t == null) return null;
     return (label: t.t, ic: t.ic, c: t.c);
@@ -6349,6 +7295,10 @@ class AppController extends ChangeNotifier {
       go('outHub');
     } else if (id == kSalesCard) {
       unawaited(openSalesAnalytics());
+    } else if (id == 'attToday') {
+      openAttTeam();
+    } else if (id == 'attRules') {
+      openAttRules();
     } else {
       openShortcut(kShortcuts[id]!);
     }
@@ -6739,6 +7689,16 @@ class AppController extends ChangeNotifier {
     final CMenu? c = cmenu;
     if (c == null) return;
     lpFired = false;
+    // A statement / the forecast: open it, it shares once loaded.
+    if (c.list == 'fin') {
+      final CardInfo? info = infoFor(c.list, c.id);
+      _set(() {
+        cmenu = null;
+        pendingShare = c.id == 'einv' ? null : c.id;
+      });
+      info?.open();
+      return;
+    }
     // A voucher shares its one complete document (same as its PDF).
     final Voucher? v = c.list == 'vouchers' ? repo.voucherByKey(c.id) : null;
     final ShareDoc? d = v == null ? docForCard(c.list, c.id) : null;
@@ -6787,12 +7747,57 @@ class AppController extends ChangeNotifier {
     fn(pr);
     listPrefs = Map<String, ListPref>.of(listPrefs)..[list] = pr;
     store.save(
-      LocalStorage.kLists,
+      _listsKey,
       listPrefs.map(
         (String k, ListPref v) => MapEntry<String, Object?>(k, v.toJson()),
       ),
     );
     _set();
+  }
+
+  /// Card order / pins / hidden cards (every page) and the Home layout
+  /// are kept per signed-in user: [base] + the user's email.
+  String _userKey(String base) => _who.isEmpty ? base : '$base|$_who';
+  String get _listsKey => _userKey(LocalStorage.kLists);
+  String? _listsFor;
+
+  /// After sign-in: this user's cards and Home pages (the first time, the
+  /// ones already on this phone carry over).
+  void _loadUserLists() {
+    final String who = _who;
+    if (who.isEmpty || _listsFor == who) return;
+    _listsFor = who;
+    final Object? lp = store.load<Object?>(_listsKey, null);
+    if (lp is! Map) {
+      store.save(
+        _listsKey,
+        listPrefs.map(
+          (String k, ListPref v) => MapEntry<String, Object?>(k, v.toJson()),
+        ),
+      );
+    } else {
+      final Map<String, ListPref> m = <String, ListPref>{};
+      lp.forEach((Object? k, Object? v) {
+        if (k is String) m[k] = ListPref.fromJson(v);
+      });
+      listPrefs = m;
+    }
+    final Object? pg = store.load<Object?>(_userKey(LocalStorage.kPages), null);
+    if (pg is Map) {
+      pagesByWs = _pagesFrom(pg);
+    } else {
+      _savePages();
+    }
+    final Object? hw = store.load<Object?>(
+      _userKey(LocalStorage.kHidden),
+      null,
+    );
+    if (hw is Map) {
+      hiddenW = _hiddenFrom(hw);
+    } else {
+      _saveHidden();
+    }
+    prefsVersion++;
   }
 
   /// The prototype's `L(list, rows, keyOf, …)`: hides hidden rows, puts
@@ -6907,7 +7912,11 @@ class AppController extends ChangeNotifier {
 
   void openCardMenu(String list, String id, Rect b) {
     // 262 px in the prototype + one 48 px row for the new Share item.
-    const double mh = 310, mw = 214;
+    // One more row for "Show on Home" (Sales Team cards).
+    final double mh = list == 'teamCards' && kTeamHomeCards.contains(id)
+        ? 358
+        : 310;
+    const double mw = 214;
     final double hgt = _screen.height, wid = _screen.width;
     double y = (b.bottom + 10 + mh < hgt - 104)
         ? b.bottom + 10
@@ -8094,6 +9103,13 @@ class AppController extends ChangeNotifier {
     await _openWhatsApp(_pickedMessage(), n);
   }
 
+  /// WhatsApp with [text] ready (WhatsApp asks whom to send it to): an AI
+  /// assistant answer or the whole conversation.
+  Future<void> shareAiOnWhatsApp(String text) async {
+    if (text.trim().isEmpty) return;
+    await _openWhatsApp(text);
+  }
+
   /// `wa.me/<number>?text=` (that chat) or `wa.me/?text=` (pick a chat).
   Future<void> _openWhatsApp(String text, [String? number]) async {
     final Uri u = Uri.parse(
@@ -8163,7 +9179,8 @@ class AppController extends ChangeNotifier {
       bal = '${inr(x.bal.abs())} ${_owesYou(x) ? 'to receive' : 'to pay'}';
     }
     final String phone = (x.phone ?? '').split(RegExp(r'[,;/]')).first.trim();
-    return '• ${x.name} (${x.kindLabel}) · $bal${phone.isEmpty ? '' : ' · $phone'}';
+    final String place = placeOf(x);
+    return '• ${x.name} (${x.kindLabel}) · $bal${place.isEmpty ? '' : ' · $place'}${phone.isEmpty ? '' : ' · $phone'}';
   }
 
   String _partyMessage() {
@@ -8188,15 +9205,87 @@ class AppController extends ChangeNotifier {
   }
 
   /// WhatsApp with every ticked party in one message (WhatsApp asks whom
-  /// to send it to).
+  /// to send it to). With a location filter on: the ledgers of that
+  /// location as one formatted PDF (logo, address, table) in the share
+  /// sheet instead of plain text.
   Future<void> whatsAppPickedParties() async {
     if (pPicked.isEmpty) return;
+    if (partyLoc.on) {
+      await shareDoc(pickedLocationDoc());
+      return;
+    }
     await _openWhatsApp(_partyMessage());
+  }
+
+  /// The ticked ledgers (A–Z) as the location document.
+  ShareDoc pickedLocationDoc() => docLedgersByLocation(
+    pPicked.values.toList()..sort(
+      (Party a, Party b) =>
+          a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+    ),
+    companyName,
+    partyLoc,
+    today,
+    remote: repo.isRemote,
+  );
+
+  // --------------------------------------------- ledgers by location
+  // Party list → Location: a state and / or a city / area / PIN, matched in
+  // what Tally saves on each ledger (state, PIN, address). The list shows
+  // only those; "Share these" ticks them all for WhatsApp / PDF.
+
+  LocFilter partyLoc = LocFilter.none;
+
+  /// The state picked in the Location sheet (before Apply).
+  String? partyLocState;
+
+  void openPartyLocation() {
+    form['plArea'] = partyLoc.area;
+    partyLocState = partyLoc.state;
+    openOverlay('partyLoc');
+  }
+
+  void pickPartyLocState(String? s) =>
+      _set(() => partyLocState = partyLocState == s ? null : s);
+
+  /// The filter being set in the sheet (for its live count).
+  LocFilter get partyLocDraft =>
+      LocFilter(state: partyLocState, area: f('plArea'));
+
+  void applyPartyLocation() {
+    final LocFilter d = partyLocDraft;
+    _set(() {
+      partyLoc = d.on ? d : LocFilter.none;
+      overlay = null;
+    });
+  }
+
+  void clearPartyLocation() => _set(() {
+    partyLoc = LocFilter.none;
+    partyLocState = null;
+    form['plArea'] = '';
+    if (overlay == 'partyLoc') overlay = null;
+  });
+
+  /// Ticks every ledger of the list as filtered (location, type, search)
+  /// for one WhatsApp message or PDF.
+  void sharePartiesHere(List<Party> rows) {
+    _set(() {
+      pSelecting = true;
+      pPicked.clear();
+      for (final Party x in rows) {
+        pPicked[x.name] = x;
+      }
+    });
   }
 
   /// The ticked parties as one PDF (share sheet).
   Future<void> sharePickedParties() async {
     if (pPicked.isEmpty) return;
+    if (partyLoc.on) {
+      await shareDoc(pickedLocationDoc());
+      return;
+    }
     final List<Party> l = pPicked.values.toList()
       ..sort(
         (Party a, Party b) =>
@@ -8205,11 +9294,161 @@ class AppController extends ChangeNotifier {
     await shareDoc(docParties(l, companyName));
   }
 
+  // ------------------------------------------------- several bills
+  // Receivable / Payable list → Select → tick bills → one WhatsApp message,
+  // one list PDF, or one PDF per bill (one share sheet).
+
+  bool bSelecting = false;
+
+  /// Ticked bills by key, in the order ticked.
+  final Map<String, Bill> bPicked = <String, Bill>{};
+
+  void startBillSelect() => _set(() {
+    bSelecting = true;
+    bPicked.clear();
+  });
+
+  void endBillSelect() => _set(() {
+    bSelecting = false;
+    bPicked.clear();
+  });
+
+  void toggleBillPicked(Bill b) => _set(() {
+    if (bPicked.remove(b.key) == null) bPicked[b.key] = b;
+  });
+
+  void selectAllBills(List<Bill> rows) => _set(() {
+    for (final Bill b in rows) {
+      bPicked[b.key] = b;
+    }
+  });
+
+  void clearBillPicked() => _set(bPicked.clear);
+
+  /// Pending of the ticked bills (a settled one: its last pending amount).
+  num get pickedBillsTotal => sumRupees(
+    bPicked.values.map(
+      (Bill b) => b.st == 'settled' ? (b.billAmt ?? 0) : b.amt,
+    ),
+  );
+
+  List<Bill> get _pickedBills => bPicked.values.toList()
+    ..sort(
+      (Bill a, Bill b) =>
+          (a.dueDate ?? DateTime(9999)).compareTo(b.dueDate ?? DateTime(9999)),
+    );
+
+  /// The one party of every ticked bill, when it has a phone number.
+  Party? get pickedBillParty {
+    final Set<String> ps = bPicked.values.map((Bill b) => b.party).toSet();
+    if (ps.length != 1) return null;
+    final Party? x = partyPool()
+        .where((Party y) => y.name == ps.first)
+        .firstOrNull;
+    return whatsAppNumber(x?.phone) == null ? null : x;
+  }
+
+  /// A bill's PDF (Sales / Purchase bill with its items when known).
+  PdfInfo billPdfInfo(Bill b) {
+    final bool r = b.kind == 'recv';
+    return PdfInfo(
+      party: b.party,
+      no: b.no,
+      date: b.bill,
+      due: b.due,
+      total: b.billAmt ?? b.amt,
+      kind: r ? 'Sales' : 'Purchase',
+      city: b.city,
+      recv: r,
+      lines: b.lines.isNotEmpty ? b.lines : repo.billLines(b.key),
+    );
+  }
+
+  String _billsMessage() {
+    final List<Bill> l = _pickedBills;
+    final Set<String> ps = l.map((Bill b) => b.party).toSet();
+    final bool one = ps.length == 1;
+    final bool recv = l.isNotEmpty && l.first.kind == 'recv';
+    final List<Bill> shown = l.take(kWaMaxLines).toList();
+    final List<Bill> rest = l.skip(kWaMaxLines).toList();
+    num amt(Bill b) => b.st == 'settled' ? (b.billAmt ?? 0) : b.amt;
+    return <String>[
+      one ? 'Dear ${ps.first},' : 'Hello,',
+      '${l.length} ${l.length == 1 ? 'bill' : 'bills'} '
+          '${recv ? 'pending' : 'to pay'} as on ${dmy(today)}:',
+      '',
+      for (final Bill b in shown)
+        '• ${b.no}${b.bill == '—' || b.bill.isEmpty ? '' : ' · ${b.bill}'} · due ${b.due}'
+            '${one ? '' : ' · ${b.party}'} · ${inr(amt(b))}',
+      if (rest.isNotEmpty)
+        '…and ${rest.length} more (${inr(sumRupees(rest.map(amt)))})',
+      '',
+      '*Total: ${inr(pickedBillsTotal)}*',
+      '— $companyName',
+    ].join('\n');
+  }
+
+  /// WhatsApp with every ticked bill in one message: the party's chat when
+  /// they are all one party's (phone saved in Tally), else pick a chat.
+  Future<void> whatsAppPickedBills() async {
+    if (bPicked.isEmpty) return;
+    await _openWhatsApp(
+      _billsMessage(),
+      whatsAppNumber(pickedBillParty?.phone),
+    );
+  }
+
+  /// All ticked bills in one list PDF.
+  Future<void> sharePickedBillsList() async {
+    if (bPicked.isEmpty) return;
+    final List<Bill> l = _pickedBills;
+    await shareDoc(docBills(l.first.kind == 'recv', l, companyName, today));
+  }
+
+  /// One PDF per ticked bill, all in one share sheet.
+  Future<void> sharePickedBillsEach({
+    BillLayout? layout,
+    Uint8List? logo,
+  }) async {
+    if (bPicked.isEmpty || docBusy) return;
+    if (bPicked.length > kMaxShareEach) {
+      say(
+        'Pick at most $kMaxShareEach bills to share one PDF each, or share them as one list.',
+      );
+      return;
+    }
+    docBusy = true;
+    say('Preparing ${bPicked.length} PDFs…');
+    try {
+      final List<(ShareDoc, Uint8List)> docs = <(ShareDoc, Uint8List)>[];
+      for (final Bill b in _pickedBills) {
+        final ShareDoc b0 = _label(docInvoice(billPdfInfo(b), companyName));
+        // A layout chosen for this share; otherwise the saved one.
+        final ShareDoc d = layout == null ? b0 : b0.withLayout(layout, logo);
+        docs.add((d, await pdfOf(d)));
+      }
+      await exporter.shareMany(
+        docs,
+        text: _billsMessage(),
+        subject: '${docs.length} bills · $companyName',
+      );
+      say('Share sheet opened');
+    } catch (_) {
+      say('Could not open the share sheet');
+    } finally {
+      docBusy = false;
+    }
+  }
+
   /// Selecting ends when its list is left.
   void _endSelectLeaving(String to) {
     if (vSelecting && to != 'vList') {
       vSelecting = false;
       vPicked.clear();
+    }
+    if (bSelecting && to != 'outList') {
+      bSelecting = false;
+      bPicked.clear();
     }
     if (pSelecting && to != 'party') {
       pSelecting = false;
@@ -8240,7 +9479,265 @@ class AppController extends ChangeNotifier {
 
   int get _accentArgb => palette.acc.toARGB32();
 
-  Future<Uint8List> pdfOf(ShareDoc d) => exporter.pdf(d, _accentArgb);
+  /// Bills get this user's saved layout and logo for the active company
+  /// (a document that already has its own layout keeps it).
+  Future<Uint8List> pdfOf(ShareDoc d) async {
+    ShareDoc out = d;
+    if (d.invoice != null && d.layout == null) {
+      await _ensureBillLayout();
+      out = d.withLayout(billLayout, billLogo);
+    }
+    return exporter.pdf(out, _accentArgb);
+  }
+
+  // ------------------------------------------ bill PDF layout (NEW feature)
+  /// Saved layout and logo of this user + active company (this phone).
+  BillLayout billLayout = BillLayout.standard;
+  Uint8List? billLogo;
+  String? _billFor;
+
+  /// Open sheet: the edited layout / logo, not saved until Save.
+  BillLayout billDraft = BillLayout.standard;
+  Uint8List? billDraftLogo;
+
+  /// The sheet changes only the document being shared ([_billShareDoc]) or
+  /// the ticked bills ([_billShareBills]); nothing is saved.
+  bool billTemp = false;
+  ShareDoc? _billShareDoc;
+  bool _billShareBills = false;
+  bool billLogoBusy = false;
+
+  String get _billKey =>
+      '${_userKey(LocalStorage.kBillLayout)}|${repo.activeCompanyId ?? ''}';
+
+  /// Logo file of this user + company (letters / digits only in the name).
+  Future<File?> _billLogoFile() async {
+    if (Platform.environment.containsKey('FLUTTER_TEST')) return null;
+    try {
+      final Directory dir = await getApplicationDocumentsDirectory();
+      final String name = _billKey.replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_');
+      return File(p.join(dir.path, 'bill_logo_$name.png'));
+    } catch (_) {
+      return null; // no documents folder (tests): no logo
+    }
+  }
+
+  Future<void> _ensureBillLayout() async {
+    final String key = _billKey;
+    if (_billFor == key) return;
+    _billFor = key;
+    billLayout = BillLayout.fromJson(store.load<Object?>(key, null));
+    billLogo = null;
+    try {
+      final File? f = await _billLogoFile();
+      if (f != null && await f.exists()) billLogo = await f.readAsBytes();
+    } catch (_) {
+      billLogo = null;
+    }
+  }
+
+  /// Bill layout settings (Outstanding): the saved defaults.
+  Future<void> openBillLayout() async {
+    await _ensureBillLayout();
+    if (_disposed) return;
+    _set(() {
+      billTemp = false;
+      _billShareDoc = null;
+      _billShareBills = false;
+      billDraft = billLayout;
+      billDraftLogo = billLogo;
+      overlay = 'billLayout';
+    });
+  }
+
+  /// The layout sheet for one share of [doc] (a bill): changes are used
+  /// for this share only.
+  Future<void> customizeShare(ShareDoc doc) async {
+    if (doc.invoice == null) return shareDoc(doc);
+    await _ensureBillLayout();
+    if (_disposed) return;
+    _set(() {
+      billTemp = true;
+      _billShareDoc = doc;
+      _billShareBills = false;
+      billDraft = doc.layout ?? billLayout;
+      billDraftLogo = doc.layout == null ? billLogo : doc.logo;
+      overlay = 'billLayout';
+    });
+  }
+
+  /// The layout sheet before sharing the ticked bills one PDF each.
+  Future<void> customizePickedBills() async {
+    if (bPicked.isEmpty) return;
+    await _ensureBillLayout();
+    if (_disposed) return;
+    _set(() {
+      billTemp = true;
+      _billShareDoc = null;
+      _billShareBills = true;
+      billDraft = billLayout;
+      billDraftLogo = billLogo;
+      overlay = 'billLayout';
+    });
+  }
+
+  void toggleBillField(String k) =>
+      _set(() => billDraft = billDraft.toggled(k));
+
+  void setBillText({String? seller, String? terms}) => _set(
+    () => billDraft = billDraft.copyWith(const <String, bool>{}, seller, terms),
+  );
+
+  /// Picks the company logo (gallery), scaled to at most 600 px and kept as
+  /// PNG (the PDF takes PNG / JPEG only).
+  Future<void> pickBillLogo() async {
+    if (billLogoBusy) return;
+    _set(() => billLogoBusy = true);
+    try {
+      final XFile? x = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1200,
+        maxHeight: 1200,
+      );
+      if (x == null) return;
+      final Uint8List raw = await x.readAsBytes();
+      if (raw.length > 8 * 1024 * 1024) {
+        say('That picture is too large. Pick one under 8 MB.');
+        return;
+      }
+      final ui.Codec probe = await ui.instantiateImageCodec(raw);
+      final ui.Image full = (await probe.getNextFrame()).image;
+      final int w = full.width, h = full.height;
+      final double k = math.min(1, 600 / math.max(w, h));
+      final ui.Codec codec = await ui.instantiateImageCodec(
+        raw,
+        targetWidth: math.max(1, (w * k).round()),
+        targetHeight: math.max(1, (h * k).round()),
+      );
+      final ui.Image img = (await codec.getNextFrame()).image;
+      final ByteData? png = await img.toByteData(
+        format: ui.ImageByteFormat.png,
+      );
+      if (png == null) throw const FormatException('no image');
+      if (_disposed) return;
+      _set(() {
+        billDraftLogo = png.buffer.asUint8List();
+        if (!billDraft.showLogo) billDraft = billDraft.toggled('logo');
+      });
+    } catch (_) {
+      say('Could not use that picture. Try a PNG or JPEG.');
+    } finally {
+      if (!_disposed) _set(() => billLogoBusy = false);
+    }
+  }
+
+  void removeBillLogo() => _set(() => billDraftLogo = null);
+
+  /// The sheet's layout on the bill it is for (or a sample bill).
+  ShareDoc? _billDraftDoc() {
+    final ShareDoc? d = _billShareDoc ?? _billSampleDoc();
+    return d?.withLayout(billDraft, billDraftLogo);
+  }
+
+  /// A bill to preview the layout on: the first receivable / payable bill,
+  /// else a voucher with items, else the sample invoice.
+  ShareDoc? _billSampleDoc() {
+    if (_billShareBills && _pickedBills.isNotEmpty) {
+      return docInvoice(billPdfInfo(_pickedBills.first), companyName);
+    }
+    final Bill? b =
+        repo.receivables().firstOrNull ?? repo.payables().firstOrNull;
+    if (b != null) return docInvoice(billPdfInfo(b), companyName);
+    // No bills yet: a made-up bill, labelled as sample on the page.
+    return docInvoice(
+      PdfInfo(
+        party: 'Sample Customer',
+        no: 'Sample 1',
+        date: dmy(today),
+        due: dmy(today.add(const Duration(days: 15))),
+        total: 1180,
+        kind: 'Sales',
+        city: 'City',
+        recv: true,
+        lines: const <BillLine>[
+          BillLine('Sample item', '8544', '2', '₹500', 1000),
+        ],
+      ),
+      companyName,
+    ).asDemo();
+  }
+
+  /// Preview of the sheet's layout; the preview's Customize comes back.
+  void previewBillLayout() {
+    final ShareDoc? d = _billDraftDoc();
+    if (d == null) return;
+    previewDoc(d);
+    _billFromSheet = true;
+  }
+
+  /// The preview on screen was opened from the layout sheet.
+  bool _billFromSheet = false;
+
+  /// Preview's Customize: back to the sheet it came from (edits kept), or
+  /// the sheet for sharing this one bill.
+  Future<void> customizeFromPreview(ShareDoc d) async {
+    if (_billFromSheet) {
+      _set(() {
+        _billFromSheet = false;
+        overlay = 'billLayout';
+      });
+      return;
+    }
+    await customizeShare(d);
+  }
+
+  /// Saves the sheet as this user's default for the active company.
+  Future<void> saveBillLayout() async {
+    final String key = _billKey;
+    final BillLayout l = billDraft;
+    final Uint8List? logo = billDraftLogo;
+    store.save(key, l.toJson());
+    try {
+      final File? f = await _billLogoFile();
+      if (f != null) {
+        if (logo == null) {
+          if (await f.exists()) await f.delete();
+        } else {
+          await f.writeAsBytes(logo, flush: true);
+        }
+      }
+    } catch (_) {
+      say('Layout saved, but the logo could not be stored on this phone');
+    }
+    if (_disposed) return;
+    _set(() {
+      _billFor = key;
+      billLayout = l;
+      billLogo = logo;
+      overlay = null;
+    });
+    say('Bill layout saved');
+  }
+
+  /// Back to the standard layout (the sheet; Save keeps it).
+  void resetBillDraft() => _set(() {
+    billDraft = BillLayout.standard;
+    billDraftLogo = billLogo;
+  });
+
+  /// Shares with the sheet's layout, without saving it.
+  Future<void> shareWithBillDraft() async {
+    final BillLayout l = billDraft;
+    final Uint8List? logo = billDraftLogo;
+    final ShareDoc? one = _billShareDoc;
+    final bool bills = _billShareBills;
+    _set(() => overlay = null);
+    if (one != null) {
+      await shareDoc(one.withLayout(l, logo));
+    } else if (bills) {
+      await sharePickedBillsEach(layout: l, logo: logo);
+    }
+  }
 
   /// Native share sheet with the PDF + a text summary.
   /// Documents made from demo data are always labelled as demo.
@@ -8276,6 +9773,7 @@ class AppController extends ChangeNotifier {
 
   /// Opens the in-app PDF preview of a generated document.
   void previewDoc(ShareDoc doc) => _set(() {
+    _billFromSheet = false;
     final ShareDoc d = _label(doc);
     docShown = d;
     _docBytes = pdfOf(d);
@@ -8323,6 +9821,9 @@ class AppController extends ChangeNotifier {
             );
           case 'outstanding':
             return docBills(true, repo.receivables(), co, today);
+          // Sales Team cards on Home: the same document as on Sales Team.
+          case 'attToday' || 'attRules':
+            return docForCard('teamCards', key);
           case 'reports':
             return docReportList(co);
           case 'sales' || 'purchase' || 'moneyIn' || 'moneyOut':
@@ -8384,8 +9885,121 @@ class AppController extends ChangeNotifier {
       case 'team':
         final Member? m = team.where((Member x) => x.email == key).firstOrNull;
         return m == null ? null : docMember(m, co, status: !repo.isRemote);
+      case 'vtypes':
+        final String? typeName = key.startsWith('type:')
+            ? key.substring(5)
+            : null;
+        final List<Voucher> l = key == 'all'
+            ? repo.vouchers()
+            : repo
+                  .vouchers()
+                  .where(
+                    (Voucher v) =>
+                        typeName == null ? v.kind == key : v.type == typeName,
+                  )
+                  .toList();
+        return docVouchers(
+          key == 'all'
+              ? 'All vouchers'
+              : (kKinds[key]?.long ?? typeName ?? key),
+          l,
+          co,
+          periodLabel('month'),
+        );
+      case 'outCards':
+        final bool r = key == 'recv';
+        return docBills(r, r ? repo.receivables() : repo.payables(), co, today);
+      case 'attCards':
+        final AttMember? am = attTeam?.members
+            .where((AttMember m) => m.userId == key)
+            .firstOrNull;
+        return am == null ? null : _attDayDoc(<AttMember>[am], co);
+      case 'teamCards' when key == 'attToday':
+        final AttTeam? t = attTeam;
+        return t == null ? null : _attDayDoc(t.members, co);
+      case 'teamCards' when key == 'attRules':
+        final AttRules? r = attRules;
+        if (r == null) return null;
+        return ShareDoc(
+          title: 'Check-in rules',
+          subtitle: r.exemptPositions.isEmpty
+              ? 'Everyone checks in'
+              : 'Not checking in: ${r.exemptPositions.join(', ')}',
+          company: co,
+          fileStem: 'Checkin_rules',
+          table: DocTable(
+            const <String>['Member', 'Position', 'Check-in'],
+            <List<String>>[
+              for (final AttRuleMember m in r.members)
+                <String>[
+                  attName(m.userId, m.username),
+                  m.position ?? '—',
+                  m.required ? 'Checks in' : 'Exempt',
+                ],
+            ],
+          ),
+        );
+      case 'teamCards' when key == 'attEmployees':
+        final AttSummary? s = attSum;
+        if (s == null) return null;
+        final (DateTime f, DateTime t) = attSumRange;
+        return ShareDoc(
+          title: 'Employee attendance',
+          subtitle: '${dmy(f)} – ${dmy(t)}',
+          company: co,
+          fileStem: 'Employee_attendance',
+          table: DocTable(
+            const <String>['Employee', 'Present', 'Hours', 'Leave', 'Absent'],
+            <List<String>>[
+              for (final AttSumRow x in s.members)
+                <String>[
+                  attName(x.userId, x.username),
+                  '${x.presentDays}/${x.workingDays}',
+                  hoursMinutes(x.totalMinutes),
+                  '${x.leaveDays}',
+                  x.required ? '${x.absentDays}' : 'Not tracked',
+                ],
+            ],
+          ),
+        );
     }
     return null;
+  }
+
+  /// Team attendance of the day shown: name, status, in, out, hours.
+  ShareDoc _attDayDoc(List<AttMember> ms, String co) {
+    final DateTime d = attTeam?.date ?? attDay;
+    String t(DateTime? x) => x == null ? '—' : clock(x);
+    const List<String> days = <String>[
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    return ShareDoc(
+      title: ms.length == 1
+          ? attName(ms.first.userId, ms.first.username)
+          : 'Team attendance',
+      subtitle: '${days[d.weekday - 1]}, ${dmy(d)}',
+      company: co,
+      fileStem: 'Attendance_${ymd(d)}',
+      table: DocTable(
+        const <String>['Employee', 'Status', 'In', 'Out', 'Hours'],
+        <List<String>>[
+          for (final AttMember m in ms)
+            <String>[
+              attName(m.userId, m.username),
+              m.status.label,
+              t(m.firstIn),
+              m.status.checkedIn ? 'Still in' : t(m.lastOut),
+              m.totalMinutes == 0 ? '—' : hoursMinutes(m.totalMinutes),
+            ],
+        ],
+      ),
+    );
   }
 
   ShareDoc docReportList(String co) => ShareDoc(
@@ -8434,11 +10048,14 @@ class AppController extends ChangeNotifier {
   /// "Up to date"; then any reminder due today.
   void afterRefresh({bool quietOk = false}) {
     if (_disposed || !loggedIn) return;
+    _loadUserLists();
     // Demo or real data: decided again with what was just loaded.
     _evalDemo();
     // Check-in (sales team): known right after sign-in / app start, so the
     // Home button and the menu row show without opening another screen.
     unawaited(loadAttendance(quiet: true));
+    // Payment reminder settings: the phone's due alerts follow them.
+    if (emBlocked == null) unawaited(loadReminderSettings(quiet: true));
     final String? err = repo.lastError();
     if (err != null) {
       say('$err · showing the last saved data');
@@ -9022,7 +10639,7 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  /// Turns the 3-days-before-due alerts on / off (saved on this phone).
+  /// Turns the due-date alerts on / off (saved on this phone).
   void toggleAutoRemind() => setAutoRemind(!autoRemind);
 
   /// Sets the due-date alerts switch ([quiet]: no toast).
@@ -9034,27 +10651,34 @@ class AppController extends ChangeNotifier {
     if (on) unawaited(alarms.requestAccess());
     if (quiet) return;
     say(
-      on ? 'Alert 3 days before each bill is due' : 'Due-date alerts are off',
+      on
+          ? 'Due-date alerts on · ${remRuleText(remSettings)}'
+          : 'Due-date alerts are off',
     );
   }
 
   /// Most due alerts kept armed at once (the soonest ones).
   static const int kMaxDueAlerts = 40;
 
-  /// Schedules a notification at 10:00 AM, 3 days before the due date, for
-  /// each pending bill of the active company (receivable and payable), and
-  /// cancels the ones no longer needed. Runs when the bills change.
+  /// Schedules a notification for each pending bill of the active company
+  /// (receivable and payable) as the payment reminder settings say: N days
+  /// before and / or after the due date (then every N days), at their
+  /// hour; cancels the ones no longer needed. Runs when the bills or the
+  /// settings change.
   void _armDueAlerts() {
     // Demo data never sets phone alarms (real ones come back with live data).
     final List<Bill> recv = demo ? const <Bill>[] : repo.receivables(),
         pay = demo ? const <Bill>[] : repo.payables();
+    final ReminderSettings rs = remSettings;
     final String sig =
         '$autoRemind|${identityHashCode(recv)}|${identityHashCode(pay)}|'
-        '${recv.length}|${pay.length}|${ymd(today)}';
+        '${recv.length}|${pay.length}|${ymd(today)}|${rs.toJson()}';
     if (sig == _dueSig) return;
     _dueSig = sig;
     final DateTime now = DateTime.now();
-    final List<(DateTime, Bill, String)> want = <(DateTime, Bill, String)>[];
+    // (when, bill, side, before the due date?)
+    final List<(DateTime, Bill, String, bool)> want =
+        <(DateTime, Bill, String, bool)>[];
     if (autoRemind && loggedIn) {
       for (final (List<Bill>, String) side in <(List<Bill>, String)>[
         (recv, 'recv'),
@@ -9063,30 +10687,57 @@ class AppController extends ChangeNotifier {
         for (final Bill b in side.$1) {
           final DateTime? due = b.dueDate;
           if (due == null) continue;
-          final DateTime at = DateTime(due.year, due.month, due.day - 3, 10);
-          if (at.isAfter(now)) want.add((at, b, side.$2));
+          if (rs.before) {
+            final DateTime at = DateTime(
+              due.year,
+              due.month,
+              due.day - rs.beforeDays,
+              rs.sendHour,
+            );
+            if (at.isAfter(now)) want.add((at, b, side.$2, true));
+          }
+          if (rs.after) {
+            DateTime at = DateTime(
+              due.year,
+              due.month,
+              due.day + rs.afterDays,
+              rs.sendHour,
+            );
+            // Repeating: the next one still to come.
+            while (rs.repeatDays > 0 && !at.isAfter(now)) {
+              at = DateTime(at.year, at.month, at.day + rs.repeatDays, at.hour);
+            }
+            if (at.isAfter(now)) want.add((at, b, side.$2, false));
+          }
         }
       }
       want.sort(
-        ((DateTime, Bill, String) a, (DateTime, Bill, String) b) =>
+        ((DateTime, Bill, String, bool) a, (DateTime, Bill, String, bool) b) =>
             a.$1.compareTo(b.$1),
       );
     }
     final List<int> ids = <int>[];
-    for (final (DateTime, Bill, String) w in want.take(kMaxDueAlerts)) {
+    final String inDays = rs.beforeDays == 1
+        ? '1 day'
+        : '${rs.beforeDays} days';
+    for (final (DateTime, Bill, String, bool) w in want.take(kMaxDueAlerts)) {
       final Bill b = w.$2;
       final bool r = w.$3 == 'recv';
-      final int id = alarmId('auto:${w.$3}\n${b.key}');
+      final bool before = w.$4;
+      final int id = alarmId('auto:${w.$3}${before ? '' : ':after'}\n${b.key}');
       ids.add(id);
+      final String act = r ? 'collect' : 'pay';
       unawaited(
         alarms.schedule(
           AlarmSpec(
             id: id,
             at: w.$1,
-            title: r
-                ? 'Due in 3 days: collect ${inr(b.amt)}'
-                : 'Due in 3 days: pay ${inr(b.amt)}',
-            body: '${b.party} · Bill ${b.no} · due ${b.due}',
+            title: before
+                ? 'Due in $inDays: $act ${inr(b.amt)}'
+                : 'Overdue: $act ${inr(b.amt)}',
+            body:
+                '${b.party} · Bill ${b.no} · due ${b.due}'
+                '${!r ? '' : (rs.automatic ? ' · reminder emailed automatically' : ' · tap to send a reminder')}',
             payload: 'auto:${w.$3}\n${b.key}',
             actions: false,
           ),

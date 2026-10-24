@@ -18,6 +18,7 @@ import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
+import '../widgets/report_loader.dart';
 import '../widgets/report_card.dart';
 import '../widgets/report_chart.dart' show compactInr;
 import 'stock_party_screens.dart' show StatBox;
@@ -42,7 +43,9 @@ class CashflowTile extends ConsumerWidget {
       icon: 'calendar',
       title: 'Cash Flow Forecast',
       subtitle: 'Coming weeks: money in, money out, balance',
-      onTap: c.openCashflow,
+      onTap: () {
+        if (c.guardTap('fin', 'cfcast')) c.openCashflow();
+      },
     );
   }
 }
@@ -121,6 +124,12 @@ class CashflowScreen extends ConsumerWidget {
     final AppController c = ref.watch(appProvider);
     final CashForecast? f = c.cfData;
     final TcPalette p = Tc.of(context);
+    // Shared from the Reports card menu: once the forecast is loaded.
+    if (f != null && !c.cfBusy && c.takePendingShare('cfcast')) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => c.previewDoc(cashflowDoc(c, f)),
+      );
+    }
     return Scr(
       children: <Widget>[
         BackNav(
@@ -161,7 +170,9 @@ class CashflowScreen extends ConsumerWidget {
         if (c.cfError != null)
           InfoBox(c.cfError!, icon: 'info')
         else if (f == null)
-          EmptyBox(c.cfBusy ? 'Working out the forecast…' : 'No forecast yet.')
+          (c.cfBusy
+              ? const ReportLoader(text: 'Working out the forecast…')
+              : EmptyBox('No forecast yet.'))
         else ...<Widget>[
           if (c.cfBusy)
             const Padding(
@@ -784,7 +795,7 @@ class CashflowWeekScreen extends ConsumerWidget {
         if (c.cfWeekError != null)
           InfoBox(c.cfWeekError!, icon: 'info')
         else if (d == null)
-          EmptyBox(c.cfWeekBusy ? 'Loading…' : 'Nothing here.')
+          (c.cfWeekBusy ? const ReportLoader() : EmptyBox('Nothing here.'))
         else ...<Widget>[
           Grid(
             cols: 2,

@@ -15,6 +15,7 @@ import '../../core/design/tc_palette.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
+import '../widgets/report_loader.dart';
 import '../widgets/voice_search.dart' show MicBtn, VoiceNote;
 
 Color leaveColor(TcPalette p, LeaveStatus s) => switch (s) {
@@ -256,7 +257,9 @@ class LeaveScreen extends ConsumerWidget {
             child: Btn(label: 'Try again', kind: BtnKind.g, onTap: c.loadLeave),
           ),
         ] else if (m == null)
-          EmptyBox(c.leaveLoading ? 'Loading…' : 'Not loaded yet.')
+          (c.leaveLoading
+              ? const ReportLoader(text: 'Loading leave…')
+              : const EmptyBox('Not loaded yet.'))
         else if (m.isAdmin)
           const InfoBox(
             'Leave is applied by your team members. See their requests under '
@@ -386,7 +389,9 @@ class LeaveReqsScreen extends ConsumerWidget {
         if (c.leaveReqsError != null)
           InfoBox(c.leaveReqsError!, icon: 'info')
         else if (l == null)
-          EmptyBox(c.leaveReqsBusy ? 'Loading…' : 'Not loaded yet.')
+          (c.leaveReqsBusy
+              ? const ReportLoader(text: 'Loading leave…')
+              : EmptyBox('Not loaded yet.'))
         else ...<Widget>[
           if (c.leaveReqsBusy)
             const Padding(
@@ -447,7 +452,9 @@ class LeaveMemberScreen extends ConsumerWidget {
         if (c.leaveMemberError != null)
           InfoBox(c.leaveMemberError!, icon: 'info')
         else if (m == null)
-          EmptyBox(c.leaveMemberBusy ? 'Loading…' : 'Not loaded yet.')
+          (c.leaveMemberBusy
+              ? const ReportLoader(text: 'Loading leave…')
+              : EmptyBox('Not loaded yet.'))
         else ...<Widget>[
           if (!m.settings.enabled)
             const InfoBox(
@@ -521,7 +528,9 @@ class LeaveSettingsScreen extends ConsumerWidget {
         if (c.leaveAdminError != null)
           InfoBox(c.leaveAdminError!, icon: 'info')
         else if (a == null || s == null)
-          EmptyBox(c.leaveAdminBusy ? 'Loading…' : 'Not loaded yet.')
+          (c.leaveAdminBusy
+              ? const ReportLoader(text: 'Loading leave…')
+              : EmptyBox('Not loaded yet.'))
         else ...<Widget>[
           if (c.leaveSaving || c.leaveAdminBusy)
             const Padding(
@@ -714,7 +723,9 @@ class TeamLeaveCard extends ConsumerWidget {
       padding: const EdgeInsets.only(top: 12),
       child: Tap(
         key: const ValueKey<String>('teamLeaveCard'),
-        onTap: c.openLeaveRequests,
+        onTap: () {
+          if (c.guardTap('teamCards', 'leave')) c.openLeaveRequests();
+        },
         child: Glass(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
           child: Row(

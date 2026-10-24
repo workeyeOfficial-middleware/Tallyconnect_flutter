@@ -240,3 +240,136 @@ class ReminderOutcome {
   /// No answer from the server: it may or may not have been sent.
   final bool unknown;
 }
+
+/// When payment reminders are due and how they go out (per company, set by
+/// the admin; `GET / PUT /api/reminders/settings`). Hours are India time.
+class ReminderSettings {
+  const ReminderSettings({
+    this.mode = 'manual',
+    this.timing = 'before',
+    this.beforeDays = 3,
+    this.afterDays = 1,
+    this.repeatDays = 0,
+    this.sendHour = 10,
+    this.canEdit = false,
+    this.ready = true,
+    this.stored = false,
+    this.emailConfigured = true,
+  });
+
+  /// `automatic` (the server emails each party) | `manual` (the team sends).
+  final String mode;
+
+  /// `before` | `after` | `both` the due date.
+  final String timing;
+  final int beforeDays, afterDays;
+
+  /// After the due date: again every N days (0 = once).
+  final int repeatDays;
+
+  /// Hour of the day, 0–23.
+  final int sendHour;
+
+  /// The admin may change them; [ready] false: the server has no table yet.
+  final bool canEdit, ready, stored, emailConfigured;
+
+  bool get automatic => mode == 'automatic';
+  bool get before => timing == 'before' || timing == 'both';
+  bool get after => timing == 'after' || timing == 'both';
+
+  ReminderSettings copyWith({
+    String? mode,
+    String? timing,
+    int? beforeDays,
+    int? afterDays,
+    int? repeatDays,
+    int? sendHour,
+  }) => ReminderSettings(
+    mode: mode ?? this.mode,
+    timing: timing ?? this.timing,
+    beforeDays: beforeDays ?? this.beforeDays,
+    afterDays: afterDays ?? this.afterDays,
+    repeatDays: repeatDays ?? this.repeatDays,
+    sendHour: sendHour ?? this.sendHour,
+    canEdit: canEdit,
+    ready: ready,
+    stored: stored,
+    emailConfigured: emailConfigured,
+  );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'mode': mode,
+    'timing': timing,
+    'before_days': beforeDays,
+    'after_days': afterDays,
+    'repeat_days': repeatDays,
+    'send_hour': sendHour,
+  };
+
+  static ReminderSettings fromJson(Object? o) {
+    final Map<Object?, Object?> top = o is Map ? o : const <Object?, Object?>{};
+    final Object? d = top['data'] is Map ? top['data'] : top;
+    final Map<Object?, Object?> m = d is Map ? d : const <Object?, Object?>{};
+    int n(Object? v, int def, int lo, int hi) {
+      final int x = v is num ? v.toInt() : int.tryParse('${v ?? ''}') ?? def;
+      return x < lo || x > hi ? def : x;
+    }
+
+    final String mode = _str(m['mode']);
+    final String timing = _str(m['timing']);
+    return ReminderSettings(
+      mode: mode == 'automatic' ? 'automatic' : 'manual',
+      timing: const <String>['before', 'after', 'both'].contains(timing)
+          ? timing
+          : 'before',
+      beforeDays: n(m['before_days'], 3, 1, 60),
+      afterDays: n(m['after_days'], 1, 1, 90),
+      repeatDays: n(m['repeat_days'], 0, 0, 30),
+      sendHour: n(m['send_hour'], 10, 0, 23),
+      canEdit: top['can_edit'] == true,
+      ready: top['ready'] != false,
+      stored: top['stored'] == true,
+      emailConfigured: top['email_configured'] != false,
+    );
+  }
+}
+
+/// A party due for a reminder today by the settings (`GET /api/reminders/due`).
+class DueReminder {
+  const DueReminder({
+    required this.ledgerGuid,
+    required this.party,
+    required this.emails,
+    required this.reason,
+    required this.bills,
+    required this.total,
+  });
+  final String ledgerGuid, party;
+  final List<String> emails;
+
+  /// `before` | `after` | `both` the due date.
+  final String reason;
+  final List<ReminderBill> bills;
+  final num total;
+
+  static List<DueReminder> listFrom(Object? o) {
+    final Object? d = o is Map ? o['data'] : null;
+    return <DueReminder>[
+      if (d is List)
+        for (final Object? x in d)
+          if (x is Map)
+            DueReminder(
+              ledgerGuid: _str(x['ledger_guid']),
+              party: _str(x['party']),
+              emails: _strs(x['emails']),
+              reason: _str(x['reason']),
+              bills: <ReminderBill>[
+                if (x['bills'] is List)
+                  for (final Object? b in x['bills']! as List)
+                    if (b is Map) ReminderBill.fromJson(b),
+              ],
+              total: _num(x['total']),
+            ),
+    ];
+  }
+}

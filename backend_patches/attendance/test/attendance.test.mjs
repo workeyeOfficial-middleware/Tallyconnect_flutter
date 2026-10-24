@@ -60,7 +60,7 @@ describe("core", () => {
     const days = historyDays([done, { ...done, work_date: "2026-10-18" }], now);
     assert.deepEqual(days.map((x) => x.date), ["2026-10-19", "2026-10-18"]);
     assert.deepEqual(statusCounts([{ status: "active" }, { status: "idle" }, { status: "absent" }]), {
-      active: 1, idle: 1, checked_out: 0, absent: 1, checked_in: 2, total: 3,
+      active: 1, idle: 1, checked_out: 0, absent: 1, exempt: 0, checked_in: 2, total: 3,
     });
   });
 });
@@ -172,6 +172,10 @@ class FakeDb {
       return this.out(
         S.filter((x) => x.admin_id === p[0] && x.company_guid === p[1] && x.user_id === p[2] && x.work_date >= p[3] && x.work_date <= p[4])
       );
+    }
+    // Check-in rules not created yet (their SQL not run): as before.
+    if (/attendance_settings|attendance_members/.test(s)) {
+      throw Object.assign(new Error("relation does not exist"), { code: "42P01" });
     }
     throw new Error(`FakeDb: unhandled SQL ${s}`);
   }
@@ -327,7 +331,7 @@ describe("routes", () => {
     assert.equal((await call("GET", "/api/attendance/team", ADMIN)).body.members[0].status, "active");
     await call("POST", "/api/attendance/check-out", ASHA, {});
     team = await call("GET", "/api/attendance/team", ADMIN);
-    assert.deepEqual(team.body.counts, { active: 0, idle: 0, checked_out: 1, absent: 1, checked_in: 0, total: 2 });
+    assert.deepEqual(team.body.counts, { active: 0, idle: 0, checked_out: 1, absent: 1, exempt: 0, checked_in: 0, total: 2 });
     assert.equal(team.body.members[0].total_minutes, ACTIVE_MINUTES + 1);
     // Another day / bad date.
     assert.equal((await call("GET", "/api/attendance/team?date=2026-10-18", ADMIN)).body.counts.absent, 2);

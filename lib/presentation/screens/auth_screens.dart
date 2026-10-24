@@ -32,9 +32,14 @@ class LoginScreen extends ConsumerWidget {
           // Small phones (short screen, or the keyboard open): a tighter
           // header, fields and gaps so the whole form fits without being cut.
           final bool compact = box.maxHeight < 720 || box.maxWidth < 360;
-          final double bottom =
-              (compact ? 12 : 20) +
-              (kb > 0 ? 0 : MediaQuery.paddingOf(context).bottom);
+          // The same space above and below the form (keyboard closed), so
+          // it sits in the middle of the screen.
+          final double bottom = kb > 0
+              ? (compact ? 12 : 20)
+              : math.max(
+                  topIn(context),
+                  (compact ? 12 : 20) + MediaQuery.paddingOf(context).bottom,
+                );
           final double fieldH = compact ? 48 : 52;
           final EdgeInsets gap = EdgeInsets.only(bottom: compact ? 10 : 14);
           return SingleChildScrollView(
@@ -46,157 +51,151 @@ class LoginScreen extends ConsumerWidget {
               constraints: BoxConstraints(
                 minHeight: math.max(0, box.maxHeight - topIn(context) - bottom),
               ),
-              child: Padding(
-                padding: EdgeInsets.only(top: compact ? 4 : 12, bottom: 4),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    // Small phones: the TC icon beside the name (one row).
-                    if (compact)
-                      const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: <Widget>[
-                          LMark(
-                            key: ValueKey<String>('loginMark'),
-                            size: 46,
-                            radius: 15,
-                          ),
-                          SizedBox(width: 10),
-                          Flexible(
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Brand(size: 28),
+              child: Center(
+                child: ConstrainedBox(
+                  // Tablets / landscape: a readable form width.
+                  constraints: const BoxConstraints(maxWidth: 440),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        // Centred wordmark and one line about the app; the form
+                        // card below. No app icon, no greeting.
+                        Center(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: TcLogo(
+                              key: const ValueKey<String>('loginBrand'),
+                              height: compact ? 42 : 52,
                             ),
                           ),
-                        ],
-                      )
-                    else ...<Widget>[
-                      const Center(
-                        child: LMark(key: ValueKey<String>('loginMark')),
-                      ),
-                      const SizedBox(height: 10),
-                      const Brand(size: 34),
-                    ],
-                    H1(
-                      'Welcome back',
-                      center: true,
-                      size: compact ? 26 : 34,
-                      margin: compact
-                          ? const EdgeInsets.fromLTRB(4, 4, 4, 2)
-                          : const EdgeInsets.fromLTRB(4, 10, 4, 4),
-                    ),
-                    Sub(
-                      'Log in to see your business',
-                      center: true,
-                      margin: compact
-                          ? const EdgeInsets.fromLTRB(4, 0, 4, 10)
-                          : const EdgeInsets.fromLTRB(4, 0, 4, 16),
-                    ),
-                    Glass(
-                      padding: EdgeInsets.all(compact ? 14 : 16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: <Widget>[
-                          // Required by the server (`loginType`): owner
-                          // accounts log in as Admin, team members as User.
-                          Fld(
-                            label: 'Log in as',
-                            margin: gap,
-                            child: Seg(
-                              items: const <String>['Admin', 'User'],
-                              selected: c.loginType == 'USER' ? 1 : 0,
-                              onPick: (int i) => c.update(
-                                () => c.loginType = i == 0 ? 'ADMIN' : 'USER',
+                        ),
+                        Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            12,
+                            compact ? 6 : 10,
+                            12,
+                            compact ? 18 : 28,
+                          ),
+                          child: Text(
+                            'Sales, outstanding, stock and reports from your '
+                            'Tally, on your phone.',
+                            key: const ValueKey<String>('loginTitle'),
+                            textAlign: TextAlign.center,
+                            style: ts(15, h: 1.4, c: p.ink3),
+                          ),
+                        ),
+                        Glass(
+                          padding: EdgeInsets.all(compact ? 14 : 18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: <Widget>[
+                              // Required by the server (loginType): owner
+                              // accounts log in as Admin, team members as User.
+                              Fld(
+                                label: 'Account type',
+                                margin: gap,
+                                child: Seg(
+                                  items: const <String>['Admin', 'User'],
+                                  selected: c.loginType == 'USER' ? 1 : 0,
+                                  onPick: (int i) => c.update(
+                                    () =>
+                                        c.loginType = i == 0 ? 'ADMIN' : 'USER',
+                                  ),
+                                  margin: EdgeInsets.zero,
+                                ),
                               ),
-                              margin: EdgeInsets.zero,
-                            ),
-                          ),
-                          Fld(
-                            label: c.repo.isRemote
-                                ? 'Email'
-                                : 'Username or email',
-                            margin: gap,
-                            child: Inp(
-                              height: fieldH,
-                              value: c.f('user'),
-                              onChanged: (String v) => c.setF('user', v),
-                              placeholder: c.repo.isRemote
-                                  ? 'name@example.com'
-                                  : 'e.g. workk72002',
-                              icon: 'person',
-                              keyboard: TextInputType.emailAddress,
-                            ),
-                          ),
-                          Fld(
-                            label: 'Password',
-                            margin: gap,
-                            child: Inp(
-                              height: fieldH,
-                              value: c.f('pass'),
-                              onChanged: (String v) => c.setF('pass', v),
-                              placeholder: 'Enter your password',
-                              icon: 'lock',
-                              obscure: !c.showPass,
-                              trailing: GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onTap: () =>
-                                    c.update(() => c.showPass = !c.showPass),
-                                child: SizedBox(
-                                  width: 44,
-                                  height: 44,
-                                  child: Center(
-                                    child: Ic(
-                                      c.showPass ? 'eyeOff' : 'eye',
-                                      color: p.ink3,
+                              Fld(
+                                label: c.repo.isRemote
+                                    ? 'Email'
+                                    : 'Username or email',
+                                margin: gap,
+                                child: Inp(
+                                  height: fieldH,
+                                  value: c.f('user'),
+                                  onChanged: (String v) => c.setF('user', v),
+                                  placeholder: c.repo.isRemote
+                                      ? 'name@example.com'
+                                      : 'e.g. workk72002',
+                                  icon: 'person',
+                                  keyboard: TextInputType.emailAddress,
+                                ),
+                              ),
+                              Fld(
+                                label: 'Password',
+                                margin: gap,
+                                child: Inp(
+                                  height: fieldH,
+                                  value: c.f('pass'),
+                                  onChanged: (String v) => c.setF('pass', v),
+                                  placeholder: 'Enter your password',
+                                  icon: 'lock',
+                                  obscure: !c.showPass,
+                                  trailing: GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: () => c.update(
+                                      () => c.showPass = !c.showPass,
+                                    ),
+                                    child: SizedBox(
+                                      width: 44,
+                                      height: 44,
+                                      child: Center(
+                                        child: Ic(
+                                          c.showPass ? 'eyeOff' : 'eye',
+                                          color: p.ink3,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ),
-                          Transform.translate(
-                            offset: const Offset(0, -8),
-                            child: Align(
-                              alignment: Alignment.centerRight,
-                              child: LinkBtn(
-                                'Forgot password?',
-                                onTap: c.goForgot,
-                              ),
-                            ),
-                          ),
-                          Btn(
-                            height: compact ? 50 : 54,
-                            label: c.busy ? 'Logging in…' : 'Log In',
-                            icon: 'arrow',
-                            iconAfter: true,
-                            enabled: !c.busy,
-                            onTap: c.doLogin,
-                          ),
-                          OrDivider(compact: compact),
-                          GlassRow(
-                            onTap: () => c.go('help'),
-                            children: <Widget>[
-                              Ico(
-                                'help',
-                                size: IcoSize.xs,
-                                color: p.navy,
-                                icon: IcSize.s,
-                              ),
-                              const Expanded(
-                                child: RTx(
-                                  'Need help logging in?',
-                                  'Questions, call or email us',
+                              Transform.translate(
+                                offset: const Offset(0, -8),
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: LinkBtn(
+                                    'Forgot password?',
+                                    onTap: c.goForgot,
+                                  ),
                                 ),
                               ),
-                              chevR(),
+                              Btn(
+                                height: compact ? 50 : 54,
+                                label: c.busy ? 'Logging in…' : 'Log In',
+                                icon: 'arrow',
+                                iconAfter: true,
+                                enabled: !c.busy,
+                                onTap: c.doLogin,
+                              ),
                             ],
                           ),
-                        ],
-                      ),
+                        ),
+                        // Help: one quiet line under the form.
+                        Padding(
+                          padding: EdgeInsets.only(top: compact ? 10 : 16),
+                          child: Wrap(
+                            alignment: WrapAlignment.center,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: <Widget>[
+                              Text(
+                                'Trouble logging in? ',
+                                style: ts(14.5, c: p.ink3),
+                              ),
+                              LinkBtn(
+                                'Get help',
+                                key: const ValueKey<String>('loginHelp'),
+                                fontSize: 14.5,
+                                onTap: () => c.go('help'),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const FNote('Version 19.6.2'),
+                      ],
                     ),
-                    const FNote('Version 19.6.2'),
-                  ],
+                  ),
                 ),
               ),
             ),

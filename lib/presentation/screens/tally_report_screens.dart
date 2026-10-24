@@ -16,6 +16,8 @@ import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
+import '../widgets/report_loader.dart';
+import 'fin_charts.dart' show GraphCard, tallyChartSets;
 
 /// "₹1,200 Dr" / "₹1,200 Cr" (Tally sign: Dr −, Cr +).
 String drCr(num v) =>
@@ -77,7 +79,6 @@ class TallyReportScreen extends ConsumerWidget {
         Sub(
           <String>[
             if ((r?.company ?? '').isNotEmpty) r!.company else c.companyName,
-            'From Tally',
           ].join(' · '),
         ),
         if (periods.length > 1)
@@ -103,7 +104,7 @@ class TallyReportScreen extends ConsumerWidget {
         if (c.trError != null)
           InfoBox(c.trError!, icon: 'info')
         else if (r == null)
-          EmptyBox(c.trBusy ? 'Loading Tally figures…' : 'No figures yet.')
+          (c.trBusy ? const ReportLoader() : EmptyBox('No figures yet.'))
         else ...<Widget>[
           if (c.trBusy)
             const Padding(
@@ -111,6 +112,8 @@ class TallyReportScreen extends ConsumerWidget {
               child: LinearProgressIndicator(minHeight: 2),
             ),
           _Meta(r),
+          // The report's own lines as a graph (bar, column, line, pie…).
+          GraphCard(kind: 'tr-${r.report}', sets: tallyChartSets(r)),
           ...switch (r.report) {
             'trial_balance' => <Widget>[_TrialBalance(r)],
             'balance_sheet' => <Widget>[
@@ -394,7 +397,7 @@ ShareDoc tallyReportDoc(AppController c, TallyReport r) {
         );
     return ShareDoc(
       title: r.title,
-      subtitle: '$period · from Tally',
+      subtitle: period,
       company: r.company.isEmpty ? c.companyName : r.company,
       fileStem: 'Trial_Balance',
       table: DocTable(
@@ -418,7 +421,7 @@ ShareDoc tallyReportDoc(AppController c, TallyReport r) {
   }
   return ShareDoc(
     title: r.title,
-    subtitle: '$period · from Tally',
+    subtitle: period,
     company: r.company.isEmpty ? c.companyName : r.company,
     fileStem: r.title.replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_'),
     table: DocTable(

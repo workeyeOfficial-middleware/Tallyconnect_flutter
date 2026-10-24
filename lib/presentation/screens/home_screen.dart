@@ -17,7 +17,8 @@ import '../../core/utils/format.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
-import 'attendance_screens.dart' show ProfileButton;
+import 'att_admin_screens.dart' show TeamLinkCard;
+import 'attendance_screens.dart' show ProfileButton, TeamAttCard;
 import 'sales_screens.dart' show SalesHomeCard;
 
 double homePagerTop(BuildContext c) => topIn(c) + 148;
@@ -564,6 +565,11 @@ class _Card extends ConsumerWidget {
       body = _MoneyCard(open: open);
     } else if (id == AppController.kSalesCard) {
       body = SalesHomeCard(open: open);
+    } else if (id == 'attToday') {
+      // A Sales Team card placed on Home.
+      body = const TeamAttCard(list: 'home');
+    } else if (id == 'attRules') {
+      body = const TeamLinkCard('attRules', list: 'home');
     } else {
       final Shortcut t = kShortcuts[id]!;
       body = Tap(

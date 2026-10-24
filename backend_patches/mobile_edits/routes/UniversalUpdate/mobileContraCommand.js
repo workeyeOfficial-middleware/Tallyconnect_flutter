@@ -1,0 +1,39 @@
+/* =========================================================
+   MOBILE CONTRA ENTRY route (see utils/contraCore.js).
+   Mounted at /api/mobile-voucher-command next to mobileVoucherCommand.js,
+   which is not changed:
+     POST /api/mobile-voucher-command/contra/create
+========================================================= */
+import express from "express";
+import pool from "../../db.js";
+import requireAuth from "../../middleware/requireAuth.js";
+import { createNotification } from "../../utils/notification.js";
+import { createMobileNotificationForAdmin } from "../../utils/mobileNotification.js";
+import { queueContra } from "../../utils/contraCore.js";
+import { hasEditColumns } from "../../utils/mobileEdits.js";
+
+const router = express.Router();
+
+router.post("/contra/create", requireAuth, async (req, res) => {
+  try {
+    const r = await queueContra({
+      db: pool,
+      adminId: req.user.adminId,
+      body: req.body,
+      notify: createNotification,
+      notifyMobile: createMobileNotificationForAdmin,
+    });
+    // The login that made it (team members edit / retry only theirs).
+    if (r.json?.command_id && !r.json.duplicate && (await hasEditColumns(pool))) {
+      await pool
+        .query(`UPDATE mobile_sync_queue SET created_by = $2 WHERE id = $1`, [r.json.command_id, req.user.id])
+        .catch((e) => console.error("contra created_by:", e.message));
+    }
+    return res.status(r.status).json(r.json);
+  } catch (err) {
+    console.error("Mobile Contra create error:", err);
+    return res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+export default router;

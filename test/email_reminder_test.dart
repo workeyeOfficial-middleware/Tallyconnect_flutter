@@ -354,8 +354,20 @@ void main() {
         'partyTab': 'summary',
       });
       await settle();
+      // The page builds its sections lazily: below the Address card the
+      // reminders are not built until scrolled near, so scroll to them
+      // (ensureVisible needs a built widget).
       final Finder log = find.byKey(const ValueKey<String>('remLog-1'));
-      await t.ensureVisible(log);
+      await t.scrollUntilVisible(
+        log,
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byType(CustomScrollView),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
       await t.pump();
       expect(log, findsOneWidget);
       expect(find.text('Accepted'), findsOneWidget);

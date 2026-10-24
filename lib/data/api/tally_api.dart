@@ -77,6 +77,19 @@ class TallyApi {
     query: q,
   );
 
+  /// Admin: each member's From–To figures.
+  Future<Object?> attendanceSummary(Map<String, String> q) =>
+      http.get('/api/attendance/summary', query: q);
+
+  /// Admin: who checks in (positions, exempt list, each member's rule).
+  Future<Object?> attendanceSettings() => http.get('/api/attendance/settings');
+  Future<Object?> saveAttendanceSettings(Json body) =>
+      http.put('/api/attendance/settings', body: body);
+  Future<Object?> saveAttendanceMember(String userId, Json body) => http.put(
+    '/api/attendance/members/${Uri.encodeComponent(userId)}',
+    body: body,
+  );
+
   // ---------------------------------------------------- e-invoices
   // Each sales invoice's e-invoice as Tally created it (read only).
   Future<Object?> einvoiceList(Map<String, String> q) =>
@@ -166,6 +179,14 @@ class TallyApi {
   // The server scopes all of these to the login's active company and the
   // user's ledger permissions; bills and amounts are read on the server.
   Future<Object?> reminderTemplates() => http.get('/api/reminders/templates');
+
+  /// GET / PUT /api/reminders/settings — when reminders are due, the mode.
+  Future<Object?> reminderSettings() => http.get('/api/reminders/settings');
+  Future<Object?> saveReminderSettings(Json body) =>
+      http.put('/api/reminders/settings', body: body);
+
+  /// GET /api/reminders/due — parties due for a reminder today.
+  Future<Object?> dueReminders() => http.get('/api/reminders/due');
   Future<Object?> createReminderTemplate(Json body) =>
       http.post('/api/reminders/templates', body: body);
   Future<Object?> updateReminderTemplate(int id, Json body) =>
@@ -240,6 +261,13 @@ class TallyApi {
   Future<Object?> createContra(Json body) =>
       http.post('/api/mobile-voucher-command/contra/create', body: body);
 
+  /// POST /api/mobile-voucher-command/edit — the create body of [type]
+  /// (sales | purchase | receipt | payment | journal | contra) plus
+  /// `queue_id` (an entry made here) or `voucher_guid` (a Tally voucher).
+  /// Waiting entries are changed in place; others queue one ALTER.
+  Future<Object?> editEntry(Json body) =>
+      http.post('/api/mobile-voucher-command/edit', body: body);
+
   // ------------------------------------------------------ vouchers (§13)
   Future<Object?> vouchersPaged({
     int page = 1,
@@ -268,6 +296,11 @@ class TallyApi {
     '/api/mobile-sync-queue/activity',
     query: <String, Object?>{'company_guid': companyGuid},
   );
+
+  /// POST /api/mobile-sync-queue/:id/retry — sends a failed entry again
+  /// (refused when it is already in Tally or still being sent).
+  Future<Object?> retryEntry(int id) =>
+      http.post('/api/mobile-sync-queue/$id/retry');
 
   // ---------------------------------------------------------- team (§17)
   /// GET /users — every user of the admin with their layout permissions

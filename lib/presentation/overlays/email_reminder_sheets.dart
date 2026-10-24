@@ -67,6 +67,7 @@ class _Parties extends StatelessWidget {
           'Email reminder',
           sub: 'Choose a customer with pending bills',
         ),
+        _DueToday(c: c),
         if (ps.isEmpty)
           const EmptyBox('No pending receivable bills.')
         else
@@ -678,6 +679,250 @@ class ReminderTemplateEditSheet extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Settings → Payment reminders: when reminders are due (before / after /
+/// both the due date, days, hour) and how they go out (Automatic: the server
+/// emails each party at that hour; Manual: your team sends them). The admin
+/// changes them; everyone else sees them.
+class ReminderSettingsSheet extends ConsumerWidget {
+  const ReminderSettingsSheet({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final ReminderSettings s = c.remDraft ?? c.remSettings;
+    final bool edit = c.remSettings.canEdit && !c.remSetBusy;
+    final TcPalette p = Tc.of(context);
+    String days(int n) => n == 1 ? '1 day' : '$n days';
+    Widget line(
+      String key,
+      String title,
+      String value, {
+      VoidCallback? dec,
+      VoidCallback? inc,
+    }) => RowX(
+      key: ValueKey<String>(key),
+      minHeight: 60,
+      children: <Widget>[
+        Expanded(child: RTx(title, value)),
+        if (edit) Stepper2(label: '', onDec: dec, onInc: inc),
+      ],
+    );
+    const List<String> timings = <String>['before', 'after', 'both'];
+    return Sheet(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SheetHead(
+            'Payment reminders',
+            sub: c.remSettings.canEdit
+                ? 'When customers are reminded about their bills'
+                : 'Set by your admin',
+          ),
+          if (!c.remSettings.ready)
+            const InfoBox(
+              'Reminder settings are not available on the server yet. The '
+              'defaults are shown.',
+              icon: 'info',
+            ),
+          if (s.automatic && !c.remSettings.emailConfigured)
+            const InfoBox(
+              'Email sending is not configured on the server yet, so '
+              'automatic reminders cannot go out.',
+              icon: 'alert',
+            ),
+          if (c.remSetError != null) InfoBox(c.remSetError!, icon: 'alert'),
+          const Sec('Delivery', margin: EdgeInsets.fromLTRB(8, 6, 8, 8)),
+          IgnorePointer(
+            ignoring: !edit,
+            child: Seg(
+              key: const ValueKey<String>('remMode'),
+              items: const <String>['Automatic', 'Manual'],
+              selected: s.automatic ? 0 : 1,
+              onPick: (int i) => c.editRemDraft(
+                (ReminderSettings x) =>
+                    x.copyWith(mode: i == 0 ? 'automatic' : 'manual'),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
+            child: Text(
+              s.automatic
+                  ? 'TallyConnect emails each customer by itself at the time '
+                        'below, using your default email template. Only '
+                        'customers with an email address in Tally get one.'
+                  : 'Nothing is sent by itself. Customers due for a reminder '
+                        'are listed in Email reminder, and your team sends '
+                        'them.',
+              style: ts(13, c: p.ink3, h: 1.35),
+            ),
+          ),
+          const Sec('When', margin: EdgeInsets.fromLTRB(8, 6, 8, 8)),
+          IgnorePointer(
+            ignoring: !edit,
+            child: Seg(
+              key: const ValueKey<String>('remTiming'),
+              items: const <String>['Before due', 'After due', 'Both'],
+              selected: timings.indexOf(s.timing).clamp(0, 2),
+              onPick: (int i) => c.editRemDraft(
+                (ReminderSettings x) => x.copyWith(timing: timings[i]),
+              ),
+            ),
+          ),
+          GlassList(
+            children: <Widget>[
+              if (s.before)
+                line(
+                  'remBefore',
+                  'Before the due date',
+                  days(s.beforeDays),
+                  dec: s.beforeDays > 1
+                      ? () => c.editRemDraft(
+                          (ReminderSettings x) =>
+                              x.copyWith(beforeDays: x.beforeDays - 1),
+                        )
+                      : null,
+                  inc: s.beforeDays < 60
+                      ? () => c.editRemDraft(
+                          (ReminderSettings x) =>
+                              x.copyWith(beforeDays: x.beforeDays + 1),
+                        )
+                      : null,
+                ),
+              if (s.after) ...<Widget>[
+                line(
+                  'remAfter',
+                  'After the due date',
+                  days(s.afterDays),
+                  dec: s.afterDays > 1
+                      ? () => c.editRemDraft(
+                          (ReminderSettings x) =>
+                              x.copyWith(afterDays: x.afterDays - 1),
+                        )
+                      : null,
+                  inc: s.afterDays < 90
+                      ? () => c.editRemDraft(
+                          (ReminderSettings x) =>
+                              x.copyWith(afterDays: x.afterDays + 1),
+                        )
+                      : null,
+                ),
+                line(
+                  'remRepeat',
+                  'Then again every',
+                  s.repeatDays == 0 ? 'Once only' : days(s.repeatDays),
+                  dec: s.repeatDays > 0
+                      ? () => c.editRemDraft(
+                          (ReminderSettings x) =>
+                              x.copyWith(repeatDays: x.repeatDays - 1),
+                        )
+                      : null,
+                  inc: s.repeatDays < 30
+                      ? () => c.editRemDraft(
+                          (ReminderSettings x) =>
+                              x.copyWith(repeatDays: x.repeatDays + 1),
+                        )
+                      : null,
+                ),
+              ],
+              line(
+                'remHour',
+                'Time (India time)',
+                clock(DateTime(2000, 1, 1, s.sendHour)),
+                dec: () => c.editRemDraft(
+                  (ReminderSettings x) =>
+                      x.copyWith(sendHour: (x.sendHour + 23) % 24),
+                ),
+                inc: () => c.editRemDraft(
+                  (ReminderSettings x) =>
+                      x.copyWith(sendHour: (x.sendHour + 1) % 24),
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 10, 8, 0),
+            child: Text(
+              'Reminders: ${c.remRuleText(s)}. The due-date alerts on this '
+              'phone follow the same days and time.',
+              key: const ValueKey<String>('remSummary'),
+              style: ts(13, c: p.ink3, h: 1.35),
+            ),
+          ),
+          if (c.remSettings.canEdit)
+            _foot(
+              Btn(label: 'Cancel', kind: BtnKind.g, onTap: c.closeOv),
+              Btn(
+                key: const ValueKey<String>('remSave'),
+                label: c.remSetBusy ? 'Saving…' : 'Save',
+                icon: 'check',
+                enabled: !c.remSetBusy && c.remSettings.ready,
+                onTap: c.saveReminderSettings,
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(top: 14),
+              child: Btn(label: 'Close', kind: BtnKind.g, onTap: c.closeOv),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Email reminder → customers due for a reminder today by the settings.
+class _DueToday extends StatelessWidget {
+  const _DueToday({required this.c});
+  final AppController c;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<DueReminder> due = c.dueToday ?? const <DueReminder>[];
+    if (due.isEmpty) return const SizedBox.shrink();
+    String why(String r) => switch (r) {
+      'before' => 'due soon',
+      'after' => 'overdue',
+      _ => 'due soon and overdue',
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Sec(
+          'Due for a reminder today (${due.length})',
+          margin: const EdgeInsets.fromLTRB(8, 2, 8, 8),
+        ),
+        GlassList(
+          children: <Widget>[
+            for (final DueReminder d in due)
+              RowX(
+                key: ValueKey<String>('emDue-${d.ledgerGuid}'),
+                onTap: () => c.pickEmailParty(
+                  d.party,
+                  only: <String>{for (final ReminderBill b in d.bills) b.no},
+                ),
+                children: <Widget>[
+                  Av(initials(d.party), size: Av.sm),
+                  Expanded(
+                    child: RTx(
+                      d.party,
+                      '${_billsText(d.bills.length)} ${why(d.reason)} · '
+                      '${inr(d.total)}'
+                      '${d.emails.isEmpty ? ' · no email in Tally' : ''}',
+                      ell: true,
+                    ),
+                  ),
+                  chevR(),
+                ],
+              ),
+          ],
+        ),
+        const Sec('All customers', margin: EdgeInsets.fromLTRB(8, 14, 8, 8)),
+      ],
     );
   }
 }

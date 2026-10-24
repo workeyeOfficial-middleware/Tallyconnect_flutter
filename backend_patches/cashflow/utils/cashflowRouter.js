@@ -36,6 +36,7 @@ import {
   fifoPayments,
   dayNum,
 } from "./cashflowCore.js";
+import { hasVoucherStatusColumns, IN_BOOKS } from "./voucherStatus.js";
 
 class HttpError extends Error {
   constructor(status, message, code) {
@@ -54,6 +55,8 @@ export function todayIst(now = new Date()) {
 const SIGNED = "CASE WHEN ve.is_debit THEN ve.amount ELSE -ve.amount END"; // Cr +, Dr −
 const NON_ACCOUNTING = "(memorandum|reversing journal|optional)";
 const COUNTED = `COALESCE(ve.is_active, TRUE) = TRUE AND COALESCE(ve.voucher_type, '') !~* '${NON_ACCOUNTING}'`;
+/** COUNTED, and not a cancelled / optional / order / note / stock voucher once known. */
+const countedFor = async (db) => ((await hasVoucherStatusColumns(db)) ? `${COUNTED} AND ${IN_BOOKS("ve")}` : COUNTED);
 
 /**
  * A ledger name as Tally compares it (capitals ignored, line breaks and
@@ -304,10 +307,11 @@ export function createCashflowRouter({ db, auth, financialData = null, log = con
     const keys = [...new Set(cash.map((l) => nameKey(l.name)))];
     const mv = new Map(); // name key → net (Cr +)
     if (keys.length && basedOn < today) {
+      const counted = await countedFor(db);
       const r = await db.query(
         `SELECT ${NAME_KEY("ve.ledger_name")} AS name, SUM(${SIGNED}) AS net
            FROM voucher_entries ve
-          WHERE ve.admin_id = $1 AND ve.company_guid = $2 AND ${COUNTED}
+          WHERE ve.admin_id = $1 AND ve.company_guid = $2 AND ${counted}
             AND ve.voucher_date > $3::date AND ve.voucher_date <= $4::date
             AND ${NAME_KEY("ve.ledger_name")} = ANY($5::text[])
           GROUP BY 1`,
@@ -362,6 +366,7 @@ export function createCashflowRouter({ db, auth, financialData = null, log = con
     const asParty = (name) => partyOfKey.get(nameKey(name)) ?? String(name);
 
     const from = addDays(today, -2 * WINDOW_DAYS);
+    const counted = await countedFor(db);
     const [histRaw, beforeRaw, mastersRaw, allocs] = await Promise.all([
       db.query(
         `SELECT ${NAME_KEY("ve.ledger_name")} AS party, ve.voucher_guid AS guid,
@@ -372,7 +377,7 @@ export function createCashflowRouter({ db, auth, financialData = null, log = con
            FROM voucher_entries ve
            LEFT JOIN vouchers v
              ON v.admin_id = ve.admin_id AND v.company_guid = ve.company_guid AND v.voucher_guid = ve.voucher_guid
-          WHERE ve.admin_id = $1 AND ve.company_guid = $2 AND ${COUNTED}
+          WHERE ve.admin_id = $1 AND ve.company_guid = $2 AND ${counted}
             AND ${NAME_KEY("ve.ledger_name")} = ANY($3::text[])
             AND ve.voucher_date >= $4::date AND ve.voucher_date <= $5::date
           GROUP BY 1, ve.voucher_guid`,
@@ -381,7 +386,7 @@ export function createCashflowRouter({ db, auth, financialData = null, log = con
       db.query(
         `SELECT ${NAME_KEY("ve.ledger_name")} AS party, SUM(${SIGNED}) AS net
            FROM voucher_entries ve
-          WHERE ve.admin_id = $1 AND ve.company_guid = $2 AND ${COUNTED}
+          WHERE ve.admin_id = $1 AND ve.company_guid = $2 AND ${counted}
             AND ${NAME_KEY("ve.ledger_name")} = ANY($3::text[]) AND ve.voucher_date < $4::date
           GROUP BY 1`,
         [s.adminId, s.company, partyKeys, from]

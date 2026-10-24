@@ -102,6 +102,13 @@ class DemoAwareRepository extends TallyRepository {
   @override
   Future<ReminderTemplates> reminderTemplates() => _rem(live.reminderTemplates);
   @override
+  Future<ReminderSettings> reminderSettings() => _rem(live.reminderSettings);
+  @override
+  Future<ReminderSettings> saveReminderSettings(ReminderSettings s) =>
+      _rem(() => live.saveReminderSettings(s));
+  @override
+  Future<List<DueReminder>> dueReminders() => _rem(live.dueReminders);
+  @override
   Future<ReminderTemplate> saveReminderTemplate(ReminderTemplate t) =>
       _rem(() => live.saveReminderTemplate(t));
   @override
@@ -169,6 +176,30 @@ class DemoAwareRepository extends TallyRepository {
     required DateTime from,
     required DateTime to,
   }) => _att(() => live.attendanceMemberHistory(userId, from: from, to: to));
+  @override
+  Future<AttSummary> attendanceSummary({
+    required DateTime from,
+    required DateTime to,
+  }) => _att(() => live.attendanceSummary(from: from, to: to));
+  @override
+  Future<AttRules> attendanceRules() => _att(live.attendanceRules);
+  @override
+  Future<AttRules> saveExemptPositions(List<String> positions) =>
+      _att(() => live.saveExemptPositions(positions));
+  @override
+  Future<AttRules> saveAttendanceMember(
+    String userId, {
+    String? position,
+    bool clearPosition = false,
+    String? rule,
+  }) => _att(
+    () => live.saveAttendanceMember(
+      userId,
+      position: position,
+      clearPosition: clearPosition,
+      rule: rule,
+    ),
+  );
 
   // --------------------------------- e-invoices: real company only
   @override
@@ -482,6 +513,26 @@ class DemoAwareRepository extends TallyRepository {
       return const SubmitResult(ok: false, message: kDemoWriteBlocked);
     }
     return live.submitEntry(d);
+  }
+
+  @override
+  Future<SubmitResult> submitEdit(
+    EntryDraft d, {
+    int? queueId,
+    String? voucherGuid,
+  }) async {
+    if (_demoOn) {
+      return const SubmitResult(ok: false, message: kDemoWriteBlocked);
+    }
+    return live.submitEdit(d, queueId: queueId, voucherGuid: voucherGuid);
+  }
+
+  @override
+  Future<SubmitResult> retryEntry(int queueId) async {
+    if (_demoOn) {
+      return const SubmitResult(ok: false, message: kDemoWriteBlocked);
+    }
+    return live.retryEntry(queueId);
   }
 
   @override

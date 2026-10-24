@@ -975,7 +975,7 @@ const List<Plan> kPlans = <Plan>[
 ];
 
 const List<SearchEntry> kSearch = <SearchEntry>[
-  SearchEntry('Items', 'Stock from Tally', 'box', 'items', a: NavTo('items')),
+  SearchEntry('Items', 'Stock and prices', 'box', 'items', a: NavTo('items')),
   SearchEntry(
     'Party',
     'Customers and suppliers',

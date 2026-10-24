@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tallyconnect_ui/app/app_state.dart';
 import 'package:tallyconnect_ui/app/providers.dart';
 import 'package:tallyconnect_ui/core/storage/local_storage.dart';
+import 'package:tallyconnect_ui/core/utils/format.dart' show ymd;
 import 'package:tallyconnect_ui/data/models/models.dart';
 import 'package:tallyconnect_ui/data/repositories/demo_repository.dart';
 import 'package:tallyconnect_ui/main.dart';
@@ -389,6 +390,52 @@ void main() {
             find.byKey(const ValueKey<String>('attMember-10')),
             findsOneWidget,
           );
+          // The day: weekday + date; each card: name, In / Out, status.
+          expect(
+            (t.widget(find.byKey(const ValueKey<String>('attWeekday')))
+                    as Text)
+                .data,
+            'Saturday',
+          );
+          expect(
+            find.descendant(
+              of: find.byKey(const ValueKey<String>('attMember-9')),
+              matching: find.text('asha'),
+            ),
+            findsOneWidget,
+          );
+          // Date filters: Yesterday, then back to Today.
+          await tap(t, 'attDayYesterday');
+          expect(ymd(c.attDay), '2026-10-02');
+          expect(
+            (t.widget(find.byKey(const ValueKey<String>('attWeekday')))
+                    as Text)
+                .data,
+            'Friday',
+          );
+          await tap(t, 'attDayToday');
+          expect(ymd(c.attDay), '2026-10-03');
+          // Cards → Table → Board; the choice is kept.
+          expect(c.attTeamView, 'cards');
+          await t.tap(find.text('Table'));
+          await settle(t);
+          expect(c.attTeamView, 'table');
+          expect(
+            find.byKey(const ValueKey<String>('attTable')),
+            findsOneWidget,
+          );
+          expect(t.takeException(), isNull);
+          await t.tap(find.text('Board'));
+          await settle(t);
+          expect(c.attTeamView, 'board');
+          expect(
+            find.byKey(const ValueKey<String>('attBoard')),
+            findsOneWidget,
+          );
+          expect(t.takeException(), isNull);
+          await t.tap(find.text('Cards'));
+          await settle(t);
+          expect(c.attTeamView, 'cards');
           await tap(t, 'attStat-active');
           expect(
             find.byKey(const ValueKey<String>('attMember-10')),

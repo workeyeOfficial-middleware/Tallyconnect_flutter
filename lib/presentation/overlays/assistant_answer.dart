@@ -512,3 +512,90 @@ class AiMarkdown extends StatelessWidget {
     );
   }
 }
+
+// ------------------------------------------------- sharing (WhatsApp)
+/// The AI's Markdown in WhatsApp's own style: `**bold**` / headings →
+/// `*bold*`, `- item` → `• item`.
+String aiWhatsAppText(String md) => md
+    .split('\n')
+    .map((String l) {
+      String x = l.trimRight();
+      final RegExpMatch? h = RegExp(r'^\s*#{1,6}\s+(.*)$').firstMatch(x);
+      if (h != null) x = '*${h[1]!.replaceAll('**', '')}*';
+      x = x.replaceFirstMapped(
+        RegExp(r'^(\s*)[-*]\s+'),
+        (Match m) => '${m[1]}• ',
+      );
+      return x.replaceAllMapped(
+        RegExp(r'\*\*(.+?)\*\*'),
+        (Match m) => '*${m[1]}*',
+      );
+    })
+    .join('\n')
+    .trim();
+
+/// One answer as text: notes, KPI figures, the summary and its tables
+/// (each table's first rows; a table is cut short with "…N more").
+String aiAnswerText(AiTurn t, {int maxRows = 15}) {
+  final List<String> out = <String>[];
+  for (final AiBlock b in t.blocks) {
+    switch (b.type) {
+      case 'note':
+        out.add('_${b.title}_');
+      case 'kpis':
+        if (b.title.isNotEmpty) out.add('*${aiTitle(b.title)}*');
+        for (final AiKpi k in b.items) {
+          out.add('• ${k.label}: ${aiValue(k.value, k.format)}');
+        }
+    }
+  }
+  final String summary = aiWhatsAppText(t.text);
+  if (summary.isNotEmpty) out.add(summary);
+  for (final AiBlock b in t.blocks.where((AiBlock x) => x.type == 'table')) {
+    out.add('');
+    if (b.title.isNotEmpty) out.add('*${aiTitle(b.title)}*');
+    if (b.rows.isEmpty) {
+      out.add(b.empty.isEmpty ? 'Nothing found.' : b.empty);
+      continue;
+    }
+    for (final List<Object?> r in b.rows.take(maxRows)) {
+      out.add(
+        '• ${<String>[for (int i = 0; i < b.columns.length; i++) aiValue(r[i], b.columns[i].format)].join(' · ')}',
+      );
+    }
+    final int more =
+        (b.totalRows > b.rows.length ? b.totalRows : b.rows.length) -
+        (b.rows.length < maxRows ? b.rows.length : maxRows);
+    if (more > 0) out.add('…$more more');
+  }
+  return out.join('\n').trim();
+}
+
+/// One message with the question it answers: `Q: …` then the answer.
+String aiMessageShare(List<AiTurn> turns, int i, String company) {
+  final AiTurn t = turns[i];
+  AiTurn? q;
+  for (int j = i - 1; j >= 0; j--) {
+    if (turns[j].mine) {
+      q = turns[j];
+      break;
+    }
+  }
+  return <String>[
+    if (q != null && !t.mine) '*Q:* ${q.text.trim()}',
+    if (q != null && !t.mine) '',
+    if (t.mine) t.text.trim() else aiAnswerText(t),
+    '',
+    '— TallyConnect AI · $company',
+  ].join('\n');
+}
+
+/// The whole conversation (failed answers left out).
+String aiChatShare(List<AiTurn> turns, String company) => <String>[
+  '*TallyConnect AI · $company*',
+  for (final AiTurn t in turns)
+    if (!t.error) ...<String>[
+      '',
+      if (t.mine) '*Q:* ${t.text.trim()}' else aiAnswerText(t),
+    ],
+].join('\n');

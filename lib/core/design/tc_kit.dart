@@ -2084,6 +2084,105 @@ class Brand extends StatelessWidget {
   }
 }
 
+/// The TallyConnect logo, drawn (no image, no background): a slanted red
+/// "Tally" with a swoosh under it and a wide-spaced "CONNECT" beside it on
+/// the same baseline. "CONNECT" takes the theme's ink so it reads on light
+/// and dark wallpapers. [height] is the height of "Tally".
+class TcLogo extends StatelessWidget {
+  const TcLogo({super.key, this.height = 44});
+  final double height;
+
+  /// The logo's reds (top → bottom of the letters).
+  static const Color red1 = Color(0xFFFF4A4A), red2 = Color(0xFFC8102E);
+
+  @override
+  Widget build(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    final double fs = height / 1.05;
+    return Semantics(
+      label: 'TallyConnect',
+      image: true,
+      child: ExcludeSemantics(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: <Widget>[
+            Stack(
+              clipBehavior: Clip.none,
+              children: <Widget>[
+                Padding(
+                  // Room for the swoosh under the letters.
+                  padding: EdgeInsets.only(bottom: fs * .2),
+                  child: Transform(
+                    // Italic slant, like the reference wordmark.
+                    transform: Matrix4.skewX(-.2),
+                    alignment: Alignment.bottomCenter,
+                    child: ShaderMask(
+                      blendMode: BlendMode.srcIn,
+                      shaderCallback: (Rect r) => const LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: <Color>[red1, red2],
+                      ).createShader(r),
+                      child: Text(
+                        'Tally',
+                        style: ts(fs, w: w800, h: 1, ls: -.035 * fs),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned.fill(
+                  child: CustomPaint(painter: _SwooshPainter(red1, red2)),
+                ),
+              ],
+            ),
+            SizedBox(width: fs * .14),
+            Padding(
+              padding: EdgeInsets.only(bottom: fs * .27),
+              child: Text(
+                'CONNECT',
+                style: ts(
+                  fs * .36,
+                  w: w600,
+                  h: 1,
+                  ls: .14 * fs * .36,
+                  c: p.ink2,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The tapered swoosh under "Tally": thin at the left, full under the "y".
+class _SwooshPainter extends CustomPainter {
+  const _SwooshPainter(this.a, this.b);
+  final Color a, b;
+
+  @override
+  void paint(Canvas canvas, Size s) {
+    final double w = s.width, h = s.height;
+    final Path path = Path()
+      ..moveTo(w * .02, h * .97)
+      ..quadraticBezierTo(w * .5, h * .80, w * 1.04, h * .80)
+      ..quadraticBezierTo(w * .5, h * .87, w * .02, h * .97)
+      ..close();
+    canvas.drawPath(
+      path,
+      Paint()
+        ..shader = LinearGradient(
+          colors: <Color>[b, a],
+        ).createShader(Offset.zero & s),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_SwooshPainter o) => o.a != a || o.b != b;
+}
+
 /// `.lmark` gradient logo tile.
 class LMark extends StatelessWidget {
   const LMark({

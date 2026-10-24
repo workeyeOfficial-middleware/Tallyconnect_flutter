@@ -14,6 +14,7 @@ import '../../core/design/tc_palette.dart';
 import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
 import '../../data/accounting.dart';
+import '../../data/ledger_location.dart';
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
@@ -258,7 +259,7 @@ class ItemsScreen extends ConsumerWidget {
           ],
         ),
         const TitleBadge('Items'),
-        const Sub('Your stock from Tally'),
+        const Sub('Your stock'),
         Glass(
           padding: const EdgeInsets.all(18),
           child: Column(
@@ -446,13 +447,15 @@ class PartyScreen extends ConsumerWidget {
     // 16K+ parties: debounced search over the text built once per party;
     // filtered, sorted and ordered once per data / filter / search change.
     final String q = c.q('partyQ').toLowerCase();
+    final LocFilter loc = c.partyLoc;
     final String mk =
-        '${c.repo.version}|${pool.length}|${c.partyFilter}|${c.partySort}|$q|${c.prefsVersion}';
+        '${c.repo.version}|${pool.length}|${c.partyFilter}|${c.partySort}|$q|${c.prefsVersion}|${loc.key}';
     final List<Party> rows = c.memo<List<Party>>('party-rows', mk, () {
       final List<Party> r = pool
           .where(
             (Party x) =>
                 (c.partyFilter == 'all' || x.type == c.partyFilter) &&
+                matchesLocation(x, loc) &&
                 (q.isEmpty ||
                     (x.search.isNotEmpty ? x.search : x.name.toLowerCase())
                         .contains(q)),
@@ -537,6 +540,39 @@ class PartyScreen extends ConsumerWidget {
           onAction: () =>
               c.update(() => c.partySort = c.partySort == 'amt' ? 'az' : 'amt'),
         ),
+        // Location (state, city / area, PIN) as saved in Tally.
+        Chips(
+          margin: const EdgeInsets.only(bottom: 8),
+          children: <Widget>[
+            ChipBtn(
+              loc.on ? '${loc.label} · ${grouped(rows.length)}' : 'Location',
+              key: const ValueKey<String>('partyLocBtn'),
+              icon: 'globe',
+              height: 38,
+              fontSize: 13.5,
+              on: loc.on,
+              onTap: c.openPartyLocation,
+            ),
+            if (loc.on) ...<Widget>[
+              ChipBtn(
+                'Share these',
+                key: const ValueKey<String>('partyLocShare'),
+                icon: 'share',
+                height: 38,
+                fontSize: 13.5,
+                onTap: rows.isEmpty ? null : () => c.sharePartiesHere(v.rows),
+              ),
+              ChipBtn(
+                'Clear',
+                key: const ValueKey<String>('partyLocClear'),
+                icon: 'close',
+                height: 38,
+                fontSize: 13.5,
+                onTap: c.clearPartyLocation,
+              ),
+            ],
+          ],
+        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
           child: Text(sortLabel, style: rsStyle(context)),
@@ -577,7 +613,8 @@ class PartyScreen extends ConsumerWidget {
                 Expanded(
                   child: RTx(
                     x.name,
-                    '${x.kindLabel} · ${x.city.isNotEmpty ? x.city : (x.group ?? '')}',
+                    // With a location filter on: where it is (as in Tally).
+                    '${x.kindLabel} · ${x.city.isNotEmpty ? x.city : (loc.on && placeOf(x).isNotEmpty ? placeOf(x) : (x.group ?? ''))}',
                     ell: true,
                   ),
                 ),
@@ -645,10 +682,120 @@ class PartyScreen extends ConsumerWidget {
           hidden: v.hidden,
           unhide: v.unhide,
           empty: rows.isEmpty
-              ? c.emptyText(DataSet.ledgers, 'No party found.')
+              ? (loc.on
+                    ? 'No ledger in ${loc.label}. Only the address, PIN and '
+                          'state saved in Tally are matched.'
+                    : c.emptyText(DataSet.ledgers, 'No party found.'))
               : null,
         ),
       ],
+    );
+  }
+}
+
+/// Party list → Location: a state (from the ledgers' Tally state) and / or
+/// a city / area / PIN matched in their Tally address; a live count.
+class PartyLocationSheet extends ConsumerWidget {
+  const PartyLocationSheet({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
+    final TcPalette p = Tc.of(context);
+    final List<Party> pool = c.partyPool();
+    final List<(String, int)> states = c.memo<List<(String, int)>>(
+      'party-states',
+      '${c.repo.version}|${pool.length}',
+      () => statesOf(pool),
+    );
+    final int located = c.memo<int>(
+      'party-located',
+      '${c.repo.version}|${pool.length}',
+      () => withLocation(pool),
+    );
+    final LocFilter d = c.partyLocDraft;
+    final int n = d.on
+        ? pool.where((Party x) => matchesLocation(x, d)).length
+        : pool.length;
+    return Sheet(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const SheetHead(
+            'Location',
+            sub: 'Ledgers by the address and state saved in Tally',
+          ),
+          if (located == 0)
+            const InfoBox(
+              'No ledger has an address or state from Tally yet. They come '
+              'with the next sync after the TallyConnect Agent is updated.',
+              icon: 'info',
+            ),
+          Fld(
+            label: 'City, area or PIN',
+            child: Inp(
+              key: const ValueKey<String>('plArea'),
+              value: c.f('plArea'),
+              onChanged: (String s) => c.setF('plArea', s),
+              placeholder: 'e.g. Mumbai, Andheri, 400',
+              icon: 'search',
+            ),
+          ),
+          if (states.isNotEmpty) ...<Widget>[
+            const Sec('State', margin: EdgeInsets.fromLTRB(8, 0, 8, 8)),
+            Chips(
+              margin: const EdgeInsets.only(bottom: 12),
+              children: <Widget>[
+                for (final (String, int) s in states.take(24))
+                  ChipBtn(
+                    '${s.$1} · ${grouped(s.$2)}',
+                    key: ValueKey<String>('plState-${s.$1}'),
+                    height: 36,
+                    fontSize: 13,
+                    on: c.partyLocState == s.$1,
+                    onTap: () => c.pickPartyLocState(s.$1),
+                  ),
+              ],
+            ),
+          ],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
+            child: Text(
+              d.on
+                  ? '${grouped(n)} ${n == 1 ? 'ledger' : 'ledgers'} in ${d.label}'
+                  : '${grouped(located)} of ${grouped(pool.length)} ledgers have '
+                        'a location in Tally',
+              key: const ValueKey<String>('plCount'),
+              style: ts(13.5, w: w700, c: p.ink2),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  flex: 10,
+                  child: Btn(
+                    label: 'Clear',
+                    kind: BtnKind.g,
+                    onTap: c.clearPartyLocation,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 17,
+                  child: Btn(
+                    key: const ValueKey<String>('plApply'),
+                    label: d.on ? 'Show ${grouped(n)}' : 'Show all',
+                    icon: 'check',
+                    onTap: c.applyPartyLocation,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -756,7 +903,7 @@ class PartyDetailScreen extends ConsumerWidget {
             ('Contact person', 'Rakesh Agarwal', false),
             ('Phone', '+91 98298 48278', false),
             ('Email', 'accounts@shreebalaji.in', false),
-            ('Credit time', '30 days', false),
+            ('Credit period', '30 days', false),
             ('Opening balance (1 Apr 2026)', '₹12,540 Dr', false),
           ]
         : <(String, String, bool)>[
@@ -906,6 +1053,9 @@ class PartyDetailScreen extends ConsumerWidget {
                 ),
             },
           ),
+        // The ledger's address as saved in Tally (when synced).
+        if (c.partyTab == 'summary' && (remote || placeOf(p0).isNotEmpty))
+          PartyAddressCard(party: p0),
         // Email reminders sent to this customer (real data only).
         if (c.partyTab == 'summary' && remote && (pc || other))
           PartyReminders(party: p0),
@@ -1226,6 +1376,73 @@ class ItemDetailScreen extends ConsumerWidget {
         if (c.itemTab == 'customers') parties(det?.customers, true),
         if (c.itemTab == 'suppliers') parties(det?.suppliers, false),
       ],
+    );
+  }
+}
+
+/// Party summary: the ledger's address, PIN and state as saved in Tally,
+/// wrapped over as many lines as it needs (selectable to copy). Without
+/// one: a short note.
+class PartyAddressCard extends StatelessWidget {
+  const PartyAddressCard({super.key, required this.party});
+  final Party party;
+
+  @override
+  Widget build(BuildContext context) {
+    final TcPalette p = Tc.of(context);
+    final String address = (party.address ?? '').trim();
+    final String place = placeOf(party);
+    final bool none = address.isEmpty && place.isEmpty;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Glass(
+        key: const ValueKey<String>('partyAddress'),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Ico('globe', size: IcoSize.xs, color: p.navy, icon: IcSize.s),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text('Address', style: rsStyle(context)),
+                  const SizedBox(height: 4),
+                  if (none)
+                    Text(
+                      'No address saved for this ledger in Tally.',
+                      key: const ValueKey<String>('partyAddressNone'),
+                      style: ts(14.5, h: 1.4, c: p.ink3),
+                    )
+                  else ...<Widget>[
+                    if (address.isNotEmpty)
+                      SelectableText(
+                        // One line per part, never clipped.
+                        address.replaceAll(RegExp(r',\s*'), ',\n'),
+                        key: const ValueKey<String>('partyAddressText'),
+                        style: ts(15, w: w600, h: 1.45, c: p.ink),
+                      ),
+                    if (place.isNotEmpty)
+                      Padding(
+                        padding: EdgeInsets.only(top: address.isEmpty ? 0 : 6),
+                        child: Text(
+                          place.contains('·')
+                              ? 'PIN ${party.pincode} · ${party.state}'
+                              : ((party.pincode ?? '').isNotEmpty
+                                    ? 'PIN ${party.pincode}'
+                                    : party.state!),
+                          key: const ValueKey<String>('partyAddressPlace'),
+                          style: ts(13.5, w: w700, c: p.ink2),
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

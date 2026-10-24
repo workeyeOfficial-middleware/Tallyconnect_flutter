@@ -3,6 +3,7 @@ import pool from "../db.js";
 import requireAuth from "../middleware/requireAuth.js";
 import { createMobileNotificationForAdmin } from "../utils/mobileNotification.js";
 import { grossAmount, hasCashFlowColumns } from "../utils/cashFlowColumns.js";
+import { hasVoucherStatusColumns, voucherStatus } from "../utils/voucherStatus.js";
 
 const router = express.Router();
 
@@ -71,6 +72,9 @@ router.post("/sync", requireAuth, async (req, res) => {
     party_name, 
     entries,
     has_cash_flow,
+    is_cancelled,
+    is_optional,
+    base_type,
   } = req.body;
   // Tally's Cash Flow flag of the voucher (true / false); an Agent without
   // it sends nothing, and what is stored is kept.
@@ -102,6 +106,12 @@ if (companyCheck.rowCount === 0) {
   // The Cash Flow columns (flag, a line's gross Dr / Cr) once the database
   // has them; before that the sync stores exactly what it did.
   const cf = await hasCashFlowColumns(pool);
+  // Cancelled / optional / built-in type (is the voucher in the books?) once
+  // the database has the columns; an Agent without them sends nothing and
+  // what is stored is kept (NULL = counted as before).
+  const vs = await hasVoucherStatusColumns(pool);
+  const st = voucherStatus({ is_cancelled, is_optional, base_type });
+  const n = 8 + (cf ? 1 : 0);
 
   const client = await pool.connect();
 
@@ -123,9 +133,10 @@ await client.query(
         net_amount,
         party_name,
         ${cf ? "has_cash_flow," : ""}
+        ${vs ? "is_cancelled, is_optional, base_type, is_accounting," : ""}
         is_active
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,${cf ? "$9," : ""}true)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,${cf ? "$9," : ""}${vs ? `$${n + 1},$${n + 2},$${n + 3},$${n + 4},` : ""}true)
       ON CONFLICT (admin_id, company_guid, voucher_guid)
       DO UPDATE SET
         voucher_type = EXCLUDED.voucher_type,
@@ -134,6 +145,10 @@ await client.query(
         net_amount = EXCLUDED.net_amount,
         party_name = EXCLUDED.party_name,
         ${cf ? "has_cash_flow = COALESCE(EXCLUDED.has_cash_flow, vouchers.has_cash_flow)," : ""}
+        ${vs ? `is_cancelled = COALESCE(EXCLUDED.is_cancelled, vouchers.is_cancelled),
+        is_optional = COALESCE(EXCLUDED.is_optional, vouchers.is_optional),
+        base_type = COALESCE(EXCLUDED.base_type, vouchers.base_type),
+        is_accounting = COALESCE(EXCLUDED.is_accounting, vouchers.is_accounting),` : ""}
         is_active = true
       `,
       [
@@ -146,6 +161,7 @@ await client.query(
         net_amount || 0,
         party_name || null,
         ...(cf ? [cashFlowFlag] : []),
+        ...(vs ? [st.cancelled, st.optional, st.base, st.accounting] : []),
       ]
     );
 
@@ -170,9 +186,10 @@ await client.query(
           voucher_type,
           reference_no,
           ${cf ? "gross_dr, gross_cr," : ""}
+          ${vs ? "is_accounting," : ""}
           is_active
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,${cf ? "$10,$11," : ""}true)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,${cf ? "$10,$11," : ""}${vs ? (cf ? "$12," : "$10,") : ""}true)
         ON CONFLICT (admin_id, company_guid, voucher_guid, ledger_name)
         DO UPDATE SET
           amount = EXCLUDED.amount,
@@ -181,6 +198,7 @@ await client.query(
           voucher_type = EXCLUDED.voucher_type,
           reference_no = EXCLUDED.reference_no,
           ${cf ? "gross_dr = EXCLUDED.gross_dr, gross_cr = EXCLUDED.gross_cr," : ""}
+          ${vs ? "is_accounting = COALESCE(EXCLUDED.is_accounting, voucher_entries.is_accounting)," : ""}
           is_active = true
         `,
         [
@@ -194,6 +212,7 @@ await client.query(
           voucher_type,
           reference_no,
           ...(cf ? [grossAmount(e.gross_dr), grossAmount(e.gross_cr)] : []),
+          ...(vs ? [st.accounting] : []),
         ]
       );
     }
@@ -221,6 +240,25 @@ await client.query(
           AND NOT (ledger_name = ANY($4::text[]))
         `,
         [adminId, company_guid, voucher_guid, sentLines.map((e) => e.ledger_name)]
+      );
+    }
+
+    /* ==============================
+       4️⃣ Every line of the voucher carries whether it is in the books —
+       also lines stored before it was cancelled in Tally (a cancelled
+       voucher comes with no lines). Only when the Agent sent the status.
+    ============================== */
+    if (vs && st.accounting !== null) {
+      await client.query(
+        `
+        UPDATE voucher_entries
+        SET is_accounting = $4::boolean
+        WHERE admin_id = $1
+          AND company_guid = $2
+          AND voucher_guid = $3
+          AND is_accounting IS DISTINCT FROM $4::boolean
+        `,
+        [adminId, company_guid, voucher_guid, st.accounting]
       );
     }
 
@@ -467,6 +505,10 @@ router.get("/paged", requireAuth, async (req, res) => {
 
     const baseClauses = [];
     const filterClauses = [];
+    // Once the Agent sends voucher status (voucherStatus.js): optional
+    // vouchers are left out as in Tally's lists and voucher count; cancelled
+    // ones stay listed (Tally counts them) and come with is_cancelled.
+    const vs = await hasVoucherStatusColumns(pool);
 
     if (role === "ADMIN") {
       baseClauses.push("v.admin_id = $1");
@@ -482,6 +524,7 @@ router.get("/paged", requireAuth, async (req, res) => {
         "v.voucher_guid = ANY (SELECT jsonb_array_elements_text(u.voucher_selection_permissions->'allowed_vouchers'))"
       );
     }
+    if (vs) baseClauses.push("COALESCE(v.is_optional, FALSE) = FALSE");
 
     if (type) {
       params.push(type);
@@ -554,6 +597,7 @@ router.get("/paged", requireAuth, async (req, res) => {
         v.reference_no,
         v.net_amount AS amount,
         v.is_active,
+        ${vs ? "v.is_cancelled, v.is_accounting," : ""}
         v.party_name
        FROM vouchers v ${joinSql} ${whereSql}
        ORDER BY ${orderBySql}

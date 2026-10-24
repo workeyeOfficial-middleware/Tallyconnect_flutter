@@ -123,6 +123,18 @@ class FakeBackend {
   final List<Map<String, Object?>> remTemplates = <Map<String, Object?>>[];
   int _remId = 1;
 
+  /// Payment reminder settings saved on the server (null: defaults).
+  Map<String, Object?>? remSettings;
+
+  /// The server has no reminder_settings table yet (SQL not run).
+  bool remSettingsNoTable = false;
+
+  /// GET /api/reminders/due rows (parties due for a reminder today).
+  List<Map<String, Object?>> remDue = <Map<String, Object?>>[];
+
+  /// Bodies of PUT /api/reminders/settings.
+  final List<Map<String, Object?>> remSettingsPuts = <Map<String, Object?>>[];
+
   // -------------------------------------------- /api/financial/* (fake)
   /// This login may see financial statements.
   bool finAllowed = true;
@@ -162,6 +174,26 @@ class FakeBackend {
 
   /// The server's clock (the same fixed "today" as the repository's).
   DateTime Function() attNow = () => DateTime(2026, 10, 3, 11);
+
+  /// Check-in rules: positions that do not check in; each member's
+  /// position / rule (user id → (position, rule)). The team login is "7".
+  List<String> attExempt = <String>[];
+  final Map<String, (String?, String)> attRules = <String, (String?, String)>{};
+
+  /// The server has no check-in rules tables yet.
+  bool attRulesMissing = false;
+
+  /// Bodies of PUT /api/attendance/settings and /members/:id.
+  final List<Map<String, Object?>> attRulePuts = <Map<String, Object?>>[];
+
+  /// Must [userId] check in (as the server decides)?
+  bool attRequired(String userId) {
+    final (String?, String) r = attRules[userId] ?? (null, 'auto');
+    if (r.$2 == 'required') return true;
+    if (r.$2 == 'exempt') return false;
+    final String pos = (r.$1 ?? '').toLowerCase();
+    return !attExempt.any((String x) => x.toLowerCase() == pos && pos != '');
+  }
 
   // ------------------------------------------- /api/einvoice/* (fake)
   /// Rows as the server sends them (status / alerts worked out already);
@@ -235,6 +267,9 @@ class FakeBackend {
 
   /// Server deployed without the Contra route (404, no JSON body).
   bool contraMissing = false;
+
+  /// Server deployed without the edit route (404, no JSON body).
+  bool editMissing = false;
 
   // ---------------------------------------- /api/cashflow/* (fake)
   /// Query of every call; server without the routes; no cash figures.
@@ -877,6 +912,32 @@ class FakeBackend {
           'command_id': 55,
           'voucher_guid': 'g',
           'status': 'QUEUED',
+        };
+      case '/api/mobile-voucher-command/edit' when editMissing:
+        return http.Response('Cannot POST', 404);
+      case '/api/mobile-voucher-command/edit':
+        body = <String, Object?>{
+          'success': true,
+          'edited': true,
+          'command_id': 56,
+          'status': 'QUEUED',
+        };
+      case '/api/mobile-sync-queue/30/retry':
+        // Already in Tally: refused (no second voucher).
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'success': false,
+            'code': 'done',
+            'message': 'This entry is already in Tally.',
+          }),
+          409,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      case '/api/mobile-sync-queue/31/retry':
+        body = <String, Object?>{
+          'success': true,
+          'status': 'QUEUED',
+          'retry_count': 1,
         };
       default:
         if (p.startsWith('/api/mobile/notifications/') && p.endsWith('/read')) {
@@ -1895,10 +1956,13 @@ class FakeBackend {
       <String, Object?>{'success': false, 'code': code, 'message': message},
     );
     if (p == '/api/attendance/me') {
+      final bool exempt = !admin && !attRequired('7');
       return _json(200, <String, Object?>{
         'success': true,
-        'enabled': !admin && attOnTeam,
+        'enabled': !admin && attOnTeam && !exempt,
         'is_admin': admin,
+        'exempt': exempt,
+        'position': attRules['7']?.$1,
         'server_time': now.toUtc().toIso8601String(),
         'date': today,
         ...dayOf(of('7', date: today)),
@@ -1969,20 +2033,141 @@ class FakeBackend {
       });
     }
     if (!admin) return err(403, 'forbidden', 'Admin access required');
-    if (p == '/api/attendance/team') {
-      final String date = q['date'] ?? today;
-      final List<Map<String, Object?>> members = <Map<String, Object?>>[
-        // Every team member of the account.
-        for (final (String, String) m in <(String, String)>[
-          ('9', 'asha'),
-          ('10', 'vik'),
-        ])
+    const List<(String, String)> team = <(String, String)>[
+      ('9', 'asha'),
+      ('10', 'vik'),
+    ];
+    Map<String, Object?> rules() => <String, Object?>{
+      'success': true,
+      'ready': !attRulesMissing,
+      'exempt_positions': attExempt,
+      'positions': <String>[
+        'Sales Executive',
+        'Manager',
+        'Director',
+        for (final (String?, String) x in attRules.values)
+          if (x.$1 != null &&
+              !<String>[
+                'Sales Executive',
+                'Manager',
+                'Director',
+              ].contains(x.$1))
+            x.$1!,
+      ],
+      'members': <Object?>[
+        for (final (String, String) m in team)
           <String, Object?>{
             'user_id': int.parse(m.$1),
             'username': m.$2,
             'email': '${m.$2}@x.in',
-            ...dayOf(of(m.$1, date: date)),
+            'position': attRules[m.$1]?.$1,
+            'rule': attRules[m.$1]?.$2 ?? 'auto',
+            'required': attRequired(m.$1),
+            'reason': (attRules[m.$1]?.$2 ?? 'auto') != 'auto'
+                ? 'rule'
+                : (attRequired(m.$1) ? 'default' : 'position'),
           },
+      ],
+    };
+    if (p == '/api/attendance/settings') {
+      if (r.method == 'PUT') {
+        if (attRulesMissing) {
+          return err(
+            503,
+            'not_ready',
+            'Check-in settings are not available on the server yet.',
+          );
+        }
+        attRulePuts.add(body);
+        attExempt = <String>[
+          for (final Object? x in body['exempt_positions']! as List<Object?>)
+            '$x',
+        ];
+      }
+      return _json(200, rules());
+    }
+    final RegExpMatch? mr = RegExp(
+      r'^/api/attendance/members/(\d+)$',
+    ).firstMatch(p);
+    if (mr != null) {
+      final String id = mr.group(1)!;
+      if (id != '9' && id != '10') {
+        return err(404, 'not_found', 'Team member not found');
+      }
+      attRulePuts.add(<String, Object?>{'user_id': id, ...body});
+      final (String?, String) cur = attRules[id] ?? (null, 'auto');
+      attRules[id] = (
+        body.containsKey('position') ? body['position'] as String? : cur.$1,
+        (body['rule'] as String?) ?? cur.$2,
+      );
+      return _json(200, rules());
+    }
+    if (p == '/api/attendance/summary') {
+      final String from = q['from'] ?? today, to = q['to'] ?? today;
+      return _json(200, <String, Object?>{
+        'success': true,
+        'company': 'Gupta Industries',
+        'from': from,
+        'to': to,
+        'members': <Object?>[
+          for (final (String, String) m in team)
+            () {
+              final List<Map<String, Object?>> ss = <Map<String, Object?>>[
+                for (final Map<String, Object?> s in of(m.$1))
+                  if ('${s['work_date']}'.compareTo(from) >= 0 &&
+                      '${s['work_date']}'.compareTo(to) <= 0)
+                    s,
+              ];
+              final int mins = ss.fold<int>(
+                0,
+                (int a, Map<String, Object?> s) =>
+                    a + (out(s)['minutes']! as int),
+              );
+              final int present = <String>{
+                for (final Map<String, Object?> s in ss) '${s['work_date']}',
+              }.length;
+              final bool req = attRequired(m.$1);
+              return <String, Object?>{
+                'user_id': int.parse(m.$1),
+                'username': m.$2,
+                'email': '${m.$2}@x.in',
+                'position': attRules[m.$1]?.$1,
+                'required': req,
+                'present_days': present,
+                'working_days': 3,
+                'leave_days': m.$1 == '9' ? 0.5 : 0,
+                'absent_days': req ? 3 - present : 0,
+                'holidays': 0,
+                'weekly_off': 1,
+                'total_minutes': mins,
+                'avg_minutes': present == 0 ? 0 : mins ~/ present,
+                'avg_in': present == 0 ? null : '09:30',
+                'avg_out': present == 0 ? null : '18:00',
+              };
+            }(),
+        ],
+      });
+    }
+    if (p == '/api/attendance/team') {
+      final String date = q['date'] ?? today;
+      final List<Map<String, Object?>> members = <Map<String, Object?>>[
+        // Every team member of the account.
+        for (final (String, String) m in team)
+          () {
+            final Map<String, Object?> d = dayOf(of(m.$1, date: date));
+            final bool req = attRequired(m.$1);
+            return <String, Object?>{
+              'user_id': int.parse(m.$1),
+              'username': m.$2,
+              'email': '${m.$2}@x.in',
+              'position': attRules[m.$1]?.$1,
+              'required': req,
+              ...d,
+              'status': !req && d['status'] == 'absent'
+                  ? 'exempt'
+                  : d['status'],
+            };
+          }(),
       ];
       return _json(200, <String, Object?>{
         'success': true,
@@ -2555,7 +2740,55 @@ class FakeBackend {
       });
     }
 
+    final Map<String, Object?> defaults = <String, Object?>{
+      'mode': 'manual',
+      'timing': 'before',
+      'before_days': 3,
+      'after_days': 1,
+      'repeat_days': 0,
+      'send_hour': 10,
+    };
     switch ((r.method, p)) {
+      case ('GET', '/api/reminders/settings'):
+        return _json(200, <String, Object?>{
+          'success': true,
+          'data': remSettings ?? defaults,
+          'stored': remSettings != null,
+          'ready': !remSettingsNoTable,
+          'can_edit': loginType == 'ADMIN',
+          'email_configured': !remNotConfigured,
+        });
+      case ('PUT', '/api/reminders/settings'):
+        if (loginType != 'ADMIN') {
+          return _json(403, <String, Object?>{
+            'success': false,
+            'message': 'Only the admin can change reminder settings.',
+          });
+        }
+        if (remSettingsNoTable) {
+          return _json(503, <String, Object?>{
+            'success': false,
+            'code': 'not_ready',
+            'message': 'Reminder settings are not available on the server yet.',
+          });
+        }
+        remSettingsPuts.add(b);
+        remSettings = <String, Object?>{...b};
+        return _json(200, <String, Object?>{
+          'success': true,
+          'data': remSettings,
+          'stored': true,
+          'ready': true,
+          'can_edit': true,
+          'email_configured': !remNotConfigured,
+        });
+      case ('GET', '/api/reminders/due'):
+        return _json(200, <String, Object?>{
+          'success': true,
+          'today': '2026-10-12',
+          'settings': remSettings ?? defaults,
+          'data': remDue,
+        });
       case ('GET', '/api/reminders/templates'):
         return _json(200, <String, Object?>{
           'success': true,
@@ -3093,6 +3326,115 @@ void main() {
       await r.refreshAll(force: true);
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(c.screen, 'login');
+      c.dispose();
+    });
+  });
+
+  group('edit and send again (mobile entries)', () {
+    test('activity rows carry what was sent; retry / edit bodies', () async {
+      final FakeBackend f = FakeBackend();
+      final ApiTallyRepository r = f.repo();
+      await r.login('ravi@x.in', 'secret', 'ADMIN');
+      await r.refreshAll();
+      final QueueAct failed = r.activity().whereType<QueueAct>().firstWhere(
+        (QueueAct a) => a.queueId == 31,
+      );
+      expect(failed.status, 'fail');
+      expect(failed.canRetry, isTrue);
+      expect(failed.action, 'CREATE');
+      expect(failed.voucherType, 'Receipt');
+      expect(failed.payload['party_name'], 'Mehta Electricals');
+      // Send again: queued; an entry Tally has is refused.
+      final SubmitResult again = await r.retryEntry(31);
+      expect(again.ok, isTrue);
+      expect(f.to('/api/mobile-sync-queue/31/retry'), hasLength(1));
+      final SubmitResult done = await r.retryEntry(30);
+      expect(done.ok, isFalse);
+      expect(done.message, 'This entry is already in Tally.');
+      // Edit: the create body plus the entry / voucher it changes.
+      const EntryDraft d = EntryDraft(
+        type: 'receipt',
+        no: 'R/6',
+        date: '2026-10-03',
+        party: 'Mehta Electricals',
+        amount: 1600,
+        mode: 'cash',
+        account: 'Cash',
+      );
+      final SubmitResult e1 = await r.submitEdit(d, queueId: 31);
+      expect(e1.ok, isTrue);
+      final Map<String, Object?> b1 =
+          jsonDecode(f.to('/api/mobile-voucher-command/edit').last.body)
+              as Map<String, Object?>;
+      expect(b1['type'], 'receipt');
+      expect(b1['queue_id'], 31);
+      expect(b1.containsKey('voucher_guid'), isFalse);
+      expect(b1['amount_received'], 1600);
+      final SubmitResult e2 = await r.submitEdit(d, voucherGuid: 'V2');
+      expect(e2.ok, isTrue);
+      final Map<String, Object?> b2 =
+          jsonDecode(f.to('/api/mobile-voucher-command/edit').last.body)
+              as Map<String, Object?>;
+      expect(b2['voucher_guid'], 'V2');
+      expect(b2.containsKey('queue_id'), isFalse);
+      expect((await r.submitEdit(d)).ok, isFalse); // nothing named
+      // A server without the edit route.
+      f.editMissing = true;
+      final SubmitResult old = await r.submitEdit(d, queueId: 31);
+      expect(old.ok, isFalse);
+      expect(old.message, contains('not available on the server yet'));
+    });
+
+    test('controller: Edit fills the form; Save sends an edit', () async {
+      final FakeBackend f = FakeBackend();
+      final ApiTallyRepository r = f.repo();
+      final AppController c = AppController(
+        store: LocalStorage.memory(),
+        repo: r,
+      );
+      c.loginType = 'ADMIN';
+      c.setF('user', 'ravi@x.in');
+      c.setF('pass', 'secret');
+      c.doLogin();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final Act receipt = c.acts.firstWhere((Act a) => a.id == 'q31');
+      expect(c.actEditBlocker(receipt), isNull);
+      c.editAct(receipt);
+      expect(c.screen, 'flow');
+      expect(c.flowType, 'receipt');
+      expect(c.form['rParty'], 'Mehta Electricals');
+      expect(c.form['rAmt'], '1500');
+      expect(c.form['rDate'], '2026-10-03');
+      expect(c.form['rNo'], 'R/6');
+      expect(c.editing?.queueId, 31);
+      expect(c.editing?.inTally, isFalse);
+      c.setF('rAcc', 'Cash');
+      c.setF('rAmt', '1750');
+      c.saveFlow(false);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final Map<String, Object?> b =
+          jsonDecode(f.to('/api/mobile-voucher-command/edit').single.body)
+              as Map<String, Object?>;
+      expect(b['queue_id'], 31);
+      expect(b['amount_received'], 1750);
+      expect(f.to('/api/mobile-voucher-command/receipt/create'), isEmpty);
+      expect(c.editing, isNull);
+      // A journal Tally already has: both lines, changed in Tally.
+      final Act journal = c.acts.firstWhere((Act a) => a.id == 'q30');
+      c.editAct(journal);
+      expect(c.flowType, 'journal');
+      expect(c.jl.map((JLine j) => '${j.side} ${j.name} ${j.amt}'), <String>[
+        'Dr Rent A/c 800',
+        'Cr HDFC Bank 800',
+      ]);
+      expect(c.editing?.inTally, isTrue);
+      // A new entry is never an edit.
+      c.startFlow('receipt');
+      expect(c.editing, isNull);
+      // Send again from Activity.
+      c.retry('q31');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(f.to('/api/mobile-sync-queue/31/retry'), hasLength(1));
       c.dispose();
     });
   });

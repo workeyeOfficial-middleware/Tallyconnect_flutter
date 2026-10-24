@@ -19,6 +19,7 @@ import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
+import '../widgets/report_loader.dart';
 import '../widgets/report_card.dart';
 import 'cashflow_screens.dart' show CashflowTile, FromToBar;
 import 'einvoice_screens.dart' show EinvoiceTile;
@@ -42,8 +43,28 @@ class FinancialTiles extends ConsumerWidget {
       icon: icon,
       title: title,
       subtitle: sub,
-      onTap: () => c.openStatement(k),
+      onTap: () {
+        if (c.guardTap('fin', k)) c.openStatement(k);
+      },
     );
+    final bool live = c.repo.isRemote && !c.demo;
+    // Each tile is a card: long-press to pin, hide, share or drag it.
+    final ({List<(String, Widget)> rows, int hidden, VoidCallback unhide})
+    v = c.listView<(String, Widget)>('fin', <(String, Widget)>[
+      ('bs', tile('bs', 'Balance Sheet', 'Assets and liabilities', 'building')),
+      ('pl', tile('pl', 'Profit & Loss', 'Income, expenses, profit', 'chart')),
+      (
+        'tb',
+        tile('tb', 'Trial Balance', 'Every ledger, Debit / Credit', 'file'),
+      ),
+      (
+        'cf',
+        tile('cf', 'Cash Flow', 'Cash and bank: money in and out', 'cash'),
+      ),
+      if (live) ('cfcast', const CashflowTile()),
+      ('exp', tile('exp', 'Expenses', 'Where the money goes', 'out')),
+      if (live) ('einv', const EinvoiceTile()),
+    ], ((String, Widget) x) => x.$1);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -55,15 +76,25 @@ class FinancialTiles extends ConsumerWidget {
         Grid(
           cols: 2,
           children: <Widget>[
-            tile('bs', 'Balance Sheet', 'Assets and liabilities', 'building'),
-            tile('pl', 'Profit & Loss', 'Income, expenses, profit', 'chart'),
-            tile('tb', 'Trial Balance', 'Every ledger, Debit / Credit', 'file'),
-            tile('cf', 'Cash Flow', 'Cash and bank: money in and out', 'cash'),
-            const CashflowTile(),
-            tile('exp', 'Expenses', 'Where the money goes', 'out'),
-            const EinvoiceTile(),
+            for (final (String, Widget) x in v.rows)
+              LRow(
+                list: 'fin',
+                lk: x.$1,
+                radius: 22,
+                pinCorner: true,
+                child: x.$2,
+              ),
           ],
         ),
+        if (v.hidden > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: HidRow(
+              '${v.hidden} hidden · Unhide',
+              onTap: v.unhide,
+              inGrid: true,
+            ),
+          ),
         const SizedBox(height: 4),
       ],
     );
@@ -80,6 +111,12 @@ class FinancialReportScreen extends ConsumerWidget {
     final String title = AppController.kFinTitles[c.finKind] ?? 'Financials';
     // Only the report of the period now chosen (never another period's).
     final bool fresh = r != null && c.finDataCurrent;
+    // Shared from the Reports card menu: once the statement is loaded.
+    if (fresh && !c.finBusy && c.takePendingShare(c.finKind)) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => c.previewDoc(finDoc(c, r)),
+      );
+    }
     return Scr(
       children: <Widget>[
         BackNav(
@@ -154,7 +191,7 @@ class FinancialReportScreen extends ConsumerWidget {
         if (c.finError != null)
           InfoBox(c.finError!, icon: 'info')
         else if (!fresh)
-          EmptyBox(c.finBusy ? 'Loading Tally figures…' : 'Choose a period.')
+          (c.finBusy ? const ReportLoader() : EmptyBox('Choose a period.'))
         else ...<Widget>[
           if (c.finBusy)
             const Padding(
@@ -504,6 +541,7 @@ class FinancialReportScreen extends ConsumerWidget {
         _Kpi('Money in', r.n('inflow'), tone: 'pos'),
         _Kpi('Money out', r.n('outflow'), tone: 'neg'),
       ]),
+      FinChartCard(r),
       _Card(
         title: 'Month-wise',
         table: _maxAbs(<num>[r.n('inflow'), r.n('outflow'), r.n('net')]),
@@ -584,6 +622,7 @@ class FinancialReportScreen extends ConsumerWidget {
         if (top.isNotEmpty)
           _Kpi('Largest: ${top.first.name}', top.first.amount),
       ]),
+      FinChartCard(r),
       GlassList(
         margin: const EdgeInsets.only(bottom: 12),
         children: <Widget>[
@@ -1354,7 +1393,9 @@ class FinLedgerScreen extends ConsumerWidget {
         if (c.finLedError != null)
           InfoBox(c.finLedError!, icon: 'info')
         else if (l == null)
-          EmptyBox(c.finLedBusy ? 'Loading vouchers…' : 'No vouchers.')
+          (c.finLedBusy
+              ? const ReportLoader(text: 'Loading the vouchers…')
+              : EmptyBox('No vouchers.'))
         else ...<Widget>[
           if (c.finLedBusy)
             const Padding(

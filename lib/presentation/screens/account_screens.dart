@@ -60,7 +60,7 @@ class CompaniesScreen extends ConsumerWidget {
               'sync',
               onTap: c.repo.isRemote
                   ? c.refreshNow
-                  : () => c.say('Company list refreshed from Tally'),
+                  : () => c.say('Company list refreshed'),
             ),
           ],
         ),

@@ -110,7 +110,7 @@ void main() {
       expect(c.finPresets.map(((String, String) x) => x.$2).take(3), <String>[
         'As on 3 Oct',
         'End of Sep 2026',
-        'Last year end',
+        'Previous financial year end',
       ]);
       await c.setFinPreset('lastFy');
       expect(_last(f, 'balance-sheet')['as_on'], '2026-03-31');

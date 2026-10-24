@@ -21,6 +21,7 @@ import '../widgets/common.dart';
 import '../widgets/voice_search.dart';
 import '../widgets/report_chart.dart';
 import '../widgets/tab_bar.dart' show PillFilter;
+import 'att_admin_screens.dart' show TeamLinkCard;
 import 'attendance_screens.dart' show AttStatusLine, TeamAttCard;
 import 'leave_screens.dart' show TeamLeaveCard;
 import 'financial_screens.dart' show FinancialTiles;
@@ -590,7 +591,15 @@ class ActDetailScreen extends ConsumerWidget {
             ('Party / account', a0.party, false),
             ('Amount', inr(a0.amt), false),
             for (final (String, String) r in a0.rows) (r.$1, r.$2, false),
+            if (a0 is QueueAct && a0.action == 'ALTER')
+              ('Change', 'Edits a voucher already in Tally', false),
             ('Status', m.$1, false),
+            if (a0 is QueueAct && a0.retries > 0)
+              (
+                'Sent again',
+                a0.retries == 1 ? 'Once' : '${a0.retries} times',
+                false,
+              ),
             if (a0.note.isNotEmpty) ('Error', a0.note, false),
           ]
         : s11
@@ -700,6 +709,40 @@ class ActDetailScreen extends ConsumerWidget {
               ? 'check'
               : (a0.status == 'fail' ? 'xCircle' : 'sync'),
         ),
+        // Send again (failed) / Edit (server entries). The server refuses
+        // an entry Tally already has, so neither makes a second voucher.
+        if (a0 is QueueAct)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              children: <Widget>[
+                if (a0.canRetry)
+                  Expanded(
+                    child: Btn(
+                      key: const Key('actRetry'),
+                      label: c.resending.contains(a0.id)
+                          ? 'Sending…'
+                          : 'Send again',
+                      icon: 'sync',
+                      enabled: !c.resending.contains(a0.id),
+                      onTap: () => c.retry(a0.id),
+                    ),
+                  ),
+                if (a0.canRetry && c.actEditBlocker(a0) == null)
+                  const SizedBox(width: 10),
+                if (c.actEditBlocker(a0) == null)
+                  Expanded(
+                    child: Btn(
+                      key: const Key('actEdit'),
+                      label: a0.status == 'ok' ? 'Edit in Tally' : 'Edit',
+                      icon: 'edit',
+                      kind: BtnKind.g,
+                      onTap: () => c.editAct(a0),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         // Share / PDF of this entry (same exporter as bills and reports).
         Grid(
           cols: 3,
@@ -910,6 +953,13 @@ class TeamScreen extends ConsumerWidget {
       c.form['iEmail'] = '';
     });
     void create() => c.openNewUser();
+    final ({List<(String, Widget)> rows, int hidden, VoidCallback unhide}) tc =
+        c.listView<(String, Widget)>('teamCards', <(String, Widget)>[
+          ('attToday', const TeamAttCard()),
+          ('attEmployees', const TeamLinkCard('attEmployees')),
+          ('attRules', const TeamLinkCard('attRules')),
+          ('leave', const TeamLeaveCard()),
+        ], ((String, Widget) x) => x.$1);
     return Scr(
       children: <Widget>[
         NavRow(
@@ -922,10 +972,15 @@ class TeamScreen extends ConsumerWidget {
         ),
         const TitleBadge('Sales Team'),
         const Sub('Add people and send invites'),
-        // Today's check-ins (opens Team attendance).
-        const TeamAttCard(),
-        // Leave requests waiting and who is on leave today.
-        const TeamLeaveCard(),
+        // Today's check-ins, Employee attendance, Check-in rules, Leave:
+        // cards (long-press: pin, drag, hide, share; some go on Home too).
+        for (final (String, Widget) x in tc.rows)
+          LRow(list: 'teamCards', lk: x.$1, radius: 22, child: x.$2),
+        if (tc.hidden > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: HidRow('${tc.hidden} hidden · Unhide', onTap: tc.unhide),
+          ),
         const SizedBox(height: 12),
         // Account counts (sample data only: the server keeps no account
         // status; today's check-ins are the card above).

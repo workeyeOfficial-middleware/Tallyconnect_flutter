@@ -4,12 +4,14 @@ library;
 
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show ValueKey;
 import 'package:flutter/services.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tallyconnect_ui/app/app_state.dart';
 import 'package:tallyconnect_ui/app/providers.dart';
+import 'package:tallyconnect_ui/core/design/tc_kit.dart' show TcLogo;
 import 'package:tallyconnect_ui/core/storage/local_storage.dart';
 import 'package:tallyconnect_ui/main.dart';
 import 'package:tallyconnect_ui/presentation/shell.dart';
@@ -66,7 +68,9 @@ void main() {
 
   testWidgets('login → Home, toast and tab bar', (WidgetTester t) async {
     final AppController c = await boot(t);
-    expect(find.text('Welcome back'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('loginTitle')), findsOneWidget);
+    expect(find.text('Welcome back'), findsNothing); // no greeting, no app icon
+    expect(find.byKey(const ValueKey<String>('loginMark')), findsNothing);
     await t.tap(find.text('Log In'));
     await settle(t);
     expect(c.screen, 'home');
@@ -83,6 +87,55 @@ void main() {
     );
     await drain(t);
   });
+
+  for (final Size s in const <Size>[
+    Size(320, 640),
+    Size(360, 740),
+    Size(412, 915),
+    Size(768, 1024),
+  ]) {
+    testWidgets(
+      'login: logo and form centred at ${s.width.toInt()}×${s.height.toInt()}',
+      (WidgetTester t) async {
+        t.view.physicalSize = s * 3;
+        t.view.devicePixelRatio = 3;
+        addTearDown(t.view.reset);
+        final AppController c = AppController(
+          store: LocalStorage.memory(),
+          startScreen: 'login',
+        );
+        await t.pumpWidget(
+          ProviderScope(
+            overrides: <Override>[appProvider.overrideWith((Ref ref) => c)],
+            child: const TallyConnectApp(),
+          ),
+        );
+        await t.pump(const Duration(milliseconds: 600));
+        expect(t.takeException(), isNull);
+        // The drawn logo (no image, no background) replaces the text brand.
+        final Finder logo = find.byKey(const ValueKey<String>('loginBrand'));
+        expect(t.widget(logo), isA<TcLogo>());
+        final Rect l = t.getRect(logo);
+        expect((l.center.dx - s.width / 2).abs(), lessThan(1.5));
+        expect(l.left, greaterThanOrEqualTo(16));
+        expect(l.right, lessThanOrEqualTo(s.width - 16));
+        // The form card is centred and the block sits mid-screen: the space
+        // above the logo and below the help line differ by little.
+        // (The column's width: the subtitle spans it.)
+        final Rect col = t.getRect(
+          find.byKey(const ValueKey<String>('loginTitle')),
+        );
+        expect((col.center.dx - s.width / 2).abs(), lessThan(1.5));
+        expect(col.width, lessThanOrEqualTo(440));
+        final Rect help = t.getRect(
+          find.byKey(const ValueKey<String>('loginHelp')),
+        );
+        final double above = l.top, below = s.height - help.bottom;
+        expect((above - below).abs(), lessThan(s.height * .2));
+        await drain(t);
+      },
+    );
+  }
 
   testWidgets('every screen renders', (WidgetTester t) async {
     final AppController c = await boot(t, start: 'home');

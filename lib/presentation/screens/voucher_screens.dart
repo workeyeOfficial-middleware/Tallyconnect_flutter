@@ -96,6 +96,17 @@ class VHubScreen extends ConsumerWidget {
           for (final String t in otherTypes)
             ('type:$t', t, 'receipt', 'vouchers'),
         ];
+    // Each type tile is a card: long-press to pin, hide, share or drag it.
+    final ({
+      List<(String, String, String, String)> rows,
+      int hidden,
+      VoidCallback unhide,
+    })
+    vt = c.listView<(String, String, String, String)>(
+      'vtypes',
+      tiles,
+      ((String, String, String, String) t) => t.$1,
+    );
     final String unit = switch (period) {
       'month' => 'this month',
       'week' => 'in 7 days',
@@ -150,43 +161,61 @@ class VHubScreen extends ConsumerWidget {
         Grid(
           cols: 3,
           children: <Widget>[
-            for (final (String, String, String, String) t in tiles)
-              Tap(
-                onTap: () => c.go('vList', <String, Object?>{
-                  'vFilter': t.$1,
-                  'vPeriod': period,
-                }),
-                child: Glass(
-                  child: Container(
-                    constraints: const BoxConstraints(minHeight: 136),
-                    padding: const EdgeInsets.fromLTRB(6, 16, 6, 14),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: <Widget>[
-                        Ico(t.$3, color: p.cat(t.$4), icon: IcSize.l),
-                        const SizedBox(height: 9),
-                        Text(
-                          t.$2,
-                          textAlign: TextAlign.center,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: ts(15, w: w800, h: 1.1, c: p.ink),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          countText(t.$1),
-                          textAlign: TextAlign.center,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: ts(12.5, c: p.ink3),
-                        ),
-                      ],
+            for (final (String, String, String, String) t in vt.rows)
+              LRow(
+                list: 'vtypes',
+                lk: t.$1,
+                radius: 22,
+                pinCorner: true,
+                child: Tap(
+                  onTap: () {
+                    if (!c.guardTap('vtypes', t.$1)) return;
+                    c.go('vList', <String, Object?>{
+                      'vFilter': t.$1,
+                      'vPeriod': period,
+                    });
+                  },
+                  child: Glass(
+                    child: Container(
+                      constraints: const BoxConstraints(minHeight: 136),
+                      padding: const EdgeInsets.fromLTRB(6, 16, 6, 14),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: <Widget>[
+                          Ico(t.$3, color: p.cat(t.$4), icon: IcSize.l),
+                          const SizedBox(height: 9),
+                          Text(
+                            t.$2,
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: ts(15, w: w800, h: 1.1, c: p.ink),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            countText(t.$1),
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: ts(12.5, c: p.ink3),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
           ],
         ),
+        if (vt.hidden > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: HidRow(
+              '${vt.hidden} hidden · Unhide',
+              onTap: vt.unhide,
+              inGrid: true,
+            ),
+          ),
       ],
     );
   }
@@ -240,6 +269,7 @@ Widget voucherRow(BuildContext context, AppController c, Voucher x) {
           child: RTx(
             x.party,
             <String>[
+              if (x.cancelled) 'Cancelled',
               x.no,
               vDay(x),
               if ((x.type ?? '').trim().isNotEmpty) x.type!.trim(),
@@ -743,7 +773,21 @@ class EntryDetailScreen extends ConsumerWidget {
         ),
       ],
       children: <Widget>[
-        BackNav(actions: <Widget>[CBtn('share', onTap: share)]),
+        BackNav(
+          actions: <Widget>[
+            // Receipt / Payment / Journal / Contra: changed in Tally by one
+            // ALTER of this voucher (never a new one).
+            if (c.voucherEditBlocker(e) == null) ...<Widget>[
+              CBtn(
+                'edit',
+                key: const Key('voucherEdit'),
+                onTap: () => c.editVoucher(e),
+              ),
+              const SizedBox(width: 8),
+            ],
+            CBtn('share', onTap: share),
+          ],
+        ),
         Padding(
           padding: const EdgeInsets.only(top: 2),
           child: Glass(
@@ -780,6 +824,7 @@ class EntryDetailScreen extends ConsumerWidget {
         ),
         KvList(<(String, String, bool)>[
           ('Type', e.type ?? k.long, false),
+          if (e.cancelled) ('Status', 'Cancelled in Tally', false),
           ('Number', e.no, false),
           ('Date', vDate(e), false),
           ('Party / account', e.party, false),

@@ -144,7 +144,11 @@ void main() {
       c.jump('reports');
       await _settle(t);
       expect(find.text(c.periodLabel('month')), findsOneWidget);
-      await t.tap(find.text('All time'));
+      // The row scrolls to the chosen period: bring All time into view.
+      final Finder all = find.byKey(const ValueKey<String>('period-rep-all'));
+      await t.ensureVisible(all);
+      await _settle(t);
+      await t.tap(all);
       await _settle(t);
       expect(c.repPeriod, 'all');
       expect(find.text('All time'), findsWidgets);
@@ -161,7 +165,9 @@ void main() {
       // Period switch on a voucher report.
       c.go('report', <String, Object?>{'report': 'sreg'});
       await _settle(t);
-      await t.tap(find.text('All time').first);
+      await t.ensureVisible(all);
+      await _settle(t);
+      await t.tap(all);
       await _settle(t);
       expect(c.repPeriod, 'all');
       expect(find.textContaining('All time'), findsWidgets);

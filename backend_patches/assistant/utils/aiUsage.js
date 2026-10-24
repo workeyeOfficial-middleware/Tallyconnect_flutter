@@ -14,10 +14,30 @@
 
    Paid plans later: add a row to ai_plans and set the user's plan_code;
    a 'month' plan starts a new period (tokens back to 0) each month.
+
+   Testing accounts (AI_UNLIMITED_EMAILS, comma-separated; default the
+   test login workk72002@gmail.com; empty = none): no allowance. The email
+   is read from the users table for the signed-in user id (never from the
+   request or the app). Their tokens are still counted and logged; every
+   other user keeps the normal limit.
 ========================================================= */
 import { AssistantError } from "./assistantCore.js";
 
 export const DEFAULT_FREE_TOKENS = 10000;
+
+/** Logins with no AI allowance (testing), unless AI_UNLIMITED_EMAILS says otherwise. */
+export const DEFAULT_UNLIMITED_EMAILS = "workk72002@gmail.com";
+
+/** The exact (case-insensitive) emails of AI_UNLIMITED_EMAILS. */
+export function unlimitedEmails(env = process.env) {
+  const raw = env.AI_UNLIMITED_EMAILS === undefined ? DEFAULT_UNLIMITED_EMAILS : String(env.AI_UNLIMITED_EMAILS);
+  return new Set(
+    raw
+      .split(",")
+      .map((x) => x.trim().toLowerCase())
+      .filter((x) => /^[^\s@]+@[^\s@]+$/.test(x))
+  );
+}
 
 export const QUOTA_MESSAGE = "Your free AI access has ended. Upgrade your plan to continue.";
 
@@ -59,6 +79,19 @@ const addMonth = (d) => {
  */
 export function createAiUsage(db, env = process.env, now = () => new Date()) {
   const freeTokens = () => int(env.AI_FREE_TOKENS, DEFAULT_FREE_TOKENS);
+
+  /** The signed-in login is a testing account (email from the database). */
+  async function isUnlimited(user) {
+    const list = unlimitedEmails(env);
+    if (!list.size || !user?.userId) return false;
+    try {
+      const r = await db.query(`SELECT email FROM users WHERE id = $1`, [user.userId]);
+      const email = String(r.rows[0]?.email || "").trim().toLowerCase();
+      return !!email && list.has(email);
+    } catch {
+      return false; // fails closed: the normal limit applies
+    }
+  }
 
   /** The user's row (created on first use) with its plan. */
   async function load(user) {
@@ -112,7 +145,17 @@ export function createAiUsage(db, env = process.env, now = () => new Date()) {
 
   /** Usage as the app shows it. */
   async function status(user) {
-    return view(await load(user));
+    const v = view(await load(user));
+    if (!(await isUnlimited(user))) return v;
+    // Testing account: never used up (a large limit for older apps).
+    return {
+      ...v,
+      plan: { code: "testing", name: "Testing · unlimited", period: "lifetime" },
+      unlimited: true,
+      limit: v.used + 1_000_000_000,
+      remaining: 1_000_000_000,
+      exhausted: false,
+    };
   }
 
   /** Throws 402 when the allowance is used up; else the usage. */
@@ -143,5 +186,5 @@ export function createAiUsage(db, env = process.env, now = () => new Date()) {
     );
   }
 
-  return { status, assertCanAsk, record, freeTokens };
+  return { status, assertCanAsk, record, freeTokens, isUnlimited };
 }

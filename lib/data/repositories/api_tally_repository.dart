@@ -692,7 +692,9 @@ class ApiTallyRepository extends TallyRepository {
       case DataSet.stock:
         _stock = parsed! as List<StockRow>;
       case DataSet.activity:
-        _acts = parsed! as List<Act>;
+        final List<Act> next = parsed! as List<Act>;
+        _afterTallyDone(_acts, next);
+        _acts = next;
       case DataSet.notifications:
         _notifs = parsed! as List<Notif>;
       case DataSet.alerts:
@@ -700,6 +702,32 @@ class ApiTallyRepository extends TallyRepository {
       case DataSet.team:
         _team = parsed! as List<Member>;
     }
+  }
+
+  /// Entries Tally has just confirmed (waiting / failed → done): vouchers
+  /// are read again — now and once more after the Agent's next voucher
+  /// sync — and a changed voucher's lines are fetched afresh when opened.
+  void _afterTallyDone(List<Act> before, List<Act> after) {
+    if (before.isEmpty) return; // first load: nothing changed here
+    final Map<String, String> was = <String, String>{
+      for (final Act a in before) a.id: a.status,
+    };
+    bool any = false;
+    for (final Act a in after) {
+      final String? w = was[a.id];
+      if (a.status != 'ok' || w == null || w == 'ok') continue;
+      any = true;
+      if (a is QueueAct && a.tallyGuid.isNotEmpty) {
+        _voucherLines.remove(a.tallyGuid);
+      }
+    }
+    if (!any) return;
+    void reload() {
+      if (!_disposed && _active != null) unawaited(_load(DataSet.vouchers));
+    }
+
+    Future<void>.microtask(reload);
+    Future<void>.delayed(const Duration(minutes: 2), reload);
   }
 
   @override
@@ -757,6 +785,9 @@ class ApiTallyRepository extends TallyRepository {
           closing: l.closing,
           lastDate: l.lastDate,
           search: l.search,
+          state: l.state,
+          pincode: l.pincode,
+          address: l.address,
         ),
       );
     }
@@ -1428,6 +1459,95 @@ class ApiTallyRepository extends TallyRepository {
     }
   }
 
+  /// The create body of [d] plus the entry / voucher it changes. The server
+  /// edits a waiting entry in place, or queues one ALTER of the Tally
+  /// voucher (never a second voucher).
+  @override
+  Future<SubmitResult> submitEdit(
+    EntryDraft d, {
+    int? queueId,
+    String? voucherGuid,
+  }) async {
+    final String? block = entryBlocker(d);
+    if (block != null) return SubmitResult(ok: false, message: block);
+    if ((queueId ?? 0) <= 0 && (voucherGuid ?? '').isEmpty) {
+      return const SubmitResult(ok: false, message: 'Nothing to edit.');
+    }
+    try {
+      final Json body = switch (d.type) {
+        'sales' || 'purchase' => salesBody(d),
+        'receipt' => receiptBody(d),
+        'payment' => paymentBody(d),
+        'journal' => journalBody(d),
+        'contra' => contraBody(d),
+        _ => throw ApiException(
+          ApiErrorKind.badRequest,
+          'Unsupported entry type ${d.type}',
+        ),
+      };
+      final SubmitResult r = submitResultFrom(
+        await _api.editEntry(<String, Object?>{
+          ...body,
+          'type': d.type,
+          if ((queueId ?? 0) > 0) 'queue_id': queueId,
+          if ((queueId ?? 0) <= 0) 'voucher_guid': voucherGuid,
+        }),
+      );
+      unawaited(refreshActivity());
+      return r.ok
+          ? SubmitResult(
+              ok: true,
+              commandId: r.commandId,
+              message: 'Saved! The change will reach Tally by itself',
+            )
+          : r;
+    } on ApiException catch (e) {
+      if (e.kind == ApiErrorKind.unauthorized) {
+        _expired = true;
+        _notify();
+      }
+      // A server without the edit route answers 404 without a JSON body.
+      if (e.status == 404 && e.body is! Map) {
+        return const SubmitResult(
+          ok: false,
+          message: 'Editing entries is not available on the server yet.',
+        );
+      }
+      return SubmitResult(ok: false, message: e.userMessage);
+    }
+  }
+
+  @override
+  Future<SubmitResult> retryEntry(int queueId) async {
+    try {
+      final Object? body = await _api.retryEntry(queueId);
+      final Map<Object?, Object?> m = body is Map
+          ? body
+          : const <Object?, Object?>{};
+      unawaited(refreshActivity());
+      return SubmitResult(
+        ok: m['success'] == true,
+        message: m['already'] == true
+            ? 'Already waiting to be sent'
+            : 'Sent again — it will reach Tally by itself',
+      );
+    } on ApiException catch (e) {
+      if (e.kind == ApiErrorKind.unauthorized) {
+        _expired = true;
+        _notify();
+      }
+      if (e.status == 404 && e.body is! Map) {
+        return const SubmitResult(
+          ok: false,
+          message: 'Retry is not available on the server yet.',
+        );
+      }
+      // "Already in Tally" etc.: the list may be out of date.
+      unawaited(refreshActivity());
+      return SubmitResult(ok: false, message: e.userMessage);
+    }
+  }
+
   @override
   Future<bool> pushEntry(Act entry, {Duration delay = Duration.zero}) async =>
       false;
@@ -1558,6 +1678,47 @@ class ApiTallyRepository extends TallyRepository {
       await _api.attendanceMemberHistory(userId, <String, String>{
         'from': _ymd(from),
         'to': _ymd(to),
+      }),
+    ),
+  );
+
+  @override
+  Future<AttSummary> attendanceSummary({
+    required DateTime from,
+    required DateTime to,
+  }) => _rem(
+    () async => AttSummary.fromJson(
+      await _api.attendanceSummary(<String, String>{
+        'from': _ymd(from),
+        'to': _ymd(to),
+      }),
+    ),
+  );
+
+  @override
+  Future<AttRules> attendanceRules() =>
+      _rem(() async => AttRules.fromJson(await _api.attendanceSettings()));
+
+  @override
+  Future<AttRules> saveExemptPositions(List<String> positions) => _rem(
+    () async => AttRules.fromJson(
+      await _api.saveAttendanceSettings(<String, Object?>{
+        'exempt_positions': positions,
+      }),
+    ),
+  );
+
+  @override
+  Future<AttRules> saveAttendanceMember(
+    String userId, {
+    String? position,
+    bool clearPosition = false,
+    String? rule,
+  }) => _rem(
+    () async => AttRules.fromJson(
+      await _api.saveAttendanceMember(userId, <String, Object?>{
+        if (position != null || clearPosition) 'position': position,
+        'rule': ?rule,
       }),
     ),
   );
@@ -1883,6 +2044,21 @@ class ApiTallyRepository extends TallyRepository {
   Future<ReminderTemplates> reminderTemplates() => _rem(
     () async => ReminderTemplates.fromJson(await _api.reminderTemplates()),
   );
+
+  @override
+  Future<ReminderSettings> reminderSettings() => _rem(
+    () async => ReminderSettings.fromJson(await _api.reminderSettings()),
+  );
+
+  @override
+  Future<ReminderSettings> saveReminderSettings(ReminderSettings s) => _rem(
+    () async =>
+        ReminderSettings.fromJson(await _api.saveReminderSettings(s.toJson())),
+  );
+
+  @override
+  Future<List<DueReminder>> dueReminders() =>
+      _rem(() async => DueReminder.listFrom(await _api.dueReminders()));
 
   @override
   Future<ReminderTemplate> saveReminderTemplate(ReminderTemplate t) =>

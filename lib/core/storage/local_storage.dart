@@ -48,6 +48,15 @@ class LocalStorage {
   static const String kAutoRemind = 'tc-due-alerts-on';
   static const String kDueAlertIds = 'tc-due-alert-ids';
 
+  /// Payment reminder settings last read from the server (phone alerts).
+  static const String kRemSettings = 'tc-rem-settings';
+
+  /// Team attendance view (cards / table / board).
+  static const String kAttTeamView = 'tc-att-team-view';
+
+  /// Bill PDF layout, per user and company (`<key>|<user>|<company>`).
+  static const String kBillLayout = 'tc-bill-layout';
+
   /// Name / company-role / mobile entered in Add person, by email (the
   /// server's create-user endpoint stores only email + password).
   static const String kMemberInfo = 'tc-team-member-info';

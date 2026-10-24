@@ -82,6 +82,7 @@ class Voucher {
     this.date,
     this.type,
     this.items = const <VoucherItem>[],
+    this.cancelled = false,
   });
   final String kind, party, no;
   final int day;
@@ -90,6 +91,9 @@ class Voucher {
   final DateTime? date;
   final String? type;
   final List<VoucherItem> items;
+
+  /// Cancelled in Tally (still listed and counted there, never in the books).
+  final bool cancelled;
 
   /// Stable list key (number for sample data, GUID for server rows).
   String get key => guid ?? no;
@@ -173,6 +177,9 @@ class Party {
     this.closing,
     this.lastDate,
     this.search = '',
+    this.state,
+    this.pincode,
+    this.address,
   });
   final String name;
 
@@ -198,6 +205,16 @@ class Party {
   /// send whether it is Dr or Cr).
   final num? opening, closing;
   final DateTime? lastDate;
+
+  /// Location as saved in Tally (state, PIN code, address lines; Tally has
+  /// no separate city — it is part of the address). Null when not synced.
+  final String? state, pincode, address;
+
+  /// "Vasai East -401208 · Maharashtra" style one-liner (empty: none).
+  String get location => <String>[
+    if ((address ?? '').isNotEmpty) address!,
+    if ((state ?? '').isNotEmpty) state!,
+  ].join(' · ');
 }
 
 /// `ITEMS` row (1778).
@@ -375,6 +392,84 @@ class Act {
     rows,
     items,
   );
+}
+
+/// An entry from the server's mobile queue: what was sent (so it can be
+/// edited or sent again) and how far it got in Tally.
+class QueueAct extends Act {
+  const QueueAct(
+    super.id,
+    super.kind,
+    super.no,
+    super.party,
+    super.amt,
+    super.time,
+    super.status,
+    super.note,
+    super.rows,
+    super.items, {
+    required this.queueId,
+    this.action = 'CREATE',
+    this.payload = const <String, Object?>{},
+    this.tallyGuid = '',
+    this.retries = 0,
+  });
+
+  /// mobile_sync_queue.id.
+  final int queueId;
+
+  /// CREATE | ALTER (an edit of a voucher already in Tally).
+  final String action;
+
+  /// The voucher as sent (voucher_type, party_name, items, …).
+  final Map<String, Object?> payload;
+
+  /// Tally's GUID of the voucher this entry made or changed ('' = not known).
+  final String tallyGuid;
+  final int retries;
+
+  String get voucherType => '${payload['voucher_type'] ?? ''}';
+
+  /// Accounts can send this again (a failed entry).
+  bool get canRetry => status == 'fail';
+
+  @override
+  QueueAct copyWith({String? status, String? note, String? time}) => QueueAct(
+    id,
+    kind,
+    no,
+    party,
+    amt,
+    time ?? this.time,
+    status ?? this.status,
+    note ?? this.note,
+    rows,
+    items,
+    queueId: queueId,
+    action: action,
+    payload: payload,
+    tallyGuid: tallyGuid,
+    retries: retries,
+  );
+}
+
+/// What an entry form changes instead of making a new entry: a server
+/// entry made here ([queueId]) or a voucher in Tally ([guid]).
+class EditTarget {
+  const EditTarget({
+    this.queueId,
+    this.guid,
+    this.label = '',
+    this.inTally = false,
+  });
+  final int? queueId;
+  final String? guid;
+
+  /// Voucher number shown on the form.
+  final String label;
+
+  /// Tally already has the voucher: saving queues a change to it.
+  final bool inTally;
 }
 
 /// Team member (`TEAM`, 1841). st: active | pending | off.

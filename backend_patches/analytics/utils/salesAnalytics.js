@@ -11,13 +11,15 @@
    invoice) and their item lines (taxable value, excl. GST). Sales =
    voucher types named like "Sales" (custom types such as "Sales GST"
    too), never orders, quotations or notes; returns = Credit Note /
-   Sales Return. Deleted vouchers (is_active false) are left out.
+   Sales Return. Deleted vouchers (is_active false) are left out, and —
+   once known (voucherStatus.js) — cancelled and optional ones.
 
    Scoped to the login's account and ACTIVE company. Team users (USER)
    see only the vouchers they may see (voucher_selection_permissions),
    the same rule as the app's own lists. Read-only.
 ========================================================= */
 import express from "express";
+import { hasVoucherStatusColumns, IN_BOOKS } from "./voucherStatus.js";
 
 export const SALES_TYPE = "v.voucher_type ~* 'sale' AND v.voucher_type !~* '(order|quotation|note|return|memo|rejection|reversing)'";
 export const RETURN_TYPE = "v.voucher_type ~* '(credit note|sales return)'";
@@ -104,13 +106,16 @@ export function createSalesAnalyticsRouter({ db, auth, log = console }) {
     );
     const company = r.rows[0]?.company_guid || null;
     if (!company) throw new HttpError(409, "No company is selected for this account.", "no_company");
-    return { adminId, company, companyName: r.rows[0]?.company_name || "", isAdmin: u.role === "ADMIN", userId: u.id };
+    // Cancelled / optional vouchers are left out once the columns exist.
+    const status = await hasVoucherStatusColumns(db);
+    return { adminId, company, companyName: r.rows[0]?.company_name || "", isAdmin: u.role === "ADMIN", userId: u.id, status };
   }
 
   /** The WHERE part for vouchers of [s] in [from, to] (+ team-user rule). */
   function where(s, from, to, type) {
     const params = [s.adminId, s.company, from, to];
     let sql = `v.admin_id = $1 AND v.company_guid = $2 AND v.voucher_date >= $3::date AND v.voucher_date <= $4::date AND ${ACTIVE} AND ${type}`;
+    if (s.status) sql += ` AND ${IN_BOOKS("v")}`;
     if (!s.isAdmin) {
       params.push(s.userId);
       sql +=

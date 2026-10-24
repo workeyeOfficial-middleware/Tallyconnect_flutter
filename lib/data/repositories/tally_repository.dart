@@ -221,6 +221,23 @@ abstract class TallyRepository extends ChangeNotifier {
   String? entryBlocker(EntryDraft d);
   Future<SubmitResult> submitEntry(EntryDraft d);
 
+  /// Changes an entry made here ([queueId]) or a voucher already in Tally
+  /// ([voucherGuid]) to [d]. Only the real backend can take it.
+  Future<SubmitResult> submitEdit(
+    EntryDraft d, {
+    int? queueId,
+    String? voucherGuid,
+  }) async => const SubmitResult(
+    ok: false,
+    message: 'Editing entries needs the TallyConnect server.',
+  );
+
+  /// Sends a failed entry ([queueId]) to Tally again.
+  Future<SubmitResult> retryEntry(int queueId) async => const SubmitResult(
+    ok: false,
+    message: 'Retry needs the TallyConnect server.',
+  );
+
   /// Sends a saved entry towards Tally (sample data only).
   Future<bool> pushEntry(Act entry, {Duration delay});
 
@@ -240,6 +257,14 @@ abstract class TallyRepository extends ChangeNotifier {
   );
 
   Future<ReminderTemplates> reminderTemplates() async => throw noReminders;
+
+  /// Payment reminder settings of the active company (admin edits them).
+  Future<ReminderSettings> reminderSettings() async => throw noReminders;
+  Future<ReminderSettings> saveReminderSettings(ReminderSettings s) async =>
+      throw noReminders;
+
+  /// Parties due for a reminder today by the settings.
+  Future<List<DueReminder>> dueReminders() async => throw noReminders;
 
   /// Creates ([ReminderTemplate.id] null) or updates a template (admin).
   Future<ReminderTemplate> saveReminderTemplate(ReminderTemplate t) async =>
@@ -301,6 +326,26 @@ abstract class TallyRepository extends ChangeNotifier {
     String userId, {
     required DateTime from,
     required DateTime to,
+  }) async => throw noAttendance;
+
+  /// Admin: every member's days, hours, leave and absences in From–To.
+  Future<AttSummary> attendanceSummary({
+    required DateTime from,
+    required DateTime to,
+  }) async => throw noAttendance;
+
+  /// Admin: who checks in (positions, exempt list, each member's rule).
+  Future<AttRules> attendanceRules() async => throw noAttendance;
+  Future<AttRules> saveExemptPositions(List<String> positions) async =>
+      throw noAttendance;
+
+  /// Admin: a member's position ([clearPosition]: none) and / or rule
+  /// (`auto` | `required` | `exempt`).
+  Future<AttRules> saveAttendanceMember(
+    String userId, {
+    String? position,
+    bool clearPosition = false,
+    String? rule,
   }) async => throw noAttendance;
 
   // ---------------------------------------------------- e-invoices

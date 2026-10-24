@@ -1,7 +1,8 @@
 // Graphs on the financial statements (Balance Sheet, Profit & Loss, Trial
-// Balance): the same figures the statement lists — its groups and totals for
-// the period chosen — drawn as bar, column, line, scatter or pie. Nothing is
-// worked out again; switching the chart never changes the report.
+// Balance, Cash Flow, Expenses) and Tally's own reports: the same figures the
+// report lists — its groups and totals for the period chosen — drawn as bar,
+// column, line, scatter or pie. Nothing is worked out again; switching the
+// chart never changes the report.
 library;
 
 import 'package:flutter/material.dart';
@@ -36,9 +37,72 @@ List<ChartPoint> _nonZero(Iterable<ChartPoint> pts) => <ChartPoint>[
     if (p.value.abs() >= .005) p,
 ];
 
-/// The series of statement [kind] (`bs`, `pl`, `tb`) from its figures.
+/// The series of statement [kind] (`bs`, `pl`, `tb`, `cf`, `exp`)
+/// from its figures.
 List<FinChartSet> finChartSets(FinReport r, String kind) {
+  String mon(DateTime d) => '${kMonths[d.month - 1]} ${d.year % 100}';
   switch (kind) {
+    case 'cf':
+      // Cash Flow: money in / out by group (as listed), by month, both.
+      final List<(DateTime, num, num)> months = r.cashMonths;
+      return <FinChartSet>[
+        FinChartSet(
+          'inflow',
+          'Money in',
+          _nonZero(<ChartPoint>[
+            for (final (String, num) g in r.pairs('inflow_groups'))
+              ChartPoint(g.$1, g.$2),
+          ]),
+        ),
+        FinChartSet(
+          'outflow',
+          'Money out',
+          _nonZero(<ChartPoint>[
+            for (final (String, num) g in r.pairs('outflow_groups'))
+              ChartPoint(g.$1, g.$2),
+          ]),
+        ),
+        if (months.length > 1) ...<FinChartSet>[
+          FinChartSet('monthIn', 'In by month', <ChartPoint>[
+            for (final (DateTime, num, num) m in months)
+              ChartPoint(mon(m.$1), m.$2),
+          ]),
+          FinChartSet('monthOut', 'Out by month', <ChartPoint>[
+            for (final (DateTime, num, num) m in months)
+              ChartPoint(mon(m.$1), m.$3),
+          ]),
+        ],
+        FinChartSet('compare', 'In vs Out', <ChartPoint>[
+          ChartPoint('Money in', r.n('inflow')),
+          ChartPoint('Money out', r.n('outflow')),
+        ], adds: false),
+      ];
+    case 'exp':
+      // Expenses: by group (top level, as the tree), top ledgers, by month.
+      final List<(DateTime, num)> months = r.byMonth;
+      return <FinChartSet>[
+        FinChartSet(
+          'groups',
+          'By group',
+          _nonZero(<ChartPoint>[
+            for (final FinNode n in r.nodes('sections'))
+              if (n.amount > 0) ChartPoint(n.name, n.amount),
+          ]),
+        ),
+        FinChartSet(
+          'ledgers',
+          'Top ledgers',
+          _nonZero(<ChartPoint>[
+            for (final FinNode n in r.nodes('top_ledgers'))
+              if (n.amount > 0) ChartPoint(n.name, n.amount),
+          ]),
+          adds: false,
+        ),
+        if (months.length > 1)
+          FinChartSet('months', 'By month', <ChartPoint>[
+            for (final (DateTime, num) m in months) ChartPoint(mon(m.$1), m.$2),
+          ]),
+      ];
     case 'bs':
       // Each group on the side its balance is on (as the statement shows).
       final List<FinNode> liab = r.nodes('liabilities');
@@ -98,7 +162,7 @@ List<FinChartSet> finChartSets(FinReport r, String kind) {
           ChartPoint('Credit', r.n('total_credit')),
         ], adds: false),
       ];
-    default:
+    case 'pl':
       // Profit & Loss: income groups, expense groups, the totals.
       final List<FinNode> ti = r.subNodes('trading', 'income');
       final List<FinNode> te = r.subNodes('trading', 'expense');
@@ -130,7 +194,50 @@ List<FinChartSet> finChartSets(FinReport r, String kind) {
           ]),
         ),
       ];
+    default:
+      return const <FinChartSet>[];
   }
+}
+
+/// The series of one of Tally's own reports (exactly its lines): Balance
+/// Sheet / P&L by side (Cr: liabilities / income, Dr: assets / expenses),
+/// Trial Balance debit / credit by group, Cash Flow lines.
+List<FinChartSet> tallyChartSets(TallyReport r) {
+  if (r.report == 'trial_balance') {
+    final Map<String, num> dr = <String, num>{}, cr = <String, num>{};
+    for (final TbLedger l in r.ledgers) {
+      final String g = l.parent.isEmpty ? l.name : l.parent;
+      if (l.closing < 0) dr[g] = (dr[g] ?? 0) - l.closing;
+      if (l.closing > 0) cr[g] = (cr[g] ?? 0) + l.closing;
+    }
+    List<ChartPoint> pts(Map<String, num> m) => _nonZero(<ChartPoint>[
+      for (final MapEntry<String, num> e in m.entries)
+        ChartPoint(e.key, e.value),
+    ])..sort((ChartPoint a, ChartPoint b) => b.value.compareTo(a.value));
+    return <FinChartSet>[
+      FinChartSet('debit', 'Debit', pts(dr)),
+      FinChartSet('credit', 'Credit', pts(cr)),
+    ];
+  }
+  List<ChartPoint> side(bool credit) => _nonZero(<ChartPoint>[
+    for (final TallyRow x in r.rows)
+      if (x.main != null && (credit ? x.main! > 0 : x.main! < 0))
+        ChartPoint(x.name, x.main!.abs()),
+  ]);
+  return switch (r.report) {
+    'balance_sheet' => <FinChartSet>[
+      FinChartSet('liabilities', 'Liabilities', side(true)),
+      FinChartSet('assets', 'Assets', side(false)),
+    ],
+    'profit_loss' => <FinChartSet>[
+      FinChartSet('income', 'Income', side(true)),
+      FinChartSet('expenses', 'Expenses', side(false)),
+    ],
+    _ => <FinChartSet>[
+      FinChartSet('in', 'Inflow lines', side(true), adds: false),
+      FinChartSet('out', 'Outflow lines', side(false), adds: false),
+    ],
+  };
 }
 
 /// The graph card on a statement: series chips, the chart type switch and
@@ -142,8 +249,21 @@ class FinChartCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final AppController c = ref.watch(appProvider);
-    final String kind = c.finKind;
-    final List<FinChartSet> sets = finChartSets(report, kind);
+    return GraphCard(kind: c.finKind, sets: finChartSets(report, c.finKind));
+  }
+}
+
+/// The graph card of any report: [sets] are its series; [kind] keeps the
+/// chosen series (on the phone). Open / closed and the chart type are the
+/// same for every report.
+class GraphCard extends ConsumerWidget {
+  const GraphCard({super.key, required this.kind, required this.sets});
+  final String kind;
+  final List<FinChartSet> sets;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppController c = ref.watch(appProvider);
     if (sets.isEmpty) return const SizedBox.shrink();
     final FinChartSet set = sets.firstWhere(
       (FinChartSet s) => s.key == c.finChartSets[kind],

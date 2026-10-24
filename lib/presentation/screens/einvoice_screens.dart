@@ -14,6 +14,7 @@ import '../../core/design/tc_palette.dart';
 import '../../core/utils/format.dart';
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
+import '../widgets/report_loader.dart';
 import '../widgets/report_card.dart';
 import 'cashflow_screens.dart' show FromToBar;
 
@@ -39,7 +40,9 @@ class EinvoiceTile extends ConsumerWidget {
       icon: 'receipt',
       title: 'E-invoices',
       subtitle: 'IRN status, pending and alerts',
-      onTap: c.openEinvoices,
+      onTap: () {
+        if (c.guardTap('fin', 'einv')) c.openEinvoices();
+      },
     );
   }
 }
@@ -174,7 +177,6 @@ class EinvoicesScreen extends ConsumerWidget {
         Sub(
           <String>[
             if ((l?.company ?? '').isNotEmpty) l!.company else c.companyName,
-            'From TallyPrime',
           ].join(' · '),
         ),
         FromToBar(
@@ -233,7 +235,7 @@ class EinvoicesScreen extends ConsumerWidget {
         if (c.einvError != null)
           InfoBox(c.einvError!, icon: 'info')
         else if (l == null)
-          EmptyBox(c.einvBusy ? 'Loading…' : 'Not loaded yet.')
+          (c.einvBusy ? const ReportLoader() : EmptyBox('Not loaded yet.'))
         else ...<Widget>[
           if (c.einvBusy)
             const Padding(

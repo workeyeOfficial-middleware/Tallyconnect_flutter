@@ -16,6 +16,14 @@
    POST   /api/reminders/send                 … + expected_total, idempotency_key
    GET    /api/reminders/history?ledger_guid= this company's reminders
    POST   /api/reminders/:id/retry            a failed reminder, again
+   GET    /api/reminders/settings             when reminders are due, mode
+   PUT    /api/reminders/settings             ADMIN: change them
+   GET    /api/reminders/due                  parties due for one today
+
+   Automatic mode: runAutomatic() (hourly cron, cron/reminderCron.js)
+   emails each party whose bills are due by the settings, at the set hour,
+   once a day per party and bills (idempotency key), within the account's
+   daily limit, with the default template.
 
    Send result = what Microsoft Graph answered: "accepted" means Graph
    accepted the message for delivery (HTTP 202); it is never reported as
@@ -23,6 +31,7 @@
 ========================================================= */
 import express from "express";
 import {
+  DEFAULT_SETTINGS,
   DEFAULT_TEMPLATE,
   MAX_TEMPLATES,
   PLACEHOLDERS,
@@ -35,6 +44,12 @@ import {
   totalOf,
   validateSelection,
   validateTemplate,
+  autoKey,
+  istNow,
+  normaliseBills as normalise,
+  reminderDue,
+  settingsOf,
+  validateSettings,
 } from "./reminderCore.js";
 
 const TEMPLATE_COLS = "id, name, subject, body, is_default, updated_at";
@@ -672,6 +687,228 @@ export function createReminderRouter({
       sendResult(res, await deliver(claim.rows[0], c, s));
     })
   );
+
+  /* ------------------------------------------------------ settings */
+  const noTable = (err) => err?.code === "42P01"; // reminder_settings not created yet
+
+  async function loadSettings(adminId, company) {
+    try {
+      const r = await db.query(
+        `SELECT mode, timing, before_days, after_days, repeat_days, send_hour, updated_at
+           FROM reminder_settings WHERE admin_id = $1 AND company_guid = $2`,
+        [adminId, company]
+      );
+      return { settings: settingsOf(r.rows[0]), stored: !!r.rows[0], ready: true };
+    } catch (err) {
+      if (noTable(err)) return { settings: { ...DEFAULT_SETTINGS }, stored: false, ready: false };
+      throw err;
+    }
+  }
+
+  /**
+   * Pending receivable bills due for a reminder on [today] by [settings],
+   * one group per party: [{ledger_guid, party, emails, reason, bills, total}].
+   * [userId]: only the parties that USER login may see.
+   */
+  async function dueGroups(adminId, company, settings, today, userId = null) {
+    const params = [adminId, company];
+    let perm = "";
+    if (userId) {
+      params.push(userId);
+      perm = ` AND l.ledger_guid IN (SELECT ledger_guid FROM user_ledger_permissions WHERE user_id = $3)`;
+    }
+    const r = await db.query(
+      `SELECT b.bill_name, b.bill_date, b.due_date, b.pending_amount,
+              l.ledger_guid, COALESCE(l.name, b.ledger_name) AS party, l.email
+         FROM bills b
+         JOIN ledgers l
+           ON l.admin_id = b.admin_id AND l.company_guid = b.company_guid
+          AND (l.ledger_guid = b.ledger_guid OR (b.ledger_guid IS NULL AND l.name = b.ledger_name))
+        WHERE b.admin_id = $1 AND b.company_guid = $2
+          AND b.pending_amount > 0 AND b.due_date IS NOT NULL
+          AND COALESCE(UPPER(b.bill_type), 'RECEIVABLE') <> 'PAYABLE'${perm}
+        ORDER BY b.due_date ASC, b.bill_name ASC`,
+      params
+    );
+    const groups = new Map();
+    for (const row of r.rows) {
+      const reason = reminderDue(settings, row.due_date, today);
+      if (!reason || !row.ledger_guid) continue;
+      let g = groups.get(row.ledger_guid);
+      if (!g) {
+        g = { ledger_guid: row.ledger_guid, party: row.party, emails: recipientsOf(row.email), reasons: new Set(), rows: [], seen: new Set() };
+        groups.set(row.ledger_guid, g);
+      }
+      if (g.seen.has(row.bill_name)) continue;
+      g.seen.add(row.bill_name);
+      g.reasons.add(reason);
+      g.rows.push(row);
+    }
+    const todayDate = new Date(`${today}T00:00:00Z`);
+    return [...groups.values()].map((g) => {
+      const bills = normalise(g.rows, todayDate);
+      return {
+        ledger_guid: g.ledger_guid,
+        party: g.party,
+        emails: g.emails,
+        reason: g.reasons.size > 1 ? "both" : [...g.reasons][0],
+        bills,
+        total: totalOf(bills),
+      };
+    });
+  }
+
+  router.get(
+    "/api/reminders/settings",
+    auth,
+    handle(async (req, res) => {
+      const s = await scope(req);
+      const st = await loadSettings(s.adminId, s.company);
+      res.json({
+        success: true,
+        data: st.settings,
+        stored: st.stored,
+        ready: st.ready,
+        can_edit: s.isAdmin,
+        email_configured: cfg().mailReady,
+      });
+    })
+  );
+
+  router.put(
+    "/api/reminders/settings",
+    auth,
+    (req, res, next) =>
+      req.user?.role === "ADMIN"
+        ? next()
+        : res.status(403).json({ success: false, message: "Only the admin can change reminder settings." }),
+    handle(async (req, res) => {
+      const v = validateSettings(req.body);
+      if (!v.ok) throw new HttpError(400, v.message);
+      const s = await scope(req);
+      const x = v.value;
+      try {
+        await db.query(
+          `INSERT INTO reminder_settings
+             (admin_id, company_guid, mode, timing, before_days, after_days, repeat_days, send_hour, updated_by, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+           ON CONFLICT (admin_id, company_guid) DO UPDATE SET
+             mode = EXCLUDED.mode, timing = EXCLUDED.timing, before_days = EXCLUDED.before_days,
+             after_days = EXCLUDED.after_days, repeat_days = EXCLUDED.repeat_days,
+             send_hour = EXCLUDED.send_hour, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+          [s.adminId, s.company, x.mode, x.timing, x.before_days, x.after_days, x.repeat_days, x.send_hour, s.user.id]
+        );
+      } catch (err) {
+        if (noTable(err)) throw new HttpError(503, "Reminder settings are not available on the server yet.", "not_ready");
+        throw err;
+      }
+      res.json({ success: true, data: x, stored: true, ready: true, can_edit: true, email_configured: cfg().mailReady });
+    })
+  );
+
+  router.get(
+    "/api/reminders/due",
+    auth,
+    handle(async (req, res) => {
+      const s = await scope(req);
+      const st = await loadSettings(s.adminId, s.company);
+      const { today } = istNow(now());
+      const groups = await dueGroups(s.adminId, s.company, st.settings, today, s.isAdmin ? null : s.user.id);
+      res.json({ success: true, today, settings: st.settings, data: groups });
+    })
+  );
+
+  /* ------------------------------------------- automatic reminders */
+  /**
+   * Emails every party due for a reminder now, for each account / company
+   * in automatic mode whose hour (IST) is now. Never twice the same day for
+   * the same party and bills; stops at the account's daily limit. Returns
+   * counts (logged by the cron).
+   */
+  async function runAutomatic() {
+    const out = { companies: 0, sent: 0, failed: 0, skipped_no_email: 0, skipped_done: 0, skipped_limit: 0 };
+    const { today, hour } = istNow(now());
+    let rows;
+    try {
+      const r = await db.query(
+        `SELECT rs.admin_id, rs.company_guid, rs.mode, rs.timing, rs.before_days, rs.after_days,
+                rs.repeat_days, rs.send_hour, c.name AS company_name
+           FROM reminder_settings rs
+           LEFT JOIN companies c ON c.company_guid = rs.company_guid AND c.admin_id = rs.admin_id
+          WHERE rs.mode = 'automatic' AND rs.send_hour = $1`,
+        [hour]
+      );
+      rows = r.rows;
+    } catch (err) {
+      if (noTable(err)) return out;
+      throw err;
+    }
+    if (!rows.length || !cfg().mailReady) return out;
+    for (const row of rows) {
+      out.companies++;
+      const settings = settingsOf(row);
+      const s = {
+        adminId: row.admin_id,
+        company: row.company_guid,
+        companyName: row.company_name || "",
+        isAdmin: true,
+        user: { id: row.admin_id, email: null, username: row.company_name || "" },
+      };
+      const groups = await dueGroups(s.adminId, s.company, settings, today);
+      if (!groups.length) continue;
+      const template = await templateFor(s, null);
+      const used = await db.query(
+        `SELECT COUNT(*)::int AS day FROM reminder_log WHERE admin_id = $1 AND created_at > NOW() - INTERVAL '1 day'`,
+        [s.adminId]
+      );
+      let left = cfg().perDay - (used.rows[0]?.day ?? 0);
+      for (const g of groups) {
+        if (!g.emails.length) {
+          out.skipped_no_email++;
+          continue;
+        }
+        if (left <= 0) {
+          out.skipped_limit++;
+          continue;
+        }
+        const set = billSetKey(g.bills.map((b) => b.bill_name));
+        const mail = buildReminderEmail({ template, party: g.party, company: s.companyName, sender: s.companyName, bills: g.bills });
+        const ins = await db.query(
+          `INSERT INTO reminder_log
+             (admin_id, company_guid, ledger_guid, ledger_name, template_id, bill_set, bills,
+              total_amount, recipients, subject, status, idempotency_key,
+              sent_by_user_id, sent_by_email, sent_by_name)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, 'pending', $11, $12, NULL, 'Automatic reminder')
+           ON CONFLICT (admin_id, idempotency_key) DO NOTHING
+           RETURNING ${LOG_COLS}`,
+          [
+            s.adminId,
+            s.company,
+            g.ledger_guid,
+            String(g.party).slice(0, 255),
+            template.id,
+            set,
+            JSON.stringify(g.bills),
+            g.total,
+            JSON.stringify(g.emails),
+            mail.subject,
+            autoKey(s.company, g.ledger_guid, set, today),
+            s.adminId,
+          ]
+        );
+        if (!ins.rows[0]) {
+          out.skipped_done++;
+          continue;
+        }
+        left--;
+        const r = await deliver(ins.rows[0], { recipients: g.emails, mail }, s);
+        if (r.code) out.failed++;
+        else out.sent++;
+      }
+    }
+    return out;
+  }
+  router.runAutomatic = runAutomatic;
 
   return router;
 }

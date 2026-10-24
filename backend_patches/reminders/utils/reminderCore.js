@@ -334,3 +334,81 @@ export function publicLog(r) {
     sent_at: r.sent_at || null,
   };
 }
+
+/* ---------------------------------------------- reminder settings
+   Per account and company (set by the admin): when outstanding reminders
+   are due — before the due date, after it, or both — and whether the
+   server emails them by itself (automatic) or the team sends them
+   (manual). Hours are India time (IST). */
+
+export const REMINDER_MODES = ["manual", "automatic"];
+export const REMINDER_TIMINGS = ["before", "after", "both"];
+
+export const DEFAULT_SETTINGS = Object.freeze({
+  mode: "manual",
+  timing: "before",
+  before_days: 3,
+  after_days: 1,
+  repeat_days: 0, // 0 = once after the due date; else again every N days
+  send_hour: 10,
+});
+
+const intIn = (v, min, max) => {
+  const n = typeof v === "number" ? v : Number.parseInt(String(v ?? ""), 10);
+  return Number.isInteger(n) && n >= min && n <= max ? n : null;
+};
+
+/** Checks a settings body; every field is required. */
+export function validateSettings(body) {
+  const b = body && typeof body === "object" ? body : {};
+  if (!REMINDER_MODES.includes(b.mode)) return { ok: false, message: "Mode must be automatic or manual." };
+  if (!REMINDER_TIMINGS.includes(b.timing)) return { ok: false, message: "Choose before, after or both." };
+  const before = intIn(b.before_days, 1, 60);
+  const after = intIn(b.after_days, 1, 90);
+  const repeat = intIn(b.repeat_days ?? 0, 0, 30);
+  const hour = intIn(b.send_hour, 0, 23);
+  if (before === null) return { ok: false, message: "Days before the due date: 1 to 60." };
+  if (after === null) return { ok: false, message: "Days after the due date: 1 to 90." };
+  if (repeat === null) return { ok: false, message: "Repeat every: 0 (once) to 30 days." };
+  if (hour === null) return { ok: false, message: "Time: an hour from 0 to 23." };
+  return {
+    ok: true,
+    value: { mode: b.mode, timing: b.timing, before_days: before, after_days: after, repeat_days: repeat, send_hour: hour },
+  };
+}
+
+/** A stored row (or nothing) → the settings in use. */
+export function settingsOf(row) {
+  if (!row) return { ...DEFAULT_SETTINGS };
+  const v = validateSettings(row);
+  return v.ok ? v.value : { ...DEFAULT_SETTINGS };
+}
+
+/** Today's date and hour in India time: { today: "YYYY-MM-DD", hour }. */
+export function istNow(now = new Date()) {
+  const t = new Date(now.getTime() + 330 * 60000);
+  return { today: t.toISOString().slice(0, 10), hour: t.getUTCHours() };
+}
+
+/**
+ * Is a bill due for a reminder on [todayIso] by [s]? "before" (N days before
+ * its due date), "after" (N days after it, then every repeat_days), or null.
+ */
+export function reminderDue(s, dueIso, todayIso) {
+  const due = isoDate(dueIso);
+  if (!due || !todayIso) return null;
+  const days = Math.round((Date.parse(due) - Date.parse(todayIso)) / 86400000);
+  if ((s.timing === "before" || s.timing === "both") && days === s.before_days) return "before";
+  if (s.timing === "after" || s.timing === "both") {
+    const over = -days;
+    if (over === s.after_days) return "after";
+    if (s.repeat_days > 0 && over > s.after_days && (over - s.after_days) % s.repeat_days === 0) return "after";
+  }
+  return null;
+}
+
+/** Idempotency key of the automatic reminder of one party's bills on a day. */
+export function autoKey(company, ledgerGuid, set, todayIso) {
+  const h = createHash("sha256").update(`${company}|${ledgerGuid}|${set}`).digest("hex").slice(0, 32);
+  return `auto:${todayIso}:${h}`;
+}

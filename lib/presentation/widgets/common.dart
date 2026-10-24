@@ -15,6 +15,7 @@ import '../../app/providers.dart';
 import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
+import '../../core/utils/periods.dart' show kCustomRange;
 
 // ----------------------------------------------------------- device insets
 // The prototype is a fixed 390×844 frame with no status bar; on devices the
@@ -56,7 +57,7 @@ class RangeChip extends ConsumerWidget {
         children: <Widget>[
           Flexible(
             child: ChipBtn(
-              active ? c.range!.label : 'Date range',
+              active ? c.range!.label : kCustomRange,
               key: ValueKey<String>('range-$target'),
               icon: 'calendar',
               on: active,
@@ -242,7 +243,7 @@ class _PeriodBarState extends ConsumerState<PeriodBar> {
                       ],
                       seg(
                         k: 'range',
-                        label: custom ? c.range!.label : 'Date range',
+                        label: custom ? c.range!.label : kCustomRange,
                         icon: 'calendar',
                         key: ValueKey<String>('range-$t'),
                         onTap: () => c.openRange(t),
@@ -1082,7 +1083,7 @@ class TitleBadge extends ConsumerWidget {
   const TitleBadge(this.title, {super.key, this.badge});
   final String title;
 
-  /// Default: "From Tally" for server data, "Sample data" for the demo.
+  /// Default: "Sample data" for the demo; none for the company's data.
   final String? badge;
 
   @override
@@ -1092,13 +1093,9 @@ class TitleBadge extends ConsumerWidget {
       Expanded(child: H1(title)),
       Padding(
         padding: const EdgeInsets.only(bottom: 10),
-        child: Bdg(
-          badge ??
-              (ref.watch(appProvider).repo.isRemote
-                  ? 'From Tally'
-                  : 'Sample data'),
-          kind: BadgeKind.acc,
-        ),
+        child: badge == null && ref.watch(appProvider).repo.isRemote
+            ? const SizedBox.shrink()
+            : Bdg(badge ?? 'Sample data', kind: BadgeKind.acc),
       ),
     ],
   );
@@ -1602,7 +1599,7 @@ class LtBadge extends ConsumerWidget {
   });
   final Widget left;
 
-  /// Default: "From Tally" for server data, "Sample data" for the demo.
+  /// Default: "Sample data" for the demo; none for the company's data.
   final String? badge;
   final EdgeInsets margin;
 
@@ -1612,14 +1609,10 @@ class LtBadge extends ConsumerWidget {
     child: Row(
       children: <Widget>[
         Expanded(child: left),
-        const SizedBox(width: 8),
-        Bdg(
-          badge ??
-              (ref.watch(appProvider).repo.isRemote
-                  ? 'From Tally'
-                  : 'Sample data'),
-          kind: BadgeKind.acc,
-        ),
+        if (badge != null || !ref.watch(appProvider).repo.isRemote) ...<Widget>[
+          const SizedBox(width: 8),
+          Bdg(badge ?? 'Sample data', kind: BadgeKind.acc),
+        ],
       ],
     ),
   );

@@ -152,6 +152,19 @@ class _DocViewerState extends ConsumerState<DocViewer>
                     ),
                   ),
                   const SizedBox(width: 12),
+                  // Bills: change the layout for this share (or go back to
+                  // the layout sheet this preview came from).
+                  if (d.invoice != null) ...<Widget>[
+                    CBtn(
+                      'edit',
+                      key: const ValueKey<String>('docCustomize'),
+                      glass: false,
+                      bg: whiteA(.12),
+                      color: Colors.white,
+                      onTap: () => c.customizeFromPreview(d),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
                   CBtn(
                     'share',
                     glass: false,

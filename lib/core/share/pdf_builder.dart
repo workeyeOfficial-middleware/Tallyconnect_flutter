@@ -8,6 +8,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../utils/format.dart';
+import 'bill_layout.dart';
 import 'share_doc.dart';
 
 /// Figtree faces used in the PDF (loaded from the bundled TTFs).
@@ -34,6 +35,7 @@ const PdfColor _ink = PdfColor.fromInt(0xFF16203A);
 const PdfColor _mute = PdfColor.fromInt(0xFF6B7690);
 const PdfColor _band = PdfColor.fromInt(0xFFEEF1F8);
 const PdfColor _rule = PdfColor.fromInt(0xFFE6E9F1);
+const PdfColor _stripe = PdfColor.fromInt(0xFFF7F8FC);
 
 /// Figtree has no "↔" glyph.
 String _safe(String s) => s.replaceAll('↔', '<->');
@@ -43,6 +45,7 @@ Future<Uint8List> buildPdf(
   required DocFonts fonts,
   required int accentArgb,
   String? generated,
+  Uint8List? logo,
 }) async {
   final String made = generated ?? dmy(DateTime.now());
   final PdfColor acc = PdfColor.fromInt(accentArgb);
@@ -94,6 +97,16 @@ Future<Uint8List> buildPdf(
             data: e.qr!,
             width: 96,
             height: 96,
+            // The widget's default style is the built-in Courier (no
+            // Unicode): use the document's Figtree, and no caption text.
+            drawText: false,
+            textStyle: pw.TextStyle(
+              font: fonts.regular,
+              fontNormal: fonts.regular,
+              fontBold: fonts.bold,
+              fontItalic: fonts.regular,
+              fontBoldItalic: fonts.bold,
+            ),
           ),
           pw.SizedBox(width: 12),
         ],
@@ -123,6 +136,34 @@ Future<Uint8List> buildPdf(
 
   final InvoiceSpec? iv = d.invoice;
   if (iv != null) {
+    // What this bill shows (the standard layout prints everything).
+    final BillLayout ly = d.layout ?? BillLayout.standard;
+    final List<String> seller = !ly.showSeller
+        ? const <String>[]
+        : (ly.sellerLines.isNotEmpty ? ly.sellerLines : iv.seller);
+    final Uint8List? coLogo = ly.showLogo ? d.logo : null;
+    final bool items = iv.lines.isNotEmpty && ly.showItems;
+    // Item columns: (header, field, flex width, right-aligned).
+    final List<(String, int, double, bool)> cols =
+        <(String, int, double, bool)>[
+          ('#', 0, 0, false),
+          ('Item', 1, 5, false),
+          if (ly.showHsn) ('HSN', 2, 1.6, false),
+          if (ly.showQtyRate) ...<(String, int, double, bool)>[
+            ('Qty', 3, 1.6, true),
+            ('Rate', 4, 1.8, true),
+          ],
+          ('Amount', 5, 2.2, true),
+        ];
+    String col((String, String, String, String, String, String) l, int i) =>
+        switch (i) {
+          0 => l.$1,
+          1 => l.$2,
+          2 => l.$3,
+          3 => l.$4,
+          4 => l.$5,
+          _ => l.$6,
+        };
     doc.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
@@ -155,15 +196,35 @@ Future<Uint8List> buildPdf(
             children: <pw.Widget>[
               if (d.demo) demoStrip(),
               lt(
-                pw.Column(
+                pw.Row(
                   crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: <pw.Widget>[
-                    pw.Text(
-                      d.company,
-                      style: st(16, f: fonts.extraBold, c: acc),
+                    if (coLogo != null) ...<pw.Widget>[
+                      pw.ConstrainedBox(
+                        constraints: const pw.BoxConstraints(
+                          maxWidth: 110,
+                          maxHeight: 52,
+                        ),
+                        child: pw.Image(
+                          pw.MemoryImage(coLogo),
+                          fit: pw.BoxFit.contain,
+                        ),
+                      ),
+                      pw.SizedBox(width: 10),
+                    ],
+                    pw.Flexible(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: <pw.Widget>[
+                          pw.Text(
+                            d.company,
+                            style: st(16, f: fonts.extraBold, c: acc),
+                          ),
+                          for (final String l in seller)
+                            pw.Text(_safe(l), style: st(11)),
+                        ],
+                      ),
                     ),
-                    for (final String l in iv.seller)
-                      pw.Text(_safe(l), style: st(11)),
                   ],
                 ),
                 pw.Column(
@@ -197,7 +258,8 @@ Future<Uint8List> buildPdf(
                   ],
                 ),
               ),
-              if (d.einvoice != null) einvoiceBlock(d.einvoice!),
+              if (d.einvoice != null && ly.showEinvoice)
+                einvoiceBlock(d.einvoice!),
               pw.Container(
                 height: 1.4,
                 color: acc,
@@ -209,10 +271,11 @@ Future<Uint8List> buildPdf(
                   children: <pw.Widget>[
                     pw.Text(iv.toLabel, style: st(9, c: _mute)),
                     pw.Text(iv.party, style: st(12, f: fonts.extraBold)),
-                    if (iv.city.isNotEmpty) pw.Text(iv.city, style: st(11)),
+                    if (iv.city.isNotEmpty && ly.showPartyCity)
+                      pw.Text(iv.city, style: st(11)),
                   ],
                 ),
-                iv.hasDue
+                iv.hasDue && ly.showDue
                     ? pw.Column(
                         crossAxisAlignment: pw.CrossAxisAlignment.end,
                         children: <pw.Widget>[
@@ -224,26 +287,20 @@ Future<Uint8List> buildPdf(
               ),
               pw.SizedBox(height: 14),
               // Item table only when the voucher has item lines.
-              if (iv.lines.isNotEmpty)
+              if (items)
                 pw.Table(
-                  columnWidths: const <int, pw.TableColumnWidth>{
-                    0: pw.FixedColumnWidth(24),
-                    1: pw.FlexColumnWidth(5),
-                    2: pw.FlexColumnWidth(1.6),
-                    3: pw.FlexColumnWidth(1.6),
-                    4: pw.FlexColumnWidth(1.8),
-                    5: pw.FlexColumnWidth(2.2),
+                  columnWidths: <int, pw.TableColumnWidth>{
+                    for (int i = 0; i < cols.length; i++)
+                      i: cols[i].$2 == 0
+                          ? const pw.FixedColumnWidth(24)
+                          : pw.FlexColumnWidth(cols[i].$3),
                   },
                   children: <pw.TableRow>[
                     pw.TableRow(
                       decoration: const pw.BoxDecoration(color: _band),
                       children: <pw.Widget>[
-                        cell('#', head: true),
-                        cell('Item', head: true),
-                        cell('HSN', head: true),
-                        cell('Qty', head: true, r: true),
-                        cell('Rate', head: true, r: true),
-                        cell('Amount', head: true, r: true),
+                        for (final (String, int, double, bool) h in cols)
+                          cell(h.$1, head: true, r: h.$4),
                       ],
                     ),
                     for (final (String, String, String, String, String, String)
@@ -256,19 +313,15 @@ Future<Uint8List> buildPdf(
                           ),
                         ),
                         children: <pw.Widget>[
-                          cell(l.$1),
-                          cell(l.$2),
-                          cell(l.$3),
-                          cell(l.$4, r: true),
-                          cell(l.$5, r: true),
-                          cell(l.$6, r: true),
+                          for (final (String, int, double, bool) h in cols)
+                            cell(col(l, h.$2), r: h.$4),
                         ],
                       ),
                   ],
                 ),
               // The voucher's accounts (Dr / Cr) when known.
-              if (iv.accounts.isNotEmpty) ...<pw.Widget>[
-                if (iv.lines.isNotEmpty) pw.SizedBox(height: 14),
+              if (iv.accounts.isNotEmpty && ly.showAccounts) ...<pw.Widget>[
+                if (items) pw.SizedBox(height: 14),
                 pw.Table(
                   columnWidths: const <int, pw.TableColumnWidth>{
                     0: pw.FixedColumnWidth(40),
@@ -308,12 +361,15 @@ Future<Uint8List> buildPdf(
                     flex: 55,
                     child: pw.Column(
                       children: <pw.Widget>[
-                        if (iv.sub != null)
+                        if (iv.sub != null && ly.showTaxes)
                           lt(
                             pw.Text('Subtotal', style: st(11)),
                             pw.Text(inr(iv.sub), style: st(11)),
                           ),
-                        for (final (String, num) x in iv.taxes)
+                        for (final (String, num) x
+                            in ly.showTaxes
+                                ? iv.taxes
+                                : const <(String, num)>[])
                           lt(
                             pw.Text(_safe(x.$1), style: st(11)),
                             pw.Text(inr(x.$2), style: st(11)),
@@ -337,38 +393,49 @@ Future<Uint8List> buildPdf(
                   ),
                 ],
               ),
-              pw.Container(
-                margin: const pw.EdgeInsets.only(top: 14),
-                padding: const pw.EdgeInsets.all(8),
-                color: _band,
-                child: pw.RichText(
-                  text: pw.TextSpan(
-                    text: 'Amount: ',
-                    style: st(11),
-                    children: <pw.InlineSpan>[
-                      pw.TextSpan(
-                        text: inr(iv.total),
-                        style: st(11, f: fonts.bold),
-                      ),
-                    ],
+              if (ly.showAmountBox)
+                pw.Container(
+                  margin: const pw.EdgeInsets.only(top: 14),
+                  padding: const pw.EdgeInsets.all(8),
+                  color: _band,
+                  child: pw.RichText(
+                    text: pw.TextSpan(
+                      text: 'Amount: ',
+                      style: st(11),
+                      children: <pw.InlineSpan>[
+                        pw.TextSpan(
+                          text: inr(iv.total),
+                          style: st(11, f: fonts.bold),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              if (iv.note.isNotEmpty)
+              if (iv.note.isNotEmpty && ly.showNote)
                 pw.Padding(
                   padding: const pw.EdgeInsets.only(top: 8),
                   child: pw.Text(_safe(iv.note), style: st(9, c: _mute)),
                 ),
+              // The user's own terms / bank details.
+              if (ly.terms.trim().isNotEmpty)
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 14),
+                  child: pw.Text(_safe(ly.terms.trim()), style: st(10)),
+                ),
               pw.SizedBox(height: 36),
               lt(
-                pw.Text('Made with TallyConnect', style: st(9, c: _mute)),
-                pw.Container(
-                  padding: const pw.EdgeInsets.only(top: 3),
-                  decoration: const pw.BoxDecoration(
-                    border: pw.Border(top: pw.BorderSide(color: _ink)),
-                  ),
-                  child: pw.Text('Authorised signatory', style: st(9)),
-                ),
+                ly.showFooter
+                    ? pw.Text('Made with TallyConnect', style: st(9, c: _mute))
+                    : pw.SizedBox(),
+                !ly.showSignature
+                    ? pw.SizedBox()
+                    : pw.Container(
+                        padding: const pw.EdgeInsets.only(top: 3),
+                        decoration: const pw.BoxDecoration(
+                          border: pw.Border(top: pw.BorderSide(color: _ink)),
+                        ),
+                        child: pw.Text('Authorised signatory', style: st(9)),
+                      ),
               ),
             ],
           );
@@ -411,47 +478,66 @@ Future<Uint8List> buildPdf(
       ),
       build: (pw.Context c) => <pw.Widget>[
         if (d.demo) demoStrip(),
-        pw.Row(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: <pw.Widget>[
-            pw.Container(
-              width: 34,
-              height: 34,
-              alignment: pw.Alignment.center,
-              decoration: pw.BoxDecoration(
-                color: acc,
-                borderRadius: pw.BorderRadius.circular(10),
+        // The TallyConnect logo (transparent PNG) and the company; without
+        // the logo image: the ₹ tile and the name as text.
+        if (logo != null)
+          pw.Row(
+            crossAxisAlignment: pw.CrossAxisAlignment.end,
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: <pw.Widget>[
+              pw.Image(pw.MemoryImage(logo), height: 34),
+              pw.SizedBox(width: 16),
+              pw.Flexible(
+                child: pw.Text(
+                  _safe(d.company),
+                  textAlign: pw.TextAlign.right,
+                  style: st(11, f: fonts.bold, c: _mute),
+                ),
               ),
-              child: pw.Text(
-                '₹',
-                style: st(18, f: fonts.extraBold, c: PdfColors.white),
+            ],
+          )
+        else
+          pw.Row(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: <pw.Widget>[
+              pw.Container(
+                width: 34,
+                height: 34,
+                alignment: pw.Alignment.center,
+                decoration: pw.BoxDecoration(
+                  color: acc,
+                  borderRadius: pw.BorderRadius.circular(10),
+                ),
+                child: pw.Text(
+                  '₹',
+                  style: st(18, f: fonts.extraBold, c: PdfColors.white),
+                ),
               ),
-            ),
-            pw.SizedBox(width: 12),
-            pw.Expanded(
-              child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: <pw.Widget>[
-                  pw.RichText(
-                    text: pw.TextSpan(
-                      children: <pw.InlineSpan>[
-                        pw.TextSpan(
-                          text: 'Tally',
-                          style: st(12, f: fonts.extraBold),
-                        ),
-                        pw.TextSpan(
-                          text: 'Connect',
-                          style: st(12, f: fonts.extraBold, c: acc),
-                        ),
-                      ],
+              pw.SizedBox(width: 12),
+              pw.Expanded(
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: <pw.Widget>[
+                    pw.RichText(
+                      text: pw.TextSpan(
+                        children: <pw.InlineSpan>[
+                          pw.TextSpan(
+                            text: 'Tally',
+                            style: st(12, f: fonts.extraBold),
+                          ),
+                          pw.TextSpan(
+                            text: 'Connect',
+                            style: st(12, f: fonts.extraBold, c: acc),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  pw.Text(d.company, style: st(10, c: _mute)),
-                ],
+                    pw.Text(d.company, style: st(10, c: _mute)),
+                  ],
+                ),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
         pw.Container(
           height: 1.4,
           color: acc,
@@ -521,6 +607,16 @@ Future<Uint8List> buildPdf(
             rowDecoration: const pw.BoxDecoration(
               border: pw.Border(bottom: pw.BorderSide(color: _rule, width: .6)),
             ),
+            oddRowDecoration: const pw.BoxDecoration(
+              color: _stripe,
+              border: pw.Border(bottom: pw.BorderSide(color: _rule, width: .6)),
+            ),
+            columnWidths: t.widths.isEmpty
+                ? null
+                : <int, pw.TableColumnWidth>{
+                    for (int i = 0; i < t.columns.length; i++)
+                      i: pw.FlexColumnWidth(t.widths[i] ?? 1),
+                  },
             border: null,
             cellPadding: const pw.EdgeInsets.symmetric(
               horizontal: 6,

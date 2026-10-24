@@ -162,6 +162,37 @@ class _Profile extends ConsumerWidget {
               ],
             ),
           ),
+        // Payment reminders: when they are due and Automatic / Manual (the
+        // admin changes them; everyone sees them). Real data only.
+        if (c.emBlocked == null)
+          Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: GlassList(
+              children: <Widget>[
+                RowX(
+                  key: const ValueKey<String>('remSettingsRow'),
+                  minHeight: 60,
+                  onTap: c.openReminderSettings,
+                  children: <Widget>[
+                    Ico(
+                      'bell',
+                      size: IcoSize.xs,
+                      color: p.navy,
+                      icon: IcSize.s,
+                    ),
+                    Expanded(
+                      child: RTx(
+                        'Payment reminders',
+                        '${c.remSettings.automatic ? 'Automatic' : 'Manual'} · '
+                            '${c.remRuleText(c.remSettings)}',
+                      ),
+                    ),
+                    chevR(),
+                  ],
+                ),
+              ],
+            ),
+          ),
         // Outstanding email reminder templates: account admin, real data.
         if (c.canManageReminderTemplates)
           Padding(

@@ -8,6 +8,7 @@
    Nothing here writes anything.
 ========================================================= */
 import { capJson, isoOrNull, textArg, todayIso } from "./assistantCore.js";
+import { hasVoucherStatusColumns, IN_BOOKS } from "./voucherStatus.js";
 
 const num = (v) => Math.round(Number(v || 0) * 100) / 100;
 const iso = (d) => {
@@ -164,8 +165,10 @@ export function createTools(db, s, now = () => new Date()) {
       const { from, to } = range(args, 365);
       const params = [s.adminId, s.company, type, from, to];
       const perm = voucherPerm("v.voucher_guid", params);
+      // Cancelled / optional vouchers left out once known (voucherStatus.js).
+      const books = (await hasVoucherStatusColumns(db)) ? ` AND ${IN_BOOKS("v")}` : "";
       const where = `v.admin_id = $1 AND v.company_guid = $2 AND LOWER(v.voucher_type) = LOWER($3)
-            AND v.voucher_date >= $4::date AND v.voucher_date <= $5::date${perm}`;
+            AND v.voucher_date >= $4::date AND v.voucher_date <= $5::date${perm}${books}`;
       const tot = await db.query(
         `SELECT COUNT(*)::int AS n, COALESCE(SUM(ABS(COALESCE(v.net_amount, 0))), 0) AS total
            FROM vouchers v WHERE ${where}`,

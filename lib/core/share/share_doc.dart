@@ -3,9 +3,13 @@
 // for the share sheet plus the content of the PDF.
 library;
 
+import 'dart:typed_data';
+
+import '../../data/ledger_location.dart' show LocFilter, placeOf;
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../utils/format.dart';
+import 'bill_layout.dart';
 import 'report_data.dart';
 
 /// Bill / invoice layout data (the prototype's PDF "paper", 1563–1582).
@@ -122,12 +126,20 @@ InvoiceSpec invoiceOf(PdfInfo pd) {
 }
 
 class DocTable {
-  const DocTable(this.columns, this.rows, {this.right = const <int>{}});
+  const DocTable(
+    this.columns,
+    this.rows, {
+    this.right = const <int>{},
+    this.widths = const <int, double>{},
+  });
   final List<String> columns;
   final List<List<String>> rows;
 
   /// Right-aligned column indexes (amounts).
   final Set<int> right;
+
+  /// Relative column widths (flex) by index; unset columns size to fit.
+  final Map<int, double> widths;
 }
 
 /// The e-invoice Tally created for an invoice (IRN, acknowledgement and the
@@ -150,9 +162,39 @@ class ShareDoc {
     this.fileStem,
     this.demo = false,
     this.einvoice,
+    this.message,
+    this.layout,
+    this.logo,
   });
 
   final String title, subtitle, company;
+
+  /// What a bill PDF shows (null: the standard layout) and the company
+  /// logo printed on it.
+  final BillLayout? layout;
+  final Uint8List? logo;
+
+  /// The same bill with [l] and [logoBytes] (a share's own layout, or the
+  /// saved one).
+  ShareDoc withLayout(BillLayout l, Uint8List? logoBytes) => ShareDoc(
+    title: title,
+    company: company,
+    subtitle: subtitle,
+    facts: facts,
+    table: table,
+    totals: totals,
+    invoice: invoice,
+    fileStem: fileStem,
+    demo: demo,
+    einvoice: einvoice,
+    message: message,
+    layout: l,
+    logo: logoBytes,
+  );
+
+  /// Short message sent with the PDF instead of the whole document as text
+  /// (long lists: the PDF carries the rows).
+  final String? message;
   final List<(String, String)> facts;
   final DocTable? table;
   final List<(String, String)> totals;
@@ -175,6 +217,9 @@ class ShareDoc {
     fileStem: fileStem,
     demo: demo,
     einvoice: s,
+    message: message,
+    layout: layout,
+    logo: logo,
   );
 
   /// Made from demo (sample) data: labelled on the page, in the file name
@@ -195,6 +240,9 @@ class ShareDoc {
           fileStem: fileStem,
           demo: true,
           einvoice: einvoice,
+          message: message,
+          layout: layout,
+          logo: logo,
         );
 
   /// Label printed on demo documents.
@@ -213,8 +261,12 @@ class ShareDoc {
     return demo ? 'DEMO_$name' : name;
   }
 
-  /// Plain-text version used as the share-sheet message.
-  String get text => demo ? '$kDemoLabel\n\n${_text()}' : _text();
+  /// Plain-text version used as the share-sheet message ([message] when
+  /// set).
+  String get text {
+    final String t = message ?? _text();
+    return demo ? '$kDemoLabel\n\n$t' : t;
+  }
 
   String _text() {
     final StringBuffer b = StringBuffer();
@@ -328,10 +380,10 @@ ShareDoc docBill(Bill b, String company) {
     fileStem: 'Bill_${b.no}',
     facts: <(String, String)>[
       ('Bill number', b.no),
-      ('Bill type', r ? 'Sales bill' : 'Purchase bill'),
+      ('Bill type', r ? 'Sales' : 'Purchase'),
       ('Bill date', b.bill),
-      ('Pay by', b.due),
-      ('Credit time', b.credit),
+      ('Due date', b.due),
+      ('Credit period', b.credit),
       ('Status', b.txt),
     ],
     totals: <(String, String)>[
@@ -450,7 +502,7 @@ ShareDoc docBills(
 
 ShareDoc docItems(List<Item> rows, String company) => ShareDoc(
   title: 'Items · Stock summary',
-  subtitle: 'Your stock from Tally',
+  subtitle: 'Your stock',
   company: company,
   fileStem: 'Stock',
   table: DocTable(
@@ -485,7 +537,7 @@ String rateLabel(Item x) {
 
 ShareDoc docItem(Item x, String company) => ShareDoc(
   title: x.name,
-  subtitle: 'Item · stock from Tally',
+  subtitle: 'Item · stock',
   company: company,
   fileStem: 'Item_${x.name}',
   facts: <(String, String)>[
@@ -507,13 +559,15 @@ ShareDoc docParties(List<Party> rows, String company) => ShareDoc(
   company: company,
   fileStem: 'Parties',
   table: DocTable(
-    const <String>['Party', 'Type', 'Group / city', 'Balance'],
+    const <String>['Party', 'Type', 'Group / location', 'Balance'],
     <List<String>>[
       for (final Party p in rows)
         <String>[
           p.name,
           p.kindLabel,
-          p.city.isNotEmpty ? p.city : (p.group ?? ''),
+          p.city.isNotEmpty
+              ? p.city
+              : (placeOf(p).isNotEmpty ? placeOf(p) : (p.group ?? '')),
           p.bal == 0
               ? (p.guid != null ? 'No pending bills' : 'Settled')
               : inr(p.bal.abs()),
@@ -522,6 +576,94 @@ ShareDoc docParties(List<Party> rows, String company) => ShareDoc(
     right: const <int>{3},
   ),
 );
+
+/// Ledgers of one location (Party list → Location → Share): one row per
+/// ledger with its group, the address / PIN / state saved in Tally, phone
+/// and pending balance, and the receivable / payable totals.
+ShareDoc docLedgersByLocation(
+  List<Party> rows,
+  String company,
+  LocFilter loc,
+  DateTime asOn, {
+  bool remote = true,
+}) {
+  bool owesYou(Party x) => x.type == 'c' || (x.type == 'o' && x.bal > 0);
+  num get = 0, give = 0;
+  for (final Party x in rows) {
+    if (x.bal == 0) continue;
+    if (owesYou(x)) {
+      get += x.bal.abs();
+    } else {
+      give += x.bal.abs();
+    }
+  }
+  final String place = loc.on ? loc.label : 'All locations';
+  final String n = '${rows.length} ${rows.length == 1 ? 'ledger' : 'ledgers'}';
+  return ShareDoc(
+    title: 'Ledgers · $place',
+    subtitle: '$n · as on ${dmy(asOn)}',
+    company: company,
+    fileStem: 'Ledgers_${loc.on ? loc.label : 'All'}',
+    facts: <(String, String)>[
+      if ((loc.state ?? '').isNotEmpty) ('State', loc.state!),
+      if (loc.area.trim().isNotEmpty) ('City / area / PIN', loc.area.trim()),
+      ('Ledgers', '${rows.length}'),
+      ('As on', dmy(asOn)),
+    ],
+    table: DocTable(
+      const <String>['#', 'Ledger', 'Address', 'Phone', 'Balance'],
+      <List<String>>[
+        for (int i = 0; i < rows.length; i++)
+          () {
+            final Party x = rows[i];
+            final String addr = (x.address ?? '').trim();
+            final String pin = (x.pincode ?? '').trim();
+            final String st = (x.state ?? '').trim();
+            final String where = <String>[
+              if (pin.isNotEmpty) 'PIN $pin',
+              if (st.isNotEmpty) st,
+            ].join(' · ');
+            return <String>[
+              '${i + 1}',
+              <String>[
+                x.name,
+                <String>[
+                  x.kindLabel,
+                  if ((x.group ?? '').isNotEmpty) x.group!,
+                ].join(' · '),
+              ].join('\n'),
+              <String>[
+                if (addr.isNotEmpty) addr,
+                if (where.isNotEmpty) where,
+              ].join('\n').ifEmpty('—'),
+              (x.phone ?? '').split(RegExp(r'[,;/]')).first.trim().ifEmpty('—'),
+              x.bal == 0
+                  ? (remote ? 'No pending bills' : 'Settled')
+                  : '${inr(x.bal.abs())}\n${owesYou(x) ? 'To receive' : 'To pay'}',
+            ];
+          }(),
+      ],
+      right: const <int>{4},
+      widths: const <int, double>{0: .5, 1: 3, 2: 3.4, 3: 1.8, 4: 2},
+    ),
+    totals: <(String, String)>[
+      if (get > 0) ('To receive', inr(get)),
+      if (give > 0) ('To pay', inr(give)),
+      if (get == 0 && give == 0) ('Pending', 'None'),
+    ],
+    message: <String>[
+      'Ledgers · $place',
+      '$n · as on ${dmy(asOn)}',
+      if (get > 0) 'To receive: ${inr(get)}',
+      if (give > 0) 'To pay: ${inr(give)}',
+      '— $company',
+    ].join('\n'),
+  );
+}
+
+extension on String {
+  String ifEmpty(String other) => isEmpty ? other : this;
+}
 
 ShareDoc docPartyRow(
   Party p,

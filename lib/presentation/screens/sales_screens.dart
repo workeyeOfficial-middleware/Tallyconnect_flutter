@@ -16,9 +16,11 @@ import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
 import '../../core/share/share_doc.dart';
 import '../../core/utils/format.dart';
+import '../../core/utils/periods.dart' show kCustomRange;
 import '../../core/share/report_data.dart' show ChartPoint;
 import '../../data/models/models.dart';
 import '../widgets/common.dart';
+import '../widgets/report_loader.dart';
 import '../widgets/report_card.dart';
 import '../widgets/report_chart.dart';
 
@@ -372,7 +374,7 @@ class SalesDashScreen extends ConsumerWidget {
                 onTap: c.salesBusy ? null : () => c.setSalesPreset(x.$1),
               ),
             ChipBtn(
-              'Dates',
+              c.salesPreset == 'custom' ? c.salesPeriodLabel : kCustomRange,
               key: const ValueKey<String>('salesPreset-custom'),
               height: 38,
               fontSize: 13.5,
@@ -385,7 +387,9 @@ class SalesDashScreen extends ConsumerWidget {
         if (c.salesError != null)
           InfoBox(c.salesError!, icon: 'info')
         else if (d == null)
-          EmptyBox(c.salesBusy ? 'Working out your sales…' : 'Choose a period.')
+          (c.salesBusy
+              ? const ReportLoader(text: 'Working out your sales…')
+              : EmptyBox('Choose a period.'))
         else ...<Widget>[
           if (c.salesBusy)
             const Padding(

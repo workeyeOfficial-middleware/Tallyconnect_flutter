@@ -11,6 +11,7 @@ import '../../core/design/tc_fields.dart';
 import '../../core/design/tc_icons.dart';
 import '../../core/design/tc_kit.dart';
 import '../../core/design/tc_palette.dart';
+import '../../core/utils/format.dart' show inr;
 import '../../data/mock/mock_data.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/api_tally_repository.dart' show DataSet;
@@ -442,6 +443,9 @@ class NewEntryScreen extends ConsumerWidget {
       kEntryTiles,
       ((String, String, String, String, String) e) => e.$1,
     );
+    final List<Act> recent = c.repo.isRemote
+        ? c.acts.where((Act a) => c.actEditBlocker(a) == null).take(5).toList()
+        : const <Act>[];
     return Scr(
       children: <Widget>[
         const BackNav(),
@@ -511,6 +515,45 @@ class NewEntryScreen extends ConsumerWidget {
           'Nothing is sent until you tap Save.',
           margin: EdgeInsets.only(top: 18, bottom: 14),
         ),
+        // Entries made here: opened filled in, saving changes that entry
+        // (or its voucher in Tally) instead of adding one.
+        if (recent.isNotEmpty) ...<Widget>[
+          const Sec('Recent entries · tap to edit'),
+          GlassList(
+            key: const Key('entryRecentEdits'),
+            children: <Widget>[
+              for (final Act a in recent)
+                Tap(
+                  key: Key('entryEdit-${a.id}'),
+                  onTap: () => c.editAct(a),
+                  child: RowX(
+                    children: <Widget>[
+                      Expanded(
+                        child: RTx(
+                          '${kKinds[a.kind]?.long ?? a.kind} · ${a.no}',
+                          '${a.party} · ${switch (a.status) {
+                            'ok' => 'In Tally',
+                            'fail' => 'Not sent',
+                            _ => 'Waiting',
+                          }}',
+                          ell: true,
+                          subEll: true,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        inr(a.amt),
+                        style: ts(14.5, w: w700, c: p.ink),
+                      ),
+                      const SizedBox(width: 6),
+                      Ico('edit', size: IcoSize.xs, color: p.cat('navy')),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+        ],
       ],
     );
   }

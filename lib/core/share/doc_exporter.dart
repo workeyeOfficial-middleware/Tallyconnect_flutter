@@ -42,6 +42,7 @@ class PlatformDocExporter implements DocExporter {
     'tallyconnect/downloads',
   );
   DocFonts? _fonts;
+  Uint8List? _logo;
 
   Future<DocFonts> _loadFonts() async => _fonts ??= DocFonts.fromBytes(
     regular: await rootBundle.load('assets/fonts/Figtree-Regular.ttf'),
@@ -49,9 +50,24 @@ class PlatformDocExporter implements DocExporter {
     extraBold: await rootBundle.load('assets/fonts/Figtree-ExtraBold.ttf'),
   );
 
+  /// The TallyConnect wordmark for the PDF header (null if missing).
+  Future<Uint8List?> _loadLogo() async {
+    try {
+      return _logo ??= (await rootBundle.load(
+        'assets/images/tc_logo.png',
+      )).buffer.asUint8List();
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
-  Future<Uint8List> pdf(ShareDoc d, int accentArgb) async =>
-      buildPdf(d, fonts: await _loadFonts(), accentArgb: accentArgb);
+  Future<Uint8List> pdf(ShareDoc d, int accentArgb) async => buildPdf(
+    d,
+    fonts: await _loadFonts(),
+    accentArgb: accentArgb,
+    logo: await _loadLogo(),
+  );
 
   @override
   Future<void> share(ShareDoc d, Uint8List bytes) async {

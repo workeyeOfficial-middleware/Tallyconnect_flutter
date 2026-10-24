@@ -121,7 +121,9 @@ class _UsageMeter extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           Text(
-            u.exhausted
+            u.unlimited
+                ? '${u.planName} · ${grouped(u.used)} AI tokens used'
+                : u.exhausted
                 ? '${u.planName} plan · AI tokens used up'
                 : '${u.planName} plan · ${grouped(u.remaining)} of '
                       '${grouped(u.limit)} AI tokens left',
@@ -246,9 +248,27 @@ class _Chat extends StatelessWidget {
   Widget build(BuildContext context) {
     final TcPalette p = Tc.of(context);
     final List<AiTurn> turns = c.aiTurns;
+    final bool canShare = turns.any((AiTurn t) => !t.mine && !t.error);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
+        // The whole conversation in one WhatsApp message.
+        if (canShare)
+          Align(
+            alignment: Alignment.centerRight,
+            child: ChipBtn(
+              'Share chat',
+              key: const ValueKey<String>('aiShareChat'),
+              icon: 'whatsapp',
+              height: 34,
+              fontSize: 13,
+              onTap: c.aiBusy
+                  ? null
+                  : () =>
+                        c.shareAiOnWhatsApp(aiChatShare(turns, c.companyName)),
+            ),
+          ),
+        if (canShare) const SizedBox(height: 8),
         Expanded(
           child: turns.isEmpty
               ? SingleChildScrollView(
@@ -284,9 +304,14 @@ class _Chat extends StatelessWidget {
                         busy: true,
                       );
                     }
-                    final AiTurn t =
-                        turns[turns.length - 1 - (i - (c.aiBusy ? 1 : 0))];
-                    return _Bubble(t);
+                    final int at = turns.length - 1 - (i - (c.aiBusy ? 1 : 0));
+                    final AiTurn t = turns[at];
+                    return _Bubble(
+                      t,
+                      onShare: () => c.shareAiOnWhatsApp(
+                        aiMessageShare(turns, at, c.companyName),
+                      ),
+                    );
                   },
                 ),
         ),
@@ -361,9 +386,12 @@ class _Chat extends StatelessWidget {
 }
 
 class _Bubble extends StatelessWidget {
-  const _Bubble(this.t, {this.busy = false});
+  const _Bubble(this.t, {this.busy = false, this.onShare});
   final AiTurn t;
   final bool busy;
+
+  /// Shares this answer (with its question) on WhatsApp.
+  final VoidCallback? onShare;
 
   @override
   Widget build(BuildContext context) {
@@ -399,6 +427,21 @@ class _Bubble extends StatelessWidget {
                   'TallyConnect AI',
                   style: ts(12, w: w800, c: p.acc, ls: .3),
                 ),
+                const Spacer(),
+                if (onShare != null)
+                  Semantics(
+                    button: true,
+                    label: 'Share this answer on WhatsApp',
+                    child: GestureDetector(
+                      key: const ValueKey<String>('aiShareMsg'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onShare,
+                      child: Padding(
+                        padding: const EdgeInsets.all(6),
+                        child: Ic('whatsapp', size: IcSize.s, color: p.ink3),
+                      ),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 8),

@@ -22,9 +22,11 @@ import '../../data/models/models.dart';
 import '../screens/account_screens.dart' show CompanyRow;
 import '../screens/financial_screens.dart' show FinPickSheet, FinStockSheet;
 import '../screens/insight_screens.dart' show kTS;
+import '../screens/stock_party_screens.dart' show PartyLocationSheet;
 import '../screens/voucher_screens.dart' show kVF;
 import '../widgets/common.dart';
 import '../widgets/demo_banner.dart' show ConnectTallySheet;
+import '../screens/att_admin_screens.dart' show AttRuleMemberSheet;
 import '../screens/attendance_screens.dart'
     show CheckInPromptSheet, CheckOutSheet, ProfileSheet;
 import '../screens/einvoice_screens.dart' show EinvoiceRowSheet;
@@ -32,6 +34,7 @@ import '../screens/leave_screens.dart'
     show LeaveApplySheet, LeaveHolidaySheet, LeaveReqSheet, LeaveTypeSheet;
 import '../widgets/voice_search.dart';
 import 'assistant_sheet.dart';
+import 'bill_layout_sheet.dart';
 import 'doc_viewer.dart';
 import 'email_reminder_sheets.dart';
 
@@ -68,6 +71,7 @@ class OverlayLayer extends ConsumerWidget {
       'finPick' => const FinPickSheet(),
       'finStock' => const FinStockSheet(),
       'attCheckOut' => const CheckOutSheet(),
+      'attRuleMember' => const AttRuleMemberSheet(),
       'profile' => const ProfileSheet(),
       'attPrompt' => const CheckInPromptSheet(),
       'leaveApply' => const LeaveApplySheet(),
@@ -77,7 +81,10 @@ class OverlayLayer extends ConsumerWidget {
       'leaveHoliday' => const LeaveHolidaySheet(),
       'emailRem' => const EmailReminderSheet(),
       'remTemplates' => const ReminderTemplatesSheet(),
+      'remSettings' => const ReminderSettingsSheet(),
+      'partyLoc' => const PartyLocationSheet(),
       'remTemplateEdit' => const ReminderTemplateEditSheet(),
+      'billLayout' => const BillLayoutSheet(),
       'doc' => const DocViewer(),
       _ => const SizedBox.shrink(),
     };
@@ -494,7 +501,7 @@ class CompanySheet extends ConsumerWidget {
                             c.closeOv();
                             c.refreshNow();
                           }
-                        : () => c.say('Company list refreshed from Tally'),
+                        : () => c.say('Company list refreshed'),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -840,7 +847,7 @@ class ItemPickerSheet extends ConsumerWidget {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               itemCount: its.length + 1,
               itemBuilder: (BuildContext context, int i) {
-                if (i == 0) return const Sec('Items from Tally');
+                if (i == 0) return const Sec('Items');
                 final Item it = its[i - 1];
                 return Builder(
                   builder: (BuildContext context) {
@@ -1892,8 +1899,21 @@ class CardMenu extends ConsumerWidget {
           ('Open', 'open', c.cmOpen),
           ('Drag', 'move', c.cmDrag),
           ('Hide', 'eyeOff', c.cmHide),
-          // New Entry cards have nothing to share.
-          if (m.list != 'entries') ('Share', 'share', c.cmShare),
+          // New Entry cards have nothing to share; a card shares only
+          // when it has a document (or opens one first).
+          if (m.list != 'entries' &&
+              (const <String>['vouchers', 'fin'].contains(m.list) ||
+                  c.docForCard(m.list, m.id) != null))
+            ('Share', 'share', c.cmShare),
+          // Today's check-ins / Check-in rules: also a Home card.
+          if (m.list == 'teamCards' &&
+              AppController.kTeamHomeCards.contains(m.id) &&
+              c.teamHomeCardsAvailable)
+            (
+              c.onHome(m.id) ? 'Remove from Home' : 'Show on Home',
+              'home',
+              () => c.toggleOnHome(m.id),
+            ),
         ];
     return Stack(
       children: <Widget>[
